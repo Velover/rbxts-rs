@@ -603,7 +603,7 @@ fn a_main_chunk_past_luau_limit_is_spilled_or_an_error() {
     assert_eq!(big(&report), needs(201, "its main chunk"));
     // a function a plugin emitted, past the limit in its own body
     let report = build("probeFnPrereq();\nexport {};\n");
-    assert_eq!(big(&report), needs(201, "one of its functions"));
+    assert_eq!(big(&report), needs(201, "its function `_bigfn`"));
 
     // constants: Luau folds them (at debug level 1) into no register, so 205 of them and a hoist are a warning
     let report = build(&(lines(205, &|i| format!("export const c{i} = {i};")) + "print(probeHoist([0]));\n"));
@@ -611,8 +611,8 @@ fn a_main_chunk_past_luau_limit_is_spilled_or_an_error() {
         big(&report),
         vec![
             "warning big.ts: This file declares 206 locals live at once in its main chunk (1 of them take a register \
-             however it is compiled), and Luau allows at most 200 registers: it loads only where Luau folds its \
-             constant locals (optimisation level 1 or 2 at debug level 1), and fails to load at --!optimize 0 or \
+             even where Luau folds constant locals), and Luau allows at most 200 registers: it loads only where Luau \
+             folds them (optimisation level 1 or higher at debug level 1), and fails to load at --!optimize 0 or \
              debug level 2."
         ]
     );
@@ -635,9 +635,85 @@ fn a_main_chunk_past_luau_limit_is_spilled_or_an_error() {
     assert_eq!(big(&report).len(), 1, "{:?}", big(&report));
     assert!(big(&report)[0].starts_with("warning big.ts: This file declares 207 locals"), "{:?}", big(&report));
 
+    let warns = |report: &CompileReport, count: u32, certain: u32| {
+        let all = big(report);
+        assert_eq!(all.len(), 1, "{all:?}");
+        let start =
+            format!("warning big.ts: This file declares {count} locals live at once in its main chunk ({certain} of");
+        assert!(all[0].starts_with(&start), "{all:?}");
+    };
+    // what Luau folds at optimisation level 1: operators on constants, interpolated strings of strings, and uses of
+    // constant locals; not a builtin call (level 2 only), a number in an interpolated string, or a written local
+    let report = build(&(lines(205, &|i| format!("export const c{i} = -{i} * 2 + 1;")) + "print(probeHoist([0]));\n"));
+    warns(&report, 206, 1);
+    let report = build(
+        &("const k = \"s\";\n".to_owned()
+            + &lines(201, &|i| format!("export const s{i} = `a${{k}}`;"))
+            + "print(probeHoist([0]));\n"),
+    );
+    warns(&report, 203, 1);
+    let report = build(
+        &("const k = 1;\n".to_owned()
+            + &lines(201, &|i| format!("export const s{i} = `a${{k}}`;"))
+            + "print(probeHoist([0]));\n"),
+    );
+    assert_eq!(big(&report), needs(202, "its main chunk"));
+    let report = build(&(lines(201, &|i| format!("export const m{i} = math.abs(1);")) + "print(probeHoist([0]));\n"));
+    assert_eq!(big(&report), needs(202, "its main chunk"));
+    // a local written anywhere is not a constant, nor is a use of it (resolved by binding)
+    let report = build(
+        &(lines(201, &|i| format!("let w{i} = 1;"))
+            + &lines(201, &|i| format!("w{i} = 2;"))
+            + "print(probeHoist([0]));\n"),
+    );
+    assert_eq!(big(&report), needs(202, "its main chunk"));
+    let report = build(
+        &("let y = 1;\ny = 2;\n".to_owned()
+            + &lines(201, &|i| format!("export const a{i} = y;"))
+            + "print(probeHoist([0]));\n"),
+    );
+    assert_eq!(big(&report), needs(203, "its main chunk"));
+    // a loop variable takes a register at level 1, literal bounds or not (only level 2 unrolls loops)
+    let report = build(
+        &(tables(199)
+            + "for (const i of $range(1, 3)) {\n\tconst z = mk();\n\tprint(i, z);\n}\nprint(probeHoist([0]));\n"),
+    );
+    assert_eq!(big(&report), needs(201, "its main chunk"));
+
     // a file no plugin emitted anything into is left as roblox-ts leaves it, however many locals it has
     let report = build(&tables(205));
     assert_eq!(big(&report), Vec::<String>::new());
+}
+
+#[test]
+fn a_function_past_luau_upvalue_limit_is_a_warning() {
+    let Some(project) = Project::new("upvalues") else { return };
+    let lines = |count: usize, line: &dyn Fn(usize) -> String| (1..=count).map(|i| line(i) + "\n").collect::<String>();
+    let names = |prefix: &str| (1..=100).map(|i| format!("{prefix}{i}")).collect::<Vec<_>>().join(", ");
+    let build = |hoisted: &str| {
+        project.write(
+            "src/shared/big.ts",
+            &(lines(100, &|i| format!("const a{i} = mk();"))
+                + "export function g() {\n"
+                + &lines(100, &|i| format!("\tconst b{i} = mk();"))
+                + &format!("\treturn () => print({}, {}{hoisted});\n}}\n", names("a"), names("b"))
+                + "print(probeHoist([1]));\n"),
+        );
+        let report = project.build(&["stamp", "probe"], |_| {});
+        let _ = std::fs::remove_dir_all(project.root.join("out"));
+        diagnostics(&report).into_iter().filter(|d| d.contains(" big.ts: ")).collect::<Vec<_>>()
+    };
+    // 100 main-chunk locals and 100 of `g`: 200 upvalues, Luau's limit
+    assert_eq!(build(""), Vec::<String>::new());
+    // a hoist (a main-chunk local) used in the closure makes 201 (`g` itself uses 101)
+    assert_eq!(
+        build(", probeHoist([0])"),
+        vec![
+            "warning big.ts: An anonymous function in this file uses 201 locals of the functions around it, and Luau \
+             allows at most 200 upvalues per function: it fails to load (\"Out of upvalue registers\") unless Luau \
+             folds enough of them as constants (optimisation level 1 or higher at debug level 1)."
+        ]
+    );
 }
 
 #[test]

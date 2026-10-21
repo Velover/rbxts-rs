@@ -107,14 +107,18 @@
 //! any nested function); approved names and import names avoid the seam temporaries made before them in turn.
 //! roblox-ts's own temporaries keep its naming.
 //!
-//! **Luau's local limit** (`spill`). Every file a plugin emitted anything into is checked once complete, its main
-//! chunk and each function, against Luau's 200 live local registers (enclosing blocks' locals count, `local exports`
-//! and `local TS` too). Luau folds a `local` statement of constants into no register only from optimisation level 1
-//! (the Studio-testing default; live games run at 2) and only at debug level 1, so two counts are kept: every local
-//! name (conservative), and what takes a register at every level (certain). Past 200, the main chunk's conservative
-//! count spills the `hoist_spillable` locals into one table local (`_spill`); a certain count still past it is an
-//! error, a conservative one a warning (the file loads only where Luau folds its constants). Other files, and builds
-//! without plugins, keep roblox-ts's behaviour.
+//! **Luau's limits** (`spill`). Every file a plugin emitted anything into is checked once complete, its main chunk
+//! and each function, against Luau's 200 live local registers (enclosing blocks' locals count, loop variables,
+//! `local exports` and `local TS` too) and 200 upvalues. Luau folds a `local` statement whose names are all constants
+//! (constant values, no more values than names, no name written anywhere) into no register, only from optimisation
+//! level 1 and only at debug level 1, so two counts are kept: every local name (conservative), and what takes a
+//! register at level 1 and debug level 1, Roblox's Studio-testing default (certain). Past 200, the main chunk's
+//! conservative count spills the `hoist_spillable` locals into one table local (`_spill`); a certain count still
+//! past it is an error (the file fails to load in Studio), a conservative one a warning (it loads only where Luau
+//! folds constants, and fails at `--!optimize 0` or debug level 2). A function's diagnostic is anchored at the main
+//! chunk's statement that contains it. A function that uses more than 200 locals of the functions around it (its
+//! nested functions' uses included) is a warning naming it. Other files, and builds without plugins, keep roblox-ts's
+//! behaviour.
 
 pub mod backend;
 pub mod dispatch;
