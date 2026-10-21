@@ -34,7 +34,9 @@ pub enum Binding {
 pub struct BindingKey {
     /// The symbol's identity (any value unique per symbol, e.g. its address).
     pub id: u64,
+    /// A closure can observe the binding.
     pub captured: bool,
+    /// A closure can reassign the binding.
     pub written_by_closure: bool,
 }
 

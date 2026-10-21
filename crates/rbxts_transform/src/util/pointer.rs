@@ -11,6 +11,7 @@ use crate::classes::prereqs::Prereqs;
 pub struct Pointer {
     /// The name of the temporary the value moves into.
     pub name: String,
+    /// The table: inline while it is still being built in place, the temporary's identifier once it has moved.
     pub value: Expr,
 }
 

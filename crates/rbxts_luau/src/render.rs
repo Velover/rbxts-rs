@@ -28,6 +28,7 @@ pub struct LateStrings {
 }
 
 impl LateStrings {
+    /// No values.
     pub fn new() -> Self {
         Self::default()
     }
@@ -37,14 +38,17 @@ impl LateStrings {
         self.values.insert(key.into(), value.into());
     }
 
+    /// The value of `key`, if set.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.values.get(key).map(String::as_str)
     }
 
+    /// The number of keys set.
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
+    /// No key is set.
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }

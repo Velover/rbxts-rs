@@ -16,6 +16,7 @@ pub struct TempIds {
 }
 
 impl TempIds {
+    /// An allocator whose first id is 0.
     pub fn new() -> Self {
         Self::default()
     }

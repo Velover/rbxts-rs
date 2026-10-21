@@ -17,31 +17,48 @@ use crate::facts::Facts;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
     // indexable expressions
+    /// A named local or global.
     Identifier(Identifier),
+    /// A local named at render time.
     TemporaryIdentifier(TemporaryIdentifier),
+    /// `expression[index]`
     ComputedIndex(Box<ComputedIndexExpression>),
+    /// `expression.name`
     PropertyAccess(Box<PropertyAccessExpression>),
+    /// `expression(args)`
     Call(Box<CallExpression>),
+    /// `expression:name(args)`
     MethodCall(Box<MethodCallExpression>),
+    /// `(expression)`
     Parenthesized(Box<ParenthesizedExpression>),
 
     // expressions
     /// A placeholder for "no expression"; rendering it is a compiler bug.
     None,
+    /// `nil`
     Nil,
+    /// `false`
     False,
+    /// `true`
     True,
+    /// A number literal.
     Number(NumberLiteral),
+    /// A string literal.
     String(StringLiteral),
     /// A string literal whose value is looked up by key in the [`crate::LateStrings`] given to the renderer
     /// (DESIGN §4 step 5). It renders and behaves exactly like a [`StringLiteral`] with that value and no quote.
     LateString(LateString),
     /// `...`
     VarArgs,
+    /// `function(parameters) statements end`
     Function(Box<FunctionExpression>),
+    /// `left operator right`
     Binary(Box<BinaryExpression>),
+    /// `operator expression`
     Unary(Box<UnaryExpression>),
+    /// `if condition then expression else alternative`
     If(Box<IfExpression>),
+    /// `` `text{expression}text` ``
     InterpolatedString(InterpolatedString),
     /// `{ a, b }`
     Array(Vec<Expr>),
@@ -56,6 +73,7 @@ pub enum Expr {
 /// A Luau identifier. Rendering asserts that `name` is a valid identifier ([`crate::is_valid_identifier`]).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Identifier {
+    /// The name, as written.
     pub name: String,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
@@ -68,7 +86,9 @@ pub struct Identifier {
 /// of the TypeScript node shares its id. Ids are unique per file (see [`crate::TempIds`]).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TemporaryIdentifier {
+    /// The base of the rendered name (`_name`).
     pub name: String,
+    /// Unique per file: copies with the same id are the same local.
     pub id: u32,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
@@ -79,6 +99,7 @@ pub struct TemporaryIdentifier {
 pub struct ComputedIndexExpression {
     /// Should be indexable ([`Expr::is_indexable`]).
     pub expression: Expr,
+    /// The index; a string literal that is a valid identifier renders as `.name`.
     pub index: Expr,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
@@ -89,6 +110,7 @@ pub struct ComputedIndexExpression {
 pub struct PropertyAccessExpression {
     /// Should be indexable ([`Expr::is_indexable`]).
     pub expression: Expr,
+    /// The property name, unescaped.
     pub name: String,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
@@ -99,6 +121,7 @@ pub struct PropertyAccessExpression {
 pub struct CallExpression {
     /// Should be indexable ([`Expr::is_indexable`]).
     pub expression: Expr,
+    /// The arguments.
     pub args: Vec<Expr>,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
@@ -107,9 +130,11 @@ pub struct CallExpression {
 /// `expression:name(args)`. Rendering asserts that `name` is a valid identifier.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MethodCallExpression {
+    /// The method name.
     pub name: String,
     /// Should be indexable ([`Expr::is_indexable`]).
     pub expression: Expr,
+    /// The arguments, after the receiver.
     pub args: Vec<Expr>,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
@@ -119,6 +144,7 @@ pub struct MethodCallExpression {
 /// rendered as JavaScript's `String(Number(text))`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct NumberLiteral {
+    /// The literal's source text.
     pub value: String,
 }
 
@@ -126,11 +152,13 @@ pub struct NumberLiteral {
 /// delimiter (`"`, `'`, then a long bracket `[[…]]` when the text has both quotes or a newline).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct StringLiteral {
+    /// The text between the quotes, already escaped.
     pub value: String,
     /// An explicit delimiter; `value` must then be escaped for it.
     pub quote: Option<Quote>,
 }
 
+/// The delimiter of a [`StringLiteral`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Quote {
     /// `"`
@@ -140,6 +168,7 @@ pub enum Quote {
 }
 
 impl Quote {
+    /// The delimiter as a character.
     pub fn as_char(self) -> char {
         match self {
             Quote::Double => '"',
@@ -151,15 +180,18 @@ impl Quote {
 /// See [`Expr::LateString`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LateString {
+    /// The key of the value in [`crate::LateStrings`].
     pub key: String,
 }
 
 /// `function(parameters) statements end`
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionExpression {
+    /// The parameters, before any `...`.
     pub parameters: Vec<AnyIdentifier>,
     /// Adds `...` after the parameters.
     pub has_dot_dot_dot: bool,
+    /// The body.
     pub statements: Vec<Stmt>,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
@@ -168,6 +200,7 @@ pub struct FunctionExpression {
 /// `(expression)`; rendered without parentheses when the innermost expression is simple.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParenthesizedExpression {
+    /// The parenthesized expression.
     pub expression: Expr,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
@@ -176,8 +209,11 @@ pub struct ParenthesizedExpression {
 /// `left operator right`, parenthesized when the parent binds tighter.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BinaryExpression {
+    /// The left operand.
     pub left: Expr,
+    /// The operator.
     pub operator: BinaryOperator,
+    /// The right operand.
     pub right: Expr,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
@@ -186,7 +222,9 @@ pub struct BinaryExpression {
 /// `operator expression`, parenthesized when the parent binds tighter.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UnaryExpression {
+    /// The operator.
     pub operator: UnaryOperator,
+    /// The operand.
     pub expression: Expr,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
@@ -195,8 +233,11 @@ pub struct UnaryExpression {
 /// `if condition then expression else alternative`; an [`IfExpression`] alternative renders as `elseif`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IfExpression {
+    /// The condition.
     pub condition: Expr,
+    /// The value when the condition is truthy.
     pub expression: Expr,
+    /// The value otherwise.
     pub alternative: Expr,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
@@ -205,6 +246,7 @@ pub struct IfExpression {
 /// `` `text{expression}text` ``
 #[derive(Clone, Debug, PartialEq)]
 pub struct InterpolatedString {
+    /// Text and expressions, in order.
     pub parts: Vec<InterpolatedStringPart>,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
@@ -215,40 +257,58 @@ pub struct InterpolatedString {
 pub enum InterpolatedStringPart {
     /// Literal text, escaped as for a string literal; the renderer escapes `{`, `}` and line breaks.
     Text(String),
+    /// An expression, rendered inside `{}`.
     Expression(Expr),
 }
 
 /// A keyed field of a [`Expr::Map`] or [`Expr::MixedTable`]: `index = value`, or `[index] = value`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapField {
+    /// The key; a string literal that is a valid identifier renders as `name =`, anything else as `[index] =`.
     pub index: Expr,
+    /// The value.
     pub value: Expr,
 }
 
 /// A field of a [`Expr::MixedTable`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum TableField {
+    /// A positional value.
     Value(Expr),
+    /// A keyed field.
     Field(MapField),
 }
 
 /// A statement.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Stmt {
+    /// `left operator right`
     Assignment(Box<Assignment>),
+    /// `break`
     Break,
     /// A call statement; the expression is an [`Expr::Call`] or an [`Expr::MethodCall`].
     Call(Expr),
+    /// `continue`
     Continue,
+    /// `do statements end`
     Do(DoStatement),
+    /// `while condition do statements end`
     While(Box<WhileStatement>),
+    /// `repeat statements until condition`
     Repeat(Box<RepeatStatement>),
+    /// `if condition then statements … end`
     If(Box<IfStatement>),
+    /// `for id = start, end, step do statements end`
     NumericFor(Box<NumericForStatement>),
+    /// `for ids in expression do statements end`
     For(Box<ForStatement>),
+    /// `[local ]function name(parameters) statements end`
     FunctionDeclaration(Box<FunctionDeclaration>),
+    /// `function expression:name(parameters) statements end`
     MethodDeclaration(Box<MethodDeclaration>),
+    /// `local left = right`
     VariableDeclaration(Box<VariableDeclaration>),
+    /// `return expressions`
     Return(ReturnStatement),
     /// `--text`, or a `--[[ ]]` block when the text has several lines.
     Comment(String),
@@ -259,6 +319,7 @@ pub enum Stmt {
 pub struct Assignment {
     /// Writable expressions (identifiers, property accesses, computed indexes); not empty.
     pub left: Vec<Expr>,
+    /// `=` or a compound assignment operator.
     pub operator: AssignmentOperator,
     /// Not empty.
     pub right: Vec<Expr>,
@@ -267,28 +328,36 @@ pub struct Assignment {
 /// `do statements end`
 #[derive(Clone, Debug, PartialEq)]
 pub struct DoStatement {
+    /// The body.
     pub statements: Vec<Stmt>,
 }
 
 /// `while condition do statements end`
 #[derive(Clone, Debug, PartialEq)]
 pub struct WhileStatement {
+    /// The loop condition, checked before each pass.
     pub condition: Expr,
+    /// The body.
     pub statements: Vec<Stmt>,
 }
 
 /// `repeat statements until condition`
 #[derive(Clone, Debug, PartialEq)]
 pub struct RepeatStatement {
+    /// The condition that ends the loop, checked after each pass.
     pub condition: Expr,
+    /// The body.
     pub statements: Vec<Stmt>,
 }
 
 /// `if condition then statements [elseif … | else …] end`
 #[derive(Clone, Debug, PartialEq)]
 pub struct IfStatement {
+    /// The condition.
     pub condition: Expr,
+    /// The `then` block.
     pub statements: Vec<Stmt>,
+    /// What follows the `then` block.
     pub else_body: ElseBody,
 }
 
@@ -310,18 +379,26 @@ impl Default for ElseBody {
 /// `for id = start, end[, step] do statements end`; a literal step of 1 is left out.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NumericForStatement {
+    /// The loop variable.
     pub id: AnyIdentifier,
+    /// The first value.
     pub start: Expr,
+    /// The last value (inclusive).
     pub end: Expr,
+    /// The step; `None` leaves it out (a step of 1).
     pub step: Option<Expr>,
+    /// The body.
     pub statements: Vec<Stmt>,
 }
 
 /// `for ids in expression do statements end`; no ids render as `_`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ForStatement {
+    /// The loop variables.
     pub ids: Vec<AnyIdentifier>,
+    /// The iteration expression.
     pub expression: Expr,
+    /// The body.
     pub statements: Vec<Stmt>,
 }
 
@@ -332,8 +409,11 @@ pub struct FunctionDeclaration {
     pub localize: bool,
     /// An identifier, temporary identifier or property access.
     pub name: Expr,
+    /// The parameters, before any `...`.
     pub parameters: Vec<AnyIdentifier>,
+    /// Adds `...` after the parameters.
     pub has_dot_dot_dot: bool,
+    /// The body.
     pub statements: Vec<Stmt>,
 }
 
@@ -342,9 +422,13 @@ pub struct FunctionDeclaration {
 pub struct MethodDeclaration {
     /// Should be indexable ([`Expr::is_indexable`]).
     pub expression: Expr,
+    /// The method name.
     pub name: String,
+    /// The parameters after the implicit `self`, before any `...`.
     pub parameters: Vec<AnyIdentifier>,
+    /// Adds `...` after the parameters.
     pub has_dot_dot_dot: bool,
+    /// The body.
     pub statements: Vec<Stmt>,
 }
 
@@ -360,13 +444,16 @@ pub struct VariableDeclaration {
 /// `return expressions` (comma-separated).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReturnStatement {
+    /// The returned values, comma-separated.
     pub expressions: Vec<Expr>,
 }
 
 /// An identifier or a temporary identifier: what can be declared (parameters, locals, loop variables).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum AnyIdentifier {
+    /// A named identifier.
     Identifier(Identifier),
+    /// A temporary identifier.
     Temporary(TemporaryIdentifier),
 }
 
@@ -419,7 +506,7 @@ macro_rules! operators {
     ($(#[$meta:meta])* $name:ident { $($variant:ident = $text:literal),* $(,)? }) => {
         $(#[$meta])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-        pub enum $name { $($variant),* }
+        pub enum $name { $(#[doc = concat!("`", $text, "`")] $variant),* }
 
         impl $name {
             /// The operator as written in Luau.
