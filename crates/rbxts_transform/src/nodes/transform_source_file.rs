@@ -175,7 +175,10 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
 
     // the statements of the source file
     let file_node = node.as_node();
+    crate::plugins::dispatch::begin_file(state);
     let mut statements = transform_statement_list(state, Some(file_node), node.get().statements.nodes());
+    // rbxts-rs: plugin end_file, import elision decided on the whole file, plugin imports and header (DESIGN §11)
+    crate::plugins::dispatch::end_file(state, &mut statements);
 
     handle_exports(state, node, symbol, &mut statements);
 

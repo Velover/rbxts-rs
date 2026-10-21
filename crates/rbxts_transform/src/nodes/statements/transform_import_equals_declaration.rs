@@ -15,7 +15,8 @@ use crate::util::traversal::source_file_of;
 /// `import x = require("y")` and `import x = A.B`.
 pub fn transform_import_equals_declaration(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stmt> {
     let declaration = node.as_import_equals_declaration();
-    if declaration.is_type_only {
+    // rbxts-rs: or elided for a plugin
+    if declaration.is_type_only || crate::plugins::dispatch::import_override(state, node) == Some(false) {
         return Vec::new();
     }
 

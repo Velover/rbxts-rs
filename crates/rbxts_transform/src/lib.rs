@@ -11,6 +11,7 @@
 //! - [`macros`]: the macro tables (names only in T1; each transform is `None` until ported).
 //! - [`util`]: helpers, including the evaluation-order analysis (`util::evaluation`).
 //! - [`shared`]: roblox-ts's diagnostics table and constants.
+//! - [`plugins`]: the compiler side of the plugin seam (`rbxts_plugin`'s backends, dispatch, build lifecycle).
 //!
 //! Node kinds not ported yet are reported as `not yet supported in rbxts-rs: <kind>` errors (and listed per file in
 //! [`compile::FileOutcome::unsupported`]); the build carries on and reports every file.
@@ -24,7 +25,9 @@ pub mod classes;
 pub mod compile;
 pub mod macros;
 pub mod nodes;
+pub mod plugins;
 pub mod shared;
 pub mod util;
 
-pub use compile::{CompileOptions, CompileReport, FileOutcome, Timings, compile_project};
+pub use compile::{CompileOptions, CompileReport, FileOutcome, Timings, compile_project, compile_project_with};
+pub use plugins::{PluginOptions, PluginTimings};

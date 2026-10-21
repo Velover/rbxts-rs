@@ -15,3 +15,8 @@ tsrs_compiler.workspace = true
 tsrs_diagnostics.workspace = true
 tsrs_scanner.workspace = true
 rustc-hash.workspace = true
+rbxts_plugin.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+rbxts_test_plugins.workspace = true

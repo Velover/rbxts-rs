@@ -27,6 +27,9 @@ rbxts_luau = { path = "crates/rbxts_luau" }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 tsrs_module = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_module" }
 rbxts_transform = { path = "crates/rbxts_transform" }
+rbxts_plugin = { path = "crates/rbxts_plugin" }
+rbxts_cli = { path = "crates/rbxts_cli" }
+rbxts_test_plugins = { path = "crates/rbxts_test_plugins" }
 # The versions in tsrs's lock file.
 rustc-hash = "2"
 # flamework_rs: JavaScript number formatting (Number#toString), already in the lock through tsrs_core.

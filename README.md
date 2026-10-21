@@ -81,3 +81,25 @@ Hand-written transform fixtures live in `crates/rbxts_transform/tests/fixtures/<
 (`node roblox-ts-test/probe/rbxts-driver.cjs <roblox-ts checkout> tsconfig.json --backend ts5`, from the fixture with a
 `node_modules` linked in). `cargo test -p rbxts_transform --test fixtures` builds each one in a temporary copy, linking
 in `RBXTS_RS_FIXTURE_NODE_MODULES` (default: the roblox-ts tests project's `node_modules`), and compares byte for byte.
+
+## Plugins (`rbxts_plugin`, `rbxts_transform::plugins`, `rbxts_cli`)
+
+`crates/rbxts_plugin` is the plugin API (DESIGN §11); `rbxts_transform::plugins` is the compiler side: the backends,
+the dispatch tables built from each instance's `Interest`, and the build lifecycle (activation from the tsconfig's
+`plugins` entries, `setup`, `finish`, the late-string key check, render after finish, the commit with atomic writes,
+`explain_checker_diagnostic` on files that fail checking). Builds are clean builds; incremental and watch builds are
+S2 (DESIGN §14, `// rbxts-rs: S2` markers).
+
+A binary with plugins:
+
+```rust
+fn main() -> std::process::ExitCode {
+    rbxts_cli::Cli::new().plugin(my_plugin::MyPlugin::new()).run() // rbxtsc's `build` arguments, exit codes 0 / 1
+}
+```
+
+`rbxtsc` (crate `rbxts_cli`) is that binary without plugins. `rbxts-bench build --plugin <name>` registers the test
+plugins of `crates/rbxts_test_plugins` (the `rbxts_plugin` crate's `stamp`, and `probe`, which reaches every compiler
+primitive), with `--timings` for per-plugin hook times and `--claims-all` (or `RBXTS_PLUGIN_CLAIMS=all`) to report
+double claims. `cargo test -p rbxts_transform --test plugins` builds `tests/plugin_fixtures/probe` with them against
+hand-checked `expected/` Luau, and runs their failure modes.

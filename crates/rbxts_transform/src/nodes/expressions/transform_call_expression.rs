@@ -25,7 +25,7 @@ use crate::util::wrap_return_if_lua_tuple::wrap_return_if_lua_tuple;
 
 /// Some C functions like `tonumber()` error when an argument is a call that returns nothing. Possibly-undefined call
 /// arguments of Roblox functions are wrapped in `()` to coerce the values to `nil`.
-fn fix_void_arguments_for_roblox_functions(
+pub(crate) fn fix_void_arguments_for_roblox_functions(
     state: &mut TransformState<'_>,
     t: P<Type>,
     args: &mut [Expr],
@@ -98,7 +98,7 @@ pub enum PropertyKey {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn create_ordered_property_call(
+pub(crate) fn create_ordered_property_call(
     state: &mut TransformState<'_>,
     prereqs: &mut Prereqs,
     source: P<Node>,

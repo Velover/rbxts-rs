@@ -1,0 +1,408 @@
+//! `probe`: a test plugin for the compiler's side of the seam. Every primitive S1 offers is reached from one fixture
+//! (`crates/rbxts_transform/tests/plugin_fixtures/probe`).
+//!
+//! **Calls by symbol**: a function whose JSDoc has `@probe <op>`; `classify_symbol` reads the op:
+//! - `hoist`: `cx.hoist(arg)`, a local before the root statement;
+//! - `prereq`: the argument bound with `push_to_var`, after a `comment`;
+//! - `order`: `compile_in_order(args)` as an array;
+//! - `inject`: `compile_call(Original, [Original(arg0), Luau("injected"), Nil])`;
+//! - `swap`: `compile_call(Function(import_named("./runtime", "impl")), [Original(arg1), Original(arg0)])`;
+//! - `late`: a late string, resolved in `finish` to `"<plugin>#<n>"` numbered over all files in program order;
+//! - `capture`: `capture(compile_expr(arg))`, wrapped as `(function() <prereqs> return v end)()`;
+//! - `root`: `insert_before_root_statement([comment])` and `header([comment])`, value `nil`;
+//! - `elide`: the call becomes its callee's name, and its import alias is handed to `request_import_elision`;
+//! - `keep`: like `elide`, and `mark_import_used` keeps the import anyway;
+//! - `new` (on a class): `new C(args)` → `compile_call(Original, [Luau("probed"), Original(args)…])`;
+//! - `decorator`: `@d()` → `compile_call(Original, [Luau("probed")])`;
+//! - `facts`: a string of source facts: the call's UTF-16 line and character, its width, the callee's declaring
+//!   package, where `./runtime` resolves, the `{@link}` in the tag and what it resolves to, the file's checker
+//!   diagnostics;
+//! - `boom`: panics in [`Mode::Panic`]; `fail`: an error in [`Mode::Fail`]; `err`: `Err` with no new error in
+//!   [`Mode::ErrWithoutError`]; declined otherwise.
+//!
+//! **By receiver**: `obj.probeMethod(x)` where `obj`'s type has `__probeMarker` →
+//! `compile_call(Method { compile_receiver, "probed" }, [Original(x)])`.
+//! **By callee marker**: `f(x)` where `f`'s type has `__probeCallee` → `compile_call(Original, [Original(x),
+//! Luau(1)])`.
+//! **Class hook** (decorated classes): `Class.__probed = "<name>"`.
+//! **By kind**: `void probeVoid` becomes `"void claimed"` (other `void`s are declined); `debugger` becomes
+//! `print("probe: debugger")`.
+//! **explain_checker_diagnostic**: a checker message naming `probeBroken` is replaced.
+//! **Finish**: an artifact `probe-report.json` with the claims per file; in [`Mode::Unresolved`] one late key is left
+//! unresolved, in [`Mode::ArtifactOutside`] an artifact goes outside the project.
+//! **[`Mode::Refuse`]** calls refused primitives in each phase: `prereq` in `begin_file`, `late_string` in
+//! `classify_symbol`, `hoist` in `end_file`.
+
+use std::cell::{Cell, RefCell};
+use std::sync::Arc;
+
+use rbxts_luau::{AssignmentOperator, create};
+use rbxts_plugin::ts::{Diagnostic, Kind, Node, P, Symbol};
+use rbxts_plugin::{
+    Abort, Arg, CallKind, CallSite, Callee, CheckerInfo, Claim, ClassFilter, ClassSite, Cx, Fatal, FileIndex, FinishCx,
+    Interest, LuauExpr, LuauStmt, PResult, Plugin, PluginDiagnostic, PluginInfo, PluginInstance, SetupCx, SymbolRole,
+    Tag, text_literal,
+};
+
+/// How a probe misbehaves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Normal,
+    /// `@probe boom` panics.
+    Panic,
+    /// Refused primitives in `begin_file`, `classify_symbol` and `end_file`.
+    Refuse,
+    /// `finish` leaves the last late key unresolved.
+    Unresolved,
+    /// `@probe fail` reports an error.
+    Fail,
+    /// `@probe err` returns `Err` without a new error (the first such call reports one and keeps its `Abort`).
+    ErrWithoutError,
+    /// `finish` writes an artifact outside the project.
+    ArtifactOutside,
+}
+
+/// The probe factory. Two probes with different names can be registered together (claim order tests).
+pub struct Probe {
+    pub name: &'static str,
+    pub mode: Mode,
+}
+
+impl Probe {
+    pub fn new(name: &'static str, mode: Mode) -> Probe {
+        Probe { name, mode }
+    }
+}
+
+const OPS: &[&str] = &[
+    "hoist",
+    "prereq",
+    "order",
+    "inject",
+    "swap",
+    "late",
+    "capture",
+    "root",
+    "elide",
+    "keep",
+    "new",
+    "decorator",
+    "boom",
+    "fail",
+    "err",
+    "facts",
+];
+const RECEIVER: Tag = Tag(100);
+const CALLEE: Tag = Tag(101);
+const VOID: Tag = Tag(102);
+const DEBUGGER: Tag = Tag(103);
+
+fn op(tag: Tag) -> &'static str {
+    OPS.get(tag.0 as usize).copied().unwrap_or("?")
+}
+
+pub struct ProbeShared {
+    name: &'static str,
+    mode: Mode,
+}
+
+/// One file's claims and late keys.
+#[derive(Debug, Default)]
+pub struct ProbePart {
+    pub file: String,
+    pub claims: u32,
+    pub late_keys: Vec<String>,
+}
+
+pub struct ProbeInstance {
+    name: &'static str,
+    mode: Mode,
+    claims: Cell<u32>,
+    late_keys: RefCell<Vec<String>>,
+    header_done: Cell<bool>,
+    saved: RefCell<Option<Abort>>,
+}
+
+impl Plugin for Probe {
+    type Shared = ProbeShared;
+    type State = ();
+    type FilePart = ProbePart;
+    type Instance = ProbeInstance;
+
+    fn info(&self) -> PluginInfo {
+        PluginInfo { name: self.name, version: "0.1.0", tsconfig_transform: None }
+    }
+
+    fn setup(&self, cx: &mut SetupCx<'_>, _: &mut ()) -> Result<Arc<ProbeShared>, Fatal> {
+        cx.info("probe set up");
+        Ok(Arc::new(ProbeShared { name: self.name, mode: self.mode }))
+    }
+
+    fn instance(&self, shared: Arc<ProbeShared>, _: CheckerInfo) -> ProbeInstance {
+        ProbeInstance {
+            name: shared.name,
+            mode: shared.mode,
+            claims: Cell::new(0),
+            late_keys: RefCell::new(Vec::new()),
+            header_done: Cell::new(false),
+            saved: RefCell::new(None),
+        }
+    }
+
+    fn finish(
+        &self,
+        shared: &ProbeShared,
+        _: &mut (),
+        parts: &[(FileIndex, &ProbePart)],
+        cx: &mut FinishCx<'_>,
+    ) -> Result<(), Fatal> {
+        let keys: Vec<&String> = parts.iter().flat_map(|(_, part)| &part.late_keys).collect();
+        let resolve = match shared.mode {
+            Mode::Unresolved => keys.len().saturating_sub(1),
+            _ => keys.len(),
+        };
+        for (n, key) in keys.iter().take(resolve).enumerate() {
+            cx.resolve_late(key, &format!("{}#{}", shared.name, n + 1));
+        }
+        let files: Vec<String> = parts
+            .iter()
+            .filter(|(_, part)| part.claims > 0)
+            .map(|(_, part)| format!("{{\"file\":\"{}\",\"claims\":{}}}", part.file, part.claims))
+            .collect();
+        cx.write_artifact(format!("{}-report.json", shared.name), format!("[{}]\n", files.join(",")).into_bytes());
+        if shared.mode == Mode::ArtifactOutside {
+            cx.write_artifact("../outside-the-project.txt", b"no".to_vec());
+        }
+        Ok(())
+    }
+}
+
+impl ProbeInstance {
+    fn claimed(&self, value: LuauExpr) -> PResult<Claim<LuauExpr>> {
+        self.claims.set(self.claims.get() + 1);
+        Ok(Claim::Take(value))
+    }
+
+    /// The import alias declaration a callee identifier refers to, if it is an import.
+    fn alias_of(cx: &mut Cx<'_>, callee: P<Node>) -> Option<P<Node>> {
+        let symbol = cx.checker().get_symbol_at_location_exported(callee)?;
+        symbol.declarations().iter().copied().find(|d| {
+            matches!(
+                d.kind(),
+                Kind::ImportSpecifier | Kind::ImportClause | Kind::NamespaceImport | Kind::ImportEqualsDeclaration
+            )
+        })
+    }
+
+    fn call_by_op(&self, cx: &mut Cx<'_>, call: &CallSite, op: &str) -> PResult<Claim<LuauExpr>> {
+        let arg = |i: usize| call.args.get(i).copied();
+        match op {
+            "hoist" => {
+                let value = cx.compile_expr(arg(0).expect("an argument"))?;
+                let hoisted = cx.hoist(value, "hoisted");
+                self.claimed(hoisted)
+            }
+            "prereq" => {
+                let value = cx.compile_expr(arg(0).expect("an argument"))?;
+                cx.comment(" probe: prereq");
+                let bound = cx.push_to_var(value, "probed");
+                self.claimed(bound)
+            }
+            "order" => {
+                let values = cx.compile_in_order(call.args)?;
+                self.claimed(create::array(values))
+            }
+            "inject" => {
+                let value = cx.compile_call(
+                    call,
+                    Callee::Original,
+                    vec![Arg::Original(arg(0).expect("an argument")), Arg::Luau(text_literal("injected")), Arg::Nil],
+                )?;
+                self.claimed(value)
+            }
+            "swap" => {
+                let function = cx.import_named("./runtime", "impl")?;
+                let args =
+                    vec![Arg::Original(arg(1).expect("two arguments")), Arg::Original(arg(0).expect("an argument"))];
+                let value = cx.compile_call(call, Callee::Function(function), args)?;
+                self.claimed(value)
+            }
+            "late" => {
+                let key = format!("{}:{}", cx.file().relative_path, self.late_keys.borrow().len());
+                self.late_keys.borrow_mut().push(key.clone());
+                let value = cx.late_string(&key);
+                self.claimed(value)
+            }
+            "capture" => {
+                let (value, mut statements) = cx.capture(|cx| cx.compile_expr(arg(0).expect("an argument")))?;
+                statements.push(create::return_stmt(value));
+                self.claimed(create::call(create::paren(create::function(Vec::new(), false, statements)), Vec::new()))
+            }
+            "root" => {
+                cx.insert_before_root_statement([create::comment(" probe: before the root statement")]);
+                if !self.header_done.replace(true) {
+                    cx.header([create::comment(" probe: header")]);
+                }
+                self.claimed(create::nil())
+            }
+            "elide" | "keep" => {
+                let name = cx.source_text(call.callee).to_owned();
+                if let Some(alias) = Self::alias_of(cx, call.callee) {
+                    cx.request_import_elision(alias);
+                    if op == "keep" {
+                        cx.mark_import_used(alias);
+                    }
+                }
+                self.claimed(text_literal(&name))
+            }
+            "new" if call.kind == CallKind::New => {
+                let mut args = vec![Arg::Luau(text_literal("probed"))];
+                args.extend(call.args.iter().map(|&a| Arg::Original(a)));
+                let value = cx.compile_call(call, Callee::Original, args)?;
+                self.claimed(value)
+            }
+            "decorator" if call.kind == CallKind::Decorator => {
+                let value = cx.compile_call(call, Callee::Original, vec![Arg::Luau(text_literal("probed"))])?;
+                self.claimed(value)
+            }
+            "facts" => {
+                let pos = cx.utf16_pos(call.node);
+                let width = cx.utf16_width(call.node);
+                let symbol = call.symbol.expect("a callee symbol");
+                let package = cx.declaring_package(symbol).and_then(|p| p.name.clone()).unwrap_or_default();
+                let source = cx.file().source;
+                let resolved = cx
+                    .resolve_module("./runtime", source)
+                    .map(|r| r.file_name.rsplit('/').next().unwrap_or_default().to_owned())
+                    .unwrap_or_default();
+                let tags = cx.symbol_jsdoc_tags(symbol);
+                let link = tags.iter().find(|t| t.name == "probe").and_then(|t| t.links.first()).map(|link| {
+                    let target = link.symbol.map_or("?", |s| s.name());
+                    format!("{}={target}", cx.source_text(link.name))
+                });
+                let diagnostics = cx.file_diagnostics().len();
+                let text = format!(
+                    "{}:{} w{width} {package} {resolved} link:{} diagnostics:{diagnostics}",
+                    pos.line + 1,
+                    pos.character + 1,
+                    link.unwrap_or_default()
+                );
+                self.claimed(text_literal(&text))
+            }
+            "boom" if self.mode == Mode::Panic => panic!("probe: boom"),
+            "fail" if self.mode == Mode::Fail => Err(cx.error(call.node, "probe: fail was called")),
+            "err" if self.mode == Mode::ErrWithoutError => {
+                let saved = self.saved.borrow_mut().take();
+                match saved {
+                    Some(abort) => Err(abort),
+                    None => {
+                        let abort = cx.error(call.node, "probe: the first err");
+                        *self.saved.borrow_mut() = Some(abort);
+                        Ok(Claim::Decline)
+                    }
+                }
+            }
+            _ => Ok(Claim::Decline),
+        }
+    }
+}
+
+impl PluginInstance for ProbeInstance {
+    type FilePart = ProbePart;
+
+    fn interest(&self, interest: &mut Interest) {
+        interest.calls_by_symbol();
+        interest.calls_by_receiver(&["probeMethod"], "__probeMarker", RECEIVER);
+        interest.calls_by_callee_marker("__probeCallee", CALLEE);
+        interest.classes(ClassFilter::Decorated);
+        interest.expressions(Kind::VoidExpression, VOID);
+        interest.statements(Kind::DebuggerStatement, DEBUGGER);
+        // accepted, not dispatched in S1
+        interest.accesses_by_marker("__probeKey", Tag(104));
+    }
+
+    fn classify_symbol(&self, cx: &mut Cx<'_>, symbol: P<Symbol>, role: SymbolRole) -> Option<Tag> {
+        if self.mode == Mode::Refuse {
+            cx.late_string("refused in classify_symbol");
+        }
+        if role != SymbolRole::Callee {
+            return None;
+        }
+        let tag = cx.symbol_jsdoc_tags(symbol).into_iter().find(|t| t.name == "probe")?;
+        let op = tag.comment.split_whitespace().next().unwrap_or("");
+        OPS.iter().position(|&o| o == op).map(|i| Tag(i as u32))
+    }
+
+    fn begin_file(&self, cx: &mut Cx<'_>) -> PResult<()> {
+        self.claims.set(0);
+        self.late_keys.borrow_mut().clear();
+        self.header_done.set(false);
+        if self.mode == Mode::Refuse {
+            cx.prereq(create::comment("refused in begin_file"));
+        }
+        Ok(())
+    }
+
+    fn call(&self, cx: &mut Cx<'_>, call: &CallSite, tag: Tag) -> PResult<Claim<LuauExpr>> {
+        match tag {
+            RECEIVER => {
+                let object = cx.compile_receiver(call)?;
+                let args = call.args.iter().map(|&a| Arg::Original(a)).collect();
+                let value = cx.compile_call(call, Callee::Method { object, name: "probed".to_owned() }, args)?;
+                self.claimed(value)
+            }
+            CALLEE => {
+                let args = vec![Arg::Original(call.args[0]), Arg::Luau(create::number(1.0))];
+                let value = cx.compile_call(call, Callee::Original, args)?;
+                self.claimed(value)
+            }
+            tag => self.call_by_op(cx, call, op(tag)),
+        }
+    }
+
+    fn class(&self, _cx: &mut Cx<'_>, class: &ClassSite) -> PResult<Vec<LuauStmt>> {
+        Ok(vec![create::assignment(
+            create::property(class.luau_name.clone(), "__probed"),
+            AssignmentOperator::Assign,
+            text_literal(self.name),
+        )])
+    }
+
+    fn expression(&self, cx: &mut Cx<'_>, node: P<Node>, tag: Tag) -> PResult<Claim<LuauExpr>> {
+        if tag == VOID
+            && let Some(operand) = node.expression()
+            && cx.source_text(operand) == "probeVoid"
+        {
+            return self.claimed(text_literal("void claimed"));
+        }
+        Ok(Claim::Decline)
+    }
+
+    fn statement(&self, _cx: &mut Cx<'_>, _node: P<Node>, tag: Tag) -> PResult<Claim<Vec<LuauStmt>>> {
+        if tag != DEBUGGER {
+            return Ok(Claim::Decline);
+        }
+        self.claims.set(self.claims.get() + 1);
+        let print = create::call(create::id("print"), vec![text_literal("probe: debugger")]);
+        Ok(Claim::Take(vec![create::call_statement(print)]))
+    }
+
+    fn explain_checker_diagnostic(&self, cx: &mut Cx<'_>, diagnostic: P<Diagnostic>) -> Option<PluginDiagnostic> {
+        let text = diagnostic.localize();
+        text.contains("probeBroken").then(|| {
+            PluginDiagnostic::error(cx.file().source.as_node(), format!("probe explained: {text}"))
+                .with_hint("Declare probeBroken first.")
+        })
+    }
+
+    fn end_file(&self, cx: &mut Cx<'_>) -> PResult<ProbePart> {
+        if self.mode == Mode::Refuse {
+            cx.hoist(create::nil(), "refused");
+        }
+        Ok(ProbePart {
+            file: cx.file().relative_path.clone(),
+            claims: self.claims.replace(0),
+            late_keys: std::mem::take(&mut *self.late_keys.borrow_mut()),
+        })
+    }
+}

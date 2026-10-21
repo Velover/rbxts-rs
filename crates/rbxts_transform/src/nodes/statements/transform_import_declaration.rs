@@ -15,10 +15,16 @@ use crate::util::traversal::source_file_of;
 
 /// Whether an import binding is used as a value: referenced (import elision on the original program) and naming a
 /// value at run time.
+///
+/// rbxts-rs: at the end of a file with plugins, an alias a plugin asked to elide is unused, and one a plugin kept
+/// is used (`plugins::dispatch::import_override`).
 fn is_used_value_import(state: &mut TransformState<'_>, alias_declaration: P<Node>, name: P<Node>) -> bool {
     let symbol = get_original_symbol_of_node(state.checker, name);
-    state.resolver.is_referenced_alias_declaration(state.checker, alias_declaration)
-        && symbol.is_none_or(is_symbol_of_value)
+    let referenced = match crate::plugins::dispatch::import_override(state, alias_declaration) {
+        Some(kept) => kept,
+        None => state.resolver.is_referenced_alias_declaration(state.checker, alias_declaration),
+    };
+    referenced && symbol.is_none_or(is_symbol_of_value)
 }
 
 fn count_import_exp_uses(state: &mut TransformState<'_>, import_clause: P<Node>) -> usize {
@@ -33,7 +39,9 @@ fn count_import_exp_uses(state: &mut TransformState<'_>, import_clause: P<Node>)
 
     if let Some(named_bindings) = clause.named_bindings {
         if named_bindings.kind() == Kind::NamespaceImport {
-            uses += 1;
+            if crate::plugins::dispatch::import_override(state, named_bindings) != Some(false) {
+                uses += 1;
+            }
         } else {
             for &element in named_bindings.elements() {
                 let name = element.name().expect("an import specifier has a name");
@@ -108,10 +116,14 @@ pub fn transform_import_declaration(state: &mut TransformState<'_>, node: P<Node
 
         if let Some(named_bindings) = clause.named_bindings {
             if named_bindings.kind() == Kind::NamespaceImport {
-                // namespace import logic
-                let name = named_bindings.as_namespace_import().name;
-                let value = import_exp.get(state);
-                transform_variable(state, &mut binding_prereqs, name, Some(value));
+                if crate::plugins::dispatch::import_override(state, named_bindings) == Some(false) {
+                    // rbxts-rs: elided for a plugin
+                } else {
+                    // namespace import logic
+                    let name = named_bindings.as_namespace_import().name;
+                    let value = import_exp.get(state);
+                    transform_variable(state, &mut binding_prereqs, name, Some(value));
+                }
             } else {
                 // named elements import logic
                 for &element in named_bindings.elements() {

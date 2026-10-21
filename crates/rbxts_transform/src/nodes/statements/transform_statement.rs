@@ -38,6 +38,10 @@ pub fn transform_statement(state: &mut TransformState<'_>, node: P<Node>) -> Vec
     if tsrs_ast::can_have_modifiers(node) && has_declare_modifier(node) {
         return Vec::new();
     }
+    // rbxts-rs: the plugins' by-kind fallback (DESIGN §11.2), for statements that have a lowering
+    if let Some(claimed) = crate::plugins::dispatch::claim_statement(state, node) {
+        return claimed;
+    }
 
     match node.kind() {
         // no emit

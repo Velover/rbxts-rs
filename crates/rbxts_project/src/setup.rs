@@ -294,6 +294,31 @@ fn get_extended_config_paths(config_path: &str, extends: Option<&Value>) -> Resu
     Ok(paths)
 }
 
+/// The tsconfig's `compilerOptions.plugins` entries (the objects, in order), from the config itself or else from the
+/// last config it extends that sets them: TypeScript replaces an option array from an extended config as a whole.
+/// Compiled-in plugins are activated by these entries' `transform` (DESIGN §11.5).
+pub fn read_tsconfig_plugins(config_path: &str) -> Result<Vec<Map<String, Value>>, ProjectError> {
+    Ok(read_tsconfig_plugins_rec(config_path, 0)?.unwrap_or_default())
+}
+
+fn read_tsconfig_plugins_rec(config_path: &str, depth: usize) -> Result<Option<Vec<Map<String, Value>>>, ProjectError> {
+    if depth > 64 {
+        return Err(ProjectError::new(format!("Circularity detected while resolving configuration: {config_path}")));
+    }
+    let config = read_config_json(config_path)?;
+    if let Some(plugins) = config.get("compilerOptions").and_then(|options| options.get("plugins")) {
+        let entries = plugins.as_array().map(|a| a.iter().filter_map(|v| v.as_object().cloned()).collect());
+        return Ok(Some(entries.unwrap_or_default()));
+    }
+    let mut found = None;
+    for extended in get_extended_config_paths(config_path, config.get("extends"))? {
+        if let Some(entries) = read_tsconfig_plugins_rec(&extended, depth + 1)? {
+            found = Some(entries);
+        }
+    }
+    Ok(found)
+}
+
 /// The result of reading the `rbxts` sections of a tsconfig and the configs it extends.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RbxtsConfig {

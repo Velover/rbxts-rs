@@ -134,6 +134,8 @@ pub fn transform_identifier(state: &mut TransformState<'_>, node: P<Node>) -> Ex
     }
 
     let symbol = identifier_symbol(state, node).expect("an identifier has a symbol");
+    // rbxts-rs: a reference the compiler compiles keeps its import through plugin elision requests
+    crate::plugins::dispatch::note_alias_reference(state, node, symbol);
 
     if state.checker.is_undefined_symbol(symbol) {
         return Expr::Nil;

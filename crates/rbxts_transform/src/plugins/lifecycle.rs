@@ -1,0 +1,491 @@
+//! The build lifecycle around the transform (DESIGN §4, §14): which plugins are on, `setup` and `finish` with their
+//! backends, the late-string key check, the commit, and `explain_checker_diagnostic` on files that failed checking.
+//!
+//! S1 runs clean builds only. The seams for incremental and watch builds are marked `// rbxts-rs: S2`: kept
+//! `Shared`s and committed states across builds, cached file parts and late values, `rebuild_start`, the artifact
+//! set of the last build (stale deletions), and the build inputs as watch and hash inputs.
+
+use std::cell::{OnceCell, RefCell};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use rustc_hash::FxHashSet;
+use serde_json::{Map, Value};
+
+use rbxts_luau::LateStrings;
+use rbxts_plugin::erased::{DynPlugin, ErasedPart, ErasedShared, ErasedState};
+use rbxts_plugin::{
+    BuildKind, ChangeSet, FileIndex, FinishBackend, FinishCx, PluginInfo, SetupBackend, SetupCx, StateOrigin, Utf16Pos,
+};
+use rbxts_project::{ModuleResolver, ProjectServices, ResolvedModuleInfo, nodepath};
+use tsrs_compiler::Program;
+use tsrs_core::{CompilerOptions, P};
+
+use super::HookKind;
+use super::host::{HookTime, resolve_module_from};
+
+/// The plugins of a build and the switches that go with them.
+#[derive(Default)]
+pub struct PluginOptions<'p> {
+    /// Registered plugins, in registration order (the claim order).
+    pub plugins: &'p [Box<dyn DynPlugin>],
+    /// A tsconfig `plugins` entry whose `transform` no registered plugin claims is an error ("not compiled into
+    /// this toolchain"); with this set it is ignored (measurement runs on a project's own tsconfig).
+    pub ignore_unknown_tsconfig_plugins: bool,
+    /// `RBXTS_PLUGIN_CLAIMS=all`: ask every matching plugin, and report a double claim as an error. The
+    /// environment variable turns it on too.
+    pub claims_all: bool,
+}
+
+/// A registered plugin that is on for this project.
+pub(crate) struct ActivePlugin<'p> {
+    pub plugin: &'p dyn DynPlugin,
+    pub info: PluginInfo,
+    /// Its tsconfig `plugins` entry.
+    pub entry: Option<Map<String, Value>>,
+}
+
+/// What a plugin read in `setup`: recorded so incremental and watch builds can rebuild when one changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BuildInput {
+    /// A file read through `read_input` (its absolute path, and whether it existed).
+    File { plugin: &'static str, path: String, exists: bool },
+    /// An environment variable read through `env`.
+    Env { plugin: &'static str, name: String, value: Option<String> },
+    /// A `resolve_module` from `setup`.
+    Resolution { plugin: &'static str, specifier: String, from: String, resolved: Option<String> },
+}
+
+/// One plugin's hook times.
+#[derive(Clone, Debug)]
+pub struct PluginTimings {
+    pub name: &'static str,
+    /// Per hook kind: calls and time, without the compiler work hooks asked for.
+    pub hooks: Vec<(HookKind, HookTime)>,
+}
+
+/// The late-string key of a plugin's key: keys are per plugin.
+pub(crate) fn late_key(plugin: &str, key: &str) -> String {
+    format!("{plugin}\u{0}{key}")
+}
+
+/// The plugin's own key of a namespaced late-string key.
+pub(crate) fn plain_late_key(key: &str) -> &str {
+    key.split_once('\u{0}').map_or(key, |(_, plain)| plain)
+}
+
+/// The registered plugins that are on for the project: `tsconfig_transform: None`, or a tsconfig `plugins` entry
+/// with that `transform`. Errors: an entry no registered plugin claims (unless ignored), two plugins with one name.
+pub(crate) fn activate<'p>(
+    options: &PluginOptions<'p>,
+    tsconfig_path: &str,
+) -> Result<Vec<ActivePlugin<'p>>, Vec<String>> {
+    let entries = rbxts_project::setup::read_tsconfig_plugins(tsconfig_path).map_err(|e| e.messages)?;
+    let mut errors = Vec::new();
+    let mut names = FxHashSet::default();
+    for plugin in options.plugins {
+        let name = plugin.info().name;
+        if !names.insert(name) {
+            errors.push(format!("two plugins are named `{name}`: plugin names must be unique"));
+        }
+    }
+    for entry in &entries {
+        let Some(transform) = entry.get("transform").and_then(Value::as_str) else { continue };
+        let claimed = options.plugins.iter().any(|p| p.info().tsconfig_transform == Some(transform));
+        if !claimed && !options.ignore_unknown_tsconfig_plugins {
+            errors.push(format!(
+                "tsconfig plugin \"{transform}\" is not compiled into this toolchain (no registered plugin has \
+                 that tsconfig_transform)"
+            ));
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    let mut active = Vec::new();
+    for plugin in options.plugins {
+        let info = plugin.info();
+        let entry = match info.tsconfig_transform {
+            None => None,
+            Some(transform) => {
+                match entries.iter().find(|e| e.get("transform").and_then(Value::as_str) == Some(transform)) {
+                    Some(entry) => Some(entry.clone()),
+                    None => continue,
+                }
+            }
+        };
+        active.push(ActivePlugin { plugin: &**plugin, info, entry });
+    }
+    Ok(active)
+}
+
+/// A path a plugin named: absolute, or relative to the project directory.
+fn plugin_path(services: &ProjectServices, path: &Path) -> String {
+    let text = path.to_string_lossy();
+    if nodepath::is_absolute(&text) {
+        nodepath::normalize(&text)
+    } else {
+        nodepath::resolve(&[&services.data.project_path, &text])
+    }
+}
+
+/// A path as a comparison key (case-insensitive unless the file system is case-sensitive).
+fn path_key(services: &ProjectServices, path: &str) -> String {
+    let normalized = nodepath::normalize(path).replace('\\', "/");
+    if services.use_case_sensitive_file_names { normalized } else { normalized.to_lowercase() }
+}
+
+// --- setup ---
+
+/// The compiler's side of `SetupCx` for one plugin.
+pub(crate) struct Setup<'s> {
+    pub program: &'static Program,
+    pub services: &'s ProjectServices,
+    pub plugin: &'static str,
+    pub entry: Option<&'s Map<String, Value>>,
+    pub resolver: &'s OnceCell<ModuleResolver>,
+    /// What setup read (a `RefCell`: `resolve_module` takes `&self`).
+    pub inputs: RefCell<Vec<BuildInput>>,
+    pub messages: &'s mut Vec<String>,
+    pub warnings: &'s mut Vec<String>,
+}
+
+impl SetupBackend for Setup<'_> {
+    fn program(&self) -> &'static Program {
+        self.program
+    }
+
+    fn options(&self) -> P<CompilerOptions> {
+        self.program.options()
+    }
+
+    fn project(&self) -> &ProjectServices {
+        self.services
+    }
+
+    fn tsconfig_entry(&self) -> Option<&Map<String, Value>> {
+        self.entry
+    }
+
+    fn resolve_module(&self, specifier: &str, from_file: &str) -> Option<ResolvedModuleInfo> {
+        let resolved = resolve_module_from(self.program, self.resolver, specifier, from_file);
+        // a build input: a package installed mid-watch must trigger a rebuild (rbxts-rs: S2 — the watcher)
+        self.inputs.borrow_mut().push(BuildInput::Resolution {
+            plugin: self.plugin,
+            specifier: specifier.to_owned(),
+            from: from_file.to_owned(),
+            resolved: resolved.as_ref().map(|r| r.file_name.clone()),
+        });
+        resolved
+    }
+
+    fn read_input(&mut self, path: &Path) -> io::Result<Option<String>> {
+        let path = plugin_path(self.services, path);
+        let result = match std::fs::read_to_string(&path) {
+            Ok(text) => Ok(Some(text)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        };
+        let exists = matches!(result, Ok(Some(_)));
+        self.inputs.borrow_mut().push(BuildInput::File { plugin: self.plugin, path, exists });
+        result
+    }
+
+    fn env(&mut self, name: &str) -> Option<String> {
+        let value = std::env::var(name).ok();
+        self.inputs.borrow_mut().push(BuildInput::Env {
+            plugin: self.plugin,
+            name: name.to_owned(),
+            value: value.clone(),
+        });
+        value
+    }
+
+    fn build_kind(&self) -> BuildKind {
+        // rbxts-rs: S2 — Incremental and WatchRebuild
+        BuildKind::Clean
+    }
+
+    fn transforms_all_files(&self) -> bool {
+        true
+    }
+
+    fn changes(&self) -> Option<&ChangeSet> {
+        None
+    }
+
+    fn state_origin(&self) -> StateOrigin {
+        StateOrigin::Fresh
+    }
+
+    fn read_persisted(&mut self, path: &Path) -> io::Result<Option<Vec<u8>>> {
+        match std::fs::read(plugin_path(self.services, path)) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn info(&mut self, message: &str) {
+        self.messages.push(format!("{}: {message}", self.plugin));
+    }
+
+    fn warn(&mut self, message: &str, hint: Option<&str>) {
+        self.warnings.push(match hint {
+            Some(hint) => format!("{}: {message}\n{hint}", self.plugin),
+            None => format!("{}: {message}", self.plugin),
+        });
+    }
+}
+
+/// Runs one plugin's `setup` on a clean build: the state starts from `default_state()` (the plugin reloads what it
+/// persisted itself with `read_persisted`).
+pub(crate) fn run_setup(
+    active: &ActivePlugin<'_>,
+    backend: &mut Setup<'_>,
+) -> (Result<ErasedShared, rbxts_plugin::Fatal>, ErasedState, Duration) {
+    // rbxts-rs: S2 — the committed state of the last build in this process, and `rebuild_start` with a kept Shared
+    let mut state = active.plugin.default_state();
+    let start = std::time::Instant::now();
+    let shared = active.plugin.setup(&mut SetupCx::new(backend), &mut state);
+    (shared, state, start.elapsed())
+}
+
+// --- finish ---
+
+/// What `finish` queued for the commit.
+#[derive(Default)]
+pub(crate) struct CommitQueue {
+    /// (plugin, absolute path, bytes): written in step 2, only if changed.
+    pub artifacts: Vec<(&'static str, String, Vec<u8>)>,
+    /// Written in step 4.
+    pub state_files: Vec<(&'static str, String, Vec<u8>)>,
+    /// Deleted in step 3.
+    pub removals: Vec<(&'static str, String)>,
+    /// Glob roots to watch (rbxts-rs: S2 — the watcher).
+    pub watch_dirs: Vec<(&'static str, String)>,
+}
+
+/// The compiler's side of `FinishCx` for one plugin.
+pub(crate) struct Finish<'s> {
+    pub program: &'static Program,
+    pub services: &'s ProjectServices,
+    pub plugin: &'static str,
+    /// Where outputs go (the override when there is one).
+    pub out_dir: &'s str,
+    /// The path keys of this build's Luau outputs.
+    pub luau_outputs: &'s FxHashSet<String>,
+    pub late: &'s mut LateStrings,
+    pub resolved: &'s mut FxHashSet<String>,
+    pub queue: &'s mut CommitQueue,
+    pub errors: &'s mut Vec<String>,
+    pub warnings: &'s mut Vec<String>,
+    pub messages: &'s mut Vec<String>,
+}
+
+impl Finish<'_> {
+    /// Checks an artifact or state-file path: under the project directory, the outDir or the include path, and not
+    /// a Luau output. Records an error naming the plugin otherwise.
+    fn checked_path(&mut self, path: &Path, what: &str) -> Option<String> {
+        let absolute = plugin_path(self.services, path);
+        let key = path_key(self.services, &absolute);
+        let data = &self.services.data;
+        let roots = [
+            data.project_path.as_str(),
+            self.services.path_translator.out_dir.as_str(),
+            self.out_dir,
+            data.options.include_path.as_str(),
+        ];
+        let under_root = roots.iter().filter(|r| !r.is_empty()).any(|root| {
+            let root = path_key(self.services, root);
+            key.len() > root.len() && key.starts_with(&root) && key.as_bytes()[root.len()] == b'/'
+        });
+        if !under_root {
+            self.errors.push(format!(
+                "plugin `{}`: {what} {absolute} is outside the project directory, the outDir and the include path",
+                self.plugin
+            ));
+            return None;
+        }
+        if self.luau_outputs.contains(&key) {
+            self.errors.push(format!("plugin `{}`: {what} {absolute} is a Luau output of this build", self.plugin));
+            return None;
+        }
+        Some(absolute)
+    }
+}
+
+impl FinishBackend for Finish<'_> {
+    fn project(&self) -> &ProjectServices {
+        self.services
+    }
+
+    fn build_kind(&self) -> BuildKind {
+        BuildKind::Clean
+    }
+
+    fn transforms_all_files(&self) -> bool {
+        true
+    }
+
+    fn resolve_late(&mut self, key: &str, escaped: String) {
+        let key = late_key(self.plugin, key);
+        self.resolved.insert(key.clone());
+        self.late.insert(key, escaped);
+    }
+
+    fn write_artifact(&mut self, path: &Path, bytes: Vec<u8>) {
+        if let Some(path) = self.checked_path(path, "artifact") {
+            self.queue.artifacts.retain(|(_, p, _)| *p != path);
+            self.queue.artifacts.push((self.plugin, path, bytes));
+        }
+    }
+
+    fn write_state_file(&mut self, path: &Path, bytes: Vec<u8>) {
+        if let Some(path) = self.checked_path(path, "state file") {
+            self.queue.state_files.retain(|(_, p, _)| *p != path);
+            self.queue.state_files.push((self.plugin, path, bytes));
+        }
+    }
+
+    fn remove_artifact(&mut self, path: &Path) {
+        if let Some(path) = self.checked_path(path, "artifact") {
+            self.queue.removals.push((self.plugin, path));
+        }
+    }
+
+    fn watch_dir(&mut self, path: &Path) {
+        // rbxts-rs: S2 — the watcher; recorded only
+        if let Some(path) = self.checked_path(path, "watched directory") {
+            self.queue.watch_dirs.push((self.plugin, path));
+        }
+    }
+
+    fn warn_at(&mut self, file: FileIndex, pos: Utf16Pos, message: &str, hint: Option<&str>) {
+        let name = self.program.source_files().get(file.0 as usize).map_or("<unknown file>", |f| f.get().file_name());
+        let relative = nodepath::relative(&self.services.data.project_path, name).replace('\\', "/");
+        let mut text = format!("{relative}:{}:{}: {}: {message}", pos.line + 1, pos.character + 1, self.plugin);
+        if let Some(hint) = hint {
+            text.push('\n');
+            text.push_str(hint);
+        }
+        self.warnings.push(text);
+    }
+
+    fn info(&mut self, message: &str) {
+        self.messages.push(format!("{}: {message}", self.plugin));
+    }
+}
+
+/// Runs one plugin's `finish` with the parts of every file, sorted by `FileIndex`.
+pub(crate) fn run_finish(
+    active: &ActivePlugin<'_>,
+    shared: &ErasedShared,
+    state: &mut ErasedState,
+    parts: &[(FileIndex, &ErasedPart)],
+    backend: &mut Finish<'_>,
+) -> (Result<(), rbxts_plugin::Fatal>, Duration) {
+    let start = std::time::Instant::now();
+    let result = active.plugin.finish(shared, state, parts, &mut FinishCx::new(backend));
+    (result, start.elapsed())
+}
+
+// --- commit ---
+
+/// Whether an I/O error is worth retrying: a file another process holds open (Windows sharing and lock
+/// violations, access denied while a scanner or editor has it).
+fn is_transient(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::PermissionDenied || matches!(error.raw_os_error(), Some(5 | 32 | 33))
+}
+
+/// Writes `bytes` to a temporary file next to `path` and renames it into place (`MoveFileExW` with
+/// `MOVEFILE_REPLACE_EXISTING`), retrying with backoff while another process holds the target. The error is
+/// returned after the last attempt; nothing is skipped silently.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = path.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp: PathBuf = dir.join(format!(".{name}.rbxts-tmp-{}-{n}", std::process::id()));
+    std::fs::write(&temp, bytes)?;
+    let mut delay = Duration::from_millis(10);
+    let mut attempt = 0;
+    loop {
+        match std::fs::rename(&temp, path) {
+            Ok(()) => return Ok(()),
+            Err(e) if is_transient(&e) && attempt < 8 => {
+                attempt += 1;
+                std::thread::sleep(delay);
+                delay = (delay * 2).min(Duration::from_millis(500));
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&temp);
+                return Err(e);
+            }
+        }
+    }
+}
+
+/// [`write_atomic`] when the file is missing or its bytes differ. Returns whether it wrote.
+pub fn write_if_changed(path: &Path, bytes: &[u8]) -> io::Result<bool> {
+    if std::fs::read(path).is_ok_and(|existing| existing == bytes) {
+        return Ok(false);
+    }
+    write_atomic(path, bytes)?;
+    Ok(true)
+}
+
+/// Deletes a file, retrying while another process holds it; a missing file is fine.
+pub fn remove_file(path: &Path) -> io::Result<bool> {
+    let mut delay = Duration::from_millis(10);
+    let mut attempt = 0;
+    loop {
+        match std::fs::remove_file(path) {
+            Ok(()) => return Ok(true),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(e) if is_transient(&e) && attempt < 8 => {
+                attempt += 1;
+                std::thread::sleep(delay);
+                delay = (delay * 2).min(Duration::from_millis(500));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Commit steps 2-4 after the Luau outputs (step 1, written by the caller): artifacts (only if changed), the
+/// removals (rbxts-rs: S2 — and the artifacts the last build wrote but this one did not), then state files.
+/// Returns the paths written and deleted, or the first failure; a failure stops the commit there.
+pub(crate) fn commit_plugin_files(queue: &CommitQueue) -> Result<(Vec<String>, Vec<String>), String> {
+    let mut written = Vec::new();
+    let mut deleted = Vec::new();
+    for (plugin, path, bytes) in &queue.artifacts {
+        match write_if_changed(Path::new(path), bytes) {
+            Ok(true) => written.push(path.clone()),
+            Ok(false) => {}
+            Err(e) => return Err(format!("plugin `{plugin}`: could not write {path}: {e}")),
+        }
+    }
+    for (plugin, path) in &queue.removals {
+        match remove_file(Path::new(path)) {
+            Ok(true) => deleted.push(path.clone()),
+            Ok(false) => {}
+            Err(e) => return Err(format!("plugin `{plugin}`: could not delete {path}: {e}")),
+        }
+    }
+    for (plugin, path, bytes) in &queue.state_files {
+        match write_if_changed(Path::new(path), bytes) {
+            Ok(true) => written.push(path.clone()),
+            Ok(false) => {}
+            Err(e) => return Err(format!("plugin `{plugin}`: could not write {path}: {e}")),
+        }
+    }
+    Ok((written, deleted))
+}
+
+/// The key for a Luau output path, to keep artifacts off them.
+pub(crate) fn output_key(services: &ProjectServices, path: &str) -> String {
+    path_key(services, path)
+}

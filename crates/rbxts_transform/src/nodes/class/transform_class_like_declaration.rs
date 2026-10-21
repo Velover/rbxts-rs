@@ -164,6 +164,7 @@ fn identifier_or_string_name(member: P<Node>) -> Option<(P<Node>, &'static str)>
 /// the decorators are applied; keep the static emission in this one function.
 fn transform_static_declarations(
     state: &mut TransformState<'_>,
+    node: P<Node>,
     static_declarations: &[P<Node>],
     internal_name: &AnyIdentifier,
 ) -> Vec<Stmt> {
@@ -179,6 +180,7 @@ fn transform_static_declarations(
             statements.extend(property);
         }
     }
+    statements.extend(crate::plugins::dispatch::class_statements(state, node, internal_name));
     statements
 }
 
@@ -307,7 +309,7 @@ pub fn transform_class_like_declaration(state: &mut TransformState<'_>, node: P<
         ));
     }
 
-    statements_inner.extend(transform_static_declarations(state, &static_declarations, &internal_name));
+    statements_inner.extend(transform_static_declarations(state, node, &static_declarations, &internal_name));
 
     // if using internal name, assign to return var
     if should_use_internal_name {

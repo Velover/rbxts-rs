@@ -59,10 +59,17 @@ pub struct TransformState<'a> {
     pub is_hoisted: FxHashMap<P<Symbol>, bool>,
     get_type_cache: FxHashMap<P<Node>, P<Type>>,
     pub uses_runtime_lib: bool,
+    /// rbxts-rs: how many times `TS` was used, so that an import elided for a plugin at the end of the file can take
+    /// back its uses.
+    pub runtime_lib_uses: u32,
     module_id_by_symbol: FxHashMap<P<Symbol>, AnyIdentifier>,
     pub symbol_to_id_map: FxHashMap<P<Symbol>, TemporaryIdentifier>,
     class_element_to_object_key_map: FxHashMap<P<Node>, Expr>,
     is_in_replicated_first: bool,
+    /// rbxts-rs: the plugins of this checker (DESIGN §11); `None` in a build without plugins.
+    pub plugins: Option<&'a crate::plugins::PluginHost>,
+    /// rbxts-rs: what this file records for its plugins.
+    pub plugin_file: crate::plugins::file_state::PluginFileState,
 }
 
 impl<'a> TransformState<'a> {
@@ -95,10 +102,13 @@ impl<'a> TransformState<'a> {
             is_hoisted: FxHashMap::default(),
             get_type_cache: FxHashMap::default(),
             uses_runtime_lib: false,
+            runtime_lib_uses: 0,
             module_id_by_symbol: FxHashMap::default(),
             symbol_to_id_map: FxHashMap::default(),
             class_element_to_object_key_map: FxHashMap::default(),
             is_in_replicated_first,
+            plugins: None,
+            plugin_file: Default::default(),
         }
     }
 
@@ -196,6 +206,7 @@ impl<'a> TransformState<'a> {
     /// `TS`: `TS.<name>`, recording that the file uses the runtime library.
     pub fn ts(&mut self, node: P<Node>, name: &str) -> Expr {
         self.uses_runtime_lib = true;
+        self.runtime_lib_uses += 1;
         if self.services.project_type == ProjectType::Game && self.is_in_replicated_first {
             self.add_diagnostic(warnings::runtime_lib_used_in_replicated_first(node));
         }

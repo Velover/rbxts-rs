@@ -16,11 +16,11 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use rbxts_project::{ProjectOptionLayer, nodepath};
-use rbxts_transform::{CompileOptions, CompileReport, compile_project};
+use rbxts_transform::{CompileOptions, CompileReport, PluginOptions, compile_project_with};
 use tsrs_compiler::diagnosticwriter::flatten_diagnostic_message;
 use tsrs_diagnostics::Category;
 
-pub const USAGE: &str = "usage: rbxts-bench build [-p tsconfig.json] [--out-dir DIR] [--optimizedLoops] [--allowCommentDirectives]\n                         [--write-partial] [--no-write] [--parity REF_DIR] [--report FILE] [--show N] [--json]";
+pub const USAGE: &str = "usage: rbxts-bench build [-p tsconfig.json] [--out-dir DIR] [--optimizedLoops] [--allowCommentDirectives]\n                         [--write-partial] [--no-write] [--parity REF_DIR] [--report FILE] [--show N] [--json]\n                         [--plugin NAME]... [--timings] [--ignore-unknown-plugins] [--claims-all]\n  --plugin NAME: register a test plugin (rbxts_test_plugins), in claim order; --timings: plugin hook times;\n  --ignore-unknown-plugins: a tsconfig plugins entry no registered plugin claims is not an error;\n  --claims-all: ask every matching plugin and report double claims (as RBXTS_PLUGIN_CLAIMS=all)";
 
 struct Args {
     tsconfig: String,
@@ -32,6 +32,10 @@ struct Args {
     report: Option<String>,
     show: usize,
     json: bool,
+    plugins: Vec<String>,
+    timings: bool,
+    ignore_unknown_plugins: bool,
+    claims_all: bool,
 }
 
 fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -46,6 +50,10 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
         report: None,
         show: 10,
         json: false,
+        plugins: Vec::new(),
+        timings: false,
+        ignore_unknown_plugins: false,
+        claims_all: false,
     };
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -61,6 +69,10 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--report" => out.report = Some(value()?),
             "--show" => out.show = value()?.parse().map_err(|e| format!("--show: {e}"))?,
             "--json" => out.json = true,
+            "--plugin" => out.plugins.push(value()?),
+            "--timings" => out.timings = true,
+            "--ignore-unknown-plugins" => out.ignore_unknown_plugins = true,
+            "--claims-all" => out.claims_all = true,
             "-h" | "--help" => return Err(USAGE.into()),
             _ => return Err(format!("unknown argument {arg}\n{USAGE}")),
         }
@@ -280,16 +292,35 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
             return 2;
         }
     };
+    let mut plugins = Vec::new();
+    for name in &args.plugins {
+        match rbxts_test_plugins::by_name(name) {
+            Some(plugin) => plugins.push(plugin),
+            None => {
+                eprintln!(
+                    "rbxts-bench build: unknown plugin {name:?}; known: {}",
+                    rbxts_test_plugins::NAMES.join(", ")
+                );
+                return 2;
+            }
+        }
+    }
+    let plugin_options = PluginOptions {
+        plugins: &plugins,
+        ignore_unknown_tsconfig_plugins: args.ignore_unknown_plugins,
+        claims_all: args.claims_all,
+    };
     let cwd = std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
     let start = std::time::Instant::now();
-    let report = compile_project(&CompileOptions {
+    let options = CompileOptions {
         tsconfig: args.tsconfig.clone(),
         cwd,
         project_options: args.options.clone(),
         out_dir_override: args.out_dir.clone(),
         write_partial: args.write_partial || args.parity.is_some(),
         no_write: args.no_write,
-    });
+    };
+    let report = compile_project_with(&options, &plugin_options);
     let total = start.elapsed();
     let (peak_ws, _, peak_commit) = crate::memory().unwrap_or((0, 0, 0));
 
@@ -299,7 +330,9 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
         ("program", t.program),
         ("setup", t.setup),
         ("check", t.check),
+        ("plugin_setup", t.plugin_setup),
         ("transform", t.transform),
+        ("plugin_finish", t.plugin_finish),
         ("render", t.render),
         ("write", t.write),
     ];
@@ -329,9 +362,9 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
             report.program_files, report.project_files
         );
         for (name, d) in phases {
-            let _ = writeln!(out, "  {name:<10} {:>9.1} ms", ms(d));
+            let _ = writeln!(out, "  {name:<13} {:>9.1} ms", ms(d));
         }
-        let _ = writeln!(out, "  {:<10} {:>9.1} ms", "total", ms(total));
+        let _ = writeln!(out, "  {:<13} {:>9.1} ms", "total", ms(total));
         let _ = writeln!(
             out,
             "peak working set {:.1} MiB, peak commit {:.1} MiB",
@@ -344,6 +377,34 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
         for d in report.diagnostics.iter().take(args.show) {
             let file = d.file().map(|f| f.file_name().to_owned()).unwrap_or_default();
             let _ = writeln!(out, "  {file}: {}", flatten_diagnostic_message(*d, " "));
+        }
+        if !report.plugins.is_empty() {
+            let _ = writeln!(out, "plugins: {}", report.plugins.join(", "));
+            for warning in &report.warnings {
+                let _ = writeln!(out, "  warning: {}", warning.replace('\n', " / "));
+            }
+            for d in report.files.iter().flat_map(|f| f.diagnostics.iter()).take(args.show) {
+                let file = d.file().map(|f| f.file_name().to_owned()).unwrap_or_default();
+                let category = if d.category() == Category::Error { "error" } else { "warning" };
+                let _ = writeln!(out, "  {category} {file}: {}", flatten_diagnostic_message(*d, " "));
+            }
+            for path in &report.artifacts_written {
+                let _ = writeln!(out, "  wrote {path}");
+            }
+            for path in &report.artifacts_deleted {
+                let _ = writeln!(out, "  deleted {path}");
+            }
+        }
+        if args.timings {
+            for plugin in &report.plugin_timings {
+                let _ = writeln!(out, "plugin {}", plugin.name);
+                for (hook, time) in &plugin.hooks {
+                    if time.calls > 0 {
+                        let label = hook.label();
+                        let _ = writeln!(out, "  {label:<28} {:>8} calls {:>10.3} ms", time.calls, ms(time.time));
+                    }
+                }
+            }
         }
         print!("{out}");
     }

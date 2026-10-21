@@ -72,7 +72,12 @@ pub fn transform_statement_list_with_exports(
     let remove_comments = state.compiler_options.remove_comments.is_true();
 
     for &statement in statements {
+        let plugin_mark = crate::plugins::dispatch::root_statement_start(state, parent);
         let transformed_statements = transform_statement(state, statement);
+        // rbxts-rs: plugin statements for before the top-level statement (`hoist`, `insert_before_root_statement`)
+        if plugin_mark.is_some() {
+            crate::plugins::dispatch::root_statement_inserts(state, &mut result);
+        }
 
         // the statement's leading comments
         if !remove_comments {
@@ -85,7 +90,11 @@ pub fn transform_statement_list_with_exports(
         }
 
         let is_final = transformed_statements.last().is_some_and(Stmt::is_final);
+        let start = result.len();
         result.extend(transformed_statements);
+        if let Some(mark) = plugin_mark {
+            crate::plugins::dispatch::root_statement_end(state, mark, statement, &result, start);
+        }
         if is_final {
             break;
         }

@@ -141,12 +141,17 @@ pub fn flatten_optional_chain(mut expression: P<Node>) -> (Vec<ChainItem>, P<Nod
     (chain, expression)
 }
 
-fn transform_chain_item(
+/// One chain link on its compiled base. Calls are offered to plugins first (rbxts-rs: DESIGN §11.5).
+pub(crate) fn transform_chain_item(
     state: &mut TransformState<'_>,
     prereqs: &mut Prereqs,
     base_expression: Expr,
     item: &ChainItem,
 ) -> Expr {
+    let base_expression = match crate::plugins::dispatch::claim_chain_call(state, prereqs, item, base_expression) {
+        Ok(claimed) => return claimed,
+        Err(base_expression) => base_expression,
+    };
     match item.kind {
         ChainItemKind::PropertyAccess { name } => {
             transform_property_access_expression_inner(state, prereqs, item.node, base_expression, name)
@@ -315,6 +320,10 @@ fn transform_optional_chain_inner(
 /// `transformOptionalChain`
 pub fn transform_optional_chain(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Expr {
     let (chain, expression) = flatten_optional_chain(node);
+    // rbxts-rs: a plugin may claim the chain's first call before its callee is compiled (DESIGN §11.5)
+    if let Some((index, value)) = crate::plugins::dispatch::claim_chain_start(state, prereqs, &chain) {
+        return transform_optional_chain_inner(state, prereqs, &chain, value, None, index);
+    }
     let base = transform_expression(state, prereqs, expression);
     transform_optional_chain_inner(state, prereqs, &chain, base, None, 0)
 }

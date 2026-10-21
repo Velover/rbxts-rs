@@ -153,7 +153,7 @@ fn get_node_modules_import_parts(
         };
 
         let module_name = relative_rbx_path.first().expect("a package path names the package").clone();
-        let get_module = state.ts(module_specifier.parent().expect("a module specifier has a parent"), "getModule");
+        let get_module = state.ts(module_specifier.parent().unwrap_or(module_specifier), "getModule");
         let call = create::call(
             get_module,
             vec![globals::script(), create::string(module_scope), create::string(module_name)],
@@ -250,7 +250,17 @@ pub fn get_import_parts(
         state.add_diagnostic(errors::no_module_specifier_file(module_specifier));
         return vec![Expr::None];
     };
+    get_import_parts_of_file(state, source_file, module_file, module_specifier)
+}
 
+/// rbxts-rs: the part of `getImportParts` once the module file is known. `module_specifier` is where diagnostics go:
+/// the specifier, or for a plugin's `import_named` the node the plugin was dispatched at.
+pub fn get_import_parts_of_file(
+    state: &mut TransformState<'_>,
+    source_file: P<SourceFile>,
+    module_file: P<SourceFile>,
+    module_specifier: P<Node>,
+) -> Vec<Expr> {
     let module_file_name = module_file.get().file_name().to_owned();
     let virtual_path = state.guess_virtual_path(&module_file_name).unwrap_or_else(|| module_file_name.clone());
     // rbxts-rs: project references (`data.projectReferencePaths`) are not ported yet
@@ -283,6 +293,20 @@ pub fn get_import_parts(
 
         get_project_import_parts(state, source_file, module_specifier, &module_out_path, &module_rbx_path)
     }
+}
+
+/// rbxts-rs: `createImportExpression` for a module file that no specifier node names (`import_named`), with
+/// diagnostics at `at`.
+pub fn create_import_expression_of_file(
+    state: &mut TransformState<'_>,
+    source_file: P<SourceFile>,
+    module_file: P<SourceFile>,
+    at: P<Node>,
+) -> Expr {
+    let mut parts = get_import_parts_of_file(state, source_file, module_file, at);
+    parts.insert(0, globals::script());
+    let callee = state.ts(at, "import");
+    create::call(callee, parts)
 }
 
 /// `createImportExpression`: `TS.import(script, <path>)`.
