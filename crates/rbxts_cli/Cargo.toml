@@ -15,6 +15,10 @@ tsrs_ast.workspace = true
 tsrs_compiler.workspace = true
 tsrs_diagnostics.workspace = true
 mimalloc-safe.workspace = true
+notify.workspace = true
+memory-stats.workspace = true
+serde_json.workspace = true
+rustc-hash.workspace = true
 
 [dev-dependencies]
 rbxts_test_plugins.workspace = true

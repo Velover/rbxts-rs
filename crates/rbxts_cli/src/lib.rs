@@ -13,9 +13,12 @@
 //! `--optimizedLoops`, `--allowCommentDirectives`, `--noInclude`, `--logTruthyChanges`, `--writeOnlyChanged`,
 //! `--writeTransformedFiles`, `--luau`), builds on a thread with a 512 MiB stack, prints the diagnostics as
 //! TypeScript's pretty reporter does, and returns roblox-ts's exit codes: 0 when the build succeeded, 1 otherwise.
-//! Watch mode is not supported yet (rbxts-rs: S2, DESIGN §14).
+//! `-w` / `--watch` runs watch mode ([`watch`], DESIGN §14), with `--usePolling` and `--events json` (machine-readable
+//! build events on stdout).
 //!
 //! `RBXTS_PLUGIN_CLAIMS=all` asks every matching plugin for each claimable node and reports double claims.
+
+pub mod watch;
 
 use std::ffi::OsString;
 use std::process::ExitCode;
@@ -42,6 +45,9 @@ Options:
       --type                    override project type   [choices: \"game\", \"model\", \"package\"]
   -i, --includePath             folder to copy runtime files to                 [string]
       --rojo                    manually select Rojo project file               [string]
+  -w, --watch                   enable watch mode                              [boolean]
+      --usePolling              use polling for watch mode                     [boolean]
+      --events                  machine-readable watch events on stdout   [choices: \"json\"]
       --luau                    emit files with .luau extension                [boolean]
       --timings                 print plugin hook timings                      [boolean]
   -h, --help                    show help
@@ -59,6 +65,12 @@ pub struct BuildArgs {
     pub project: String,
     pub verbose: bool,
     pub timings: bool,
+    /// `-w` / `--watch`.
+    pub watch: bool,
+    /// `--usePolling`: poll instead of file system notifications.
+    pub use_polling: bool,
+    /// `--events json`.
+    pub events_json: bool,
     pub options: ProjectOptionLayer,
 }
 
@@ -111,8 +123,14 @@ pub fn parse_args(args: impl IntoIterator<Item = String>, cwd: &str) -> Result<C
             "-p" | "--project" => out.project = value(name)?,
             "--verbose" => out.verbose = parse_bool(name, inline)?,
             "--timings" => out.timings = parse_bool(name, inline)?,
-            "-w" | "--watch" | "--usePolling" => {
-                return Err("watch mode is not supported by rbxts-rs yet".to_owned());
+            "-w" | "--watch" => out.watch = parse_bool(name, inline)?,
+            "--usePolling" => out.use_polling = parse_bool(name, inline)?,
+            "--events" => {
+                let v = value(name)?;
+                if v != "json" {
+                    return Err(format!("Invalid values:\n  Argument: events, Given: {v:?}, Choices: \"json\""));
+                }
+                out.events_json = true;
             }
             "--noInclude" => out.options.no_include = Some(parse_bool(name, inline)?),
             "--logTruthyChanges" => out.options.log_truthy_changes = Some(parse_bool(name, inline)?),
@@ -213,6 +231,9 @@ impl Cli {
             write_partial: false,
             no_write: false,
         };
+        if build.watch {
+            return watch::run(&self.plugins, &build, options, &cwd);
+        }
         let plugin_options = PluginOptions { plugins: &self.plugins, ..PluginOptions::default() };
         let report = compile_project_with(&options, &plugin_options);
         print_report(&report, &cwd, &build);
@@ -327,7 +348,9 @@ mod tests {
         assert_eq!(parse(&[]).unwrap(), Command::Build(BuildArgs { project: ".".into(), ..BuildArgs::default() }));
         assert_eq!(parse(&["--help"]).unwrap(), Command::Help);
         assert_eq!(parse(&["-v"]).unwrap(), Command::Version);
-        assert!(parse(&["-w"]).unwrap_err().contains("watch"));
+        let Command::Build(watch) = parse(&["-w", "--usePolling", "--events", "json"]).unwrap() else { panic!() };
+        assert!(watch.watch && watch.use_polling && watch.events_json);
+        assert!(parse(&["--events", "xml"]).unwrap_err().contains("Choices"));
         assert!(parse(&["--type", "place"]).unwrap_err().contains("Choices"));
         assert!(parse(&["--bogus"]).unwrap_err().contains("Unknown argument"));
         assert!(parse(&["-p"]).unwrap_err().contains("Not enough arguments"));
