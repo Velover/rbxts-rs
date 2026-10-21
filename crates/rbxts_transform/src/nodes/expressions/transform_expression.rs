@@ -11,6 +11,7 @@ use crate::util::evaluation::facts::mark_primitive_value;
 use crate::util::types::{is_boolean_type, is_definitely_type, is_number_type, is_string_type, is_undefined_type};
 use crate::util::validate_method_assignment::validate_method_expression;
 
+use super::transform_array_literal_expression::transform_array_literal_expression;
 use super::transform_await_expression::transform_await_expression;
 use super::transform_binary_expression::transform_binary_expression;
 use super::transform_call_expression::transform_call_expression;
@@ -21,8 +22,11 @@ use super::transform_function_expression::transform_function_expression;
 use super::transform_identifier::transform_identifier;
 use super::transform_no_substitution_template_literal::transform_no_substitution_template_literal;
 use super::transform_numeric_literal::transform_numeric_literal;
+use super::transform_object_literal_expression::transform_object_literal_expression;
+use super::transform_omitted_expression::transform_omitted_expression;
 use super::transform_parenthesized_expression::transform_parenthesized_expression;
 use super::transform_property_access_expression::transform_property_access_expression;
+use super::transform_spread_element::transform_spread_element;
 use super::transform_string_literal::transform_string_literal;
 use super::transform_tagged_template_expression::transform_tagged_template_expression;
 use super::transform_template_expression::transform_template_expression;
@@ -66,6 +70,7 @@ pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereq
         Kind::ImportKeyword => Expr::None,
 
         // regular transforms
+        Kind::ArrayLiteralExpression => transform_array_literal_expression(state, prereqs, node),
         Kind::ArrowFunction | Kind::FunctionExpression => transform_function_expression(state, node),
         Kind::AsExpression
         | Kind::ExpressionWithTypeArguments
@@ -83,11 +88,13 @@ pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereq
         Kind::Identifier => transform_identifier(state, node),
         Kind::NoSubstitutionTemplateLiteral => transform_no_substitution_template_literal(node),
         Kind::NumericLiteral => transform_numeric_literal(node),
-        Kind::OmittedExpression => Expr::Nil,
+        Kind::ObjectLiteralExpression => transform_object_literal_expression(state, prereqs, node),
+        Kind::OmittedExpression => transform_omitted_expression(),
         Kind::ParenthesizedExpression => transform_parenthesized_expression(state, prereqs, node),
         Kind::PostfixUnaryExpression => transform_postfix_unary_expression(state, prereqs, node),
         Kind::PrefixUnaryExpression => transform_prefix_unary_expression(state, prereqs, node),
         Kind::PropertyAccessExpression => transform_property_access_expression(state, prereqs, node),
+        Kind::SpreadElement => transform_spread_element(state, prereqs, node),
         Kind::StringLiteral => transform_string_literal(node),
         Kind::SuperKeyword => globals::super_(),
         Kind::TaggedTemplateExpression => transform_tagged_template_expression(state, prereqs, node),
@@ -97,15 +104,12 @@ pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereq
         Kind::YieldExpression => transform_yield_expression(state, prereqs, node),
 
         // rbxts-rs: kinds roblox-ts transforms that are not ported yet
-        Kind::ArrayLiteralExpression
-        | Kind::ClassExpression
+        Kind::ClassExpression
         | Kind::JsxElement
         | Kind::JsxExpression
         | Kind::JsxFragment
         | Kind::JsxSelfClosingElement
-        | Kind::NewExpression
-        | Kind::ObjectLiteralExpression
-        | Kind::SpreadElement => return state.unsupported_subtree(node, &kind_name(node.kind())),
+        | Kind::NewExpression => return state.unsupported_subtree(node, &kind_name(node.kind())),
 
         kind => {
             // roblox-ts asserts here; a diagnostic keeps the build going

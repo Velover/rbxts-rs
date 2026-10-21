@@ -1,5 +1,5 @@
-//! `util/validateMethodAssignment.ts` (the expression part; object literal and class element checks come with
-//! their node areas).
+//! `util/validateMethodAssignment.ts` (the expression and object literal parts; class element checks come with the
+//! classes area).
 
 use tsrs_ast::{Kind, Node, NodeFlags};
 use tsrs_checker::{ContextFlags, SignatureKind, Type};
@@ -99,5 +99,68 @@ pub fn validate_method_expression(state: &mut TransformState<'_>, node: P<Node>,
             return;
         }
         validate_types(state, expression, t, contextual_type);
+    }
+}
+
+/// `ts.isObjectLiteralElementLike`
+fn is_object_literal_element_like(node: P<Node>) -> bool {
+    matches!(
+        node.kind(),
+        Kind::PropertyAssignment
+            | Kind::ShorthandPropertyAssignment
+            | Kind::SpreadAssignment
+            | Kind::MethodDeclaration
+            | Kind::GetAccessor
+            | Kind::SetAccessor
+    )
+}
+
+/// `validateObjectLiteralElement`: a member against its contextual property type.
+fn validate_object_literal_element(state: &mut TransformState<'_>, node: P<Node>) {
+    let t = state.get_type(node);
+    let contextual_type =
+        state.checker.get_contextual_type_for_object_literal_element_exported(node, ContextFlags::None);
+    if let Some(contextual_type) = contextual_type
+        && contextual_type != t
+    {
+        validate_types(state, node, t, contextual_type);
+    }
+}
+
+/// `validateSpread`: each spread property against the contextual type's property of the same name.
+fn validate_spread(state: &mut TransformState<'_>, node: P<Node>) {
+    let expression = node.expression().expect("a spread assignment has an expression");
+    let t = state.get_type(expression);
+    let Some(contextual_type) = state.checker.get_contextual_type_exported(expression, ContextFlags::None) else {
+        return;
+    };
+
+    for &property in state.checker.get_properties_of_type_exported(t) {
+        let name = property.name();
+        let Some(base_property_type) = state.checker.get_type_of_property_of_type_exported(t, name) else { continue };
+        let Some(assignment_property_type) = state.checker.get_type_of_property_of_type_exported(contextual_type, name)
+        else {
+            continue;
+        };
+        validate_types(state, node, base_property_type, assignment_property_type);
+    }
+}
+
+/// `validateMethodAssignment`: a member assigned where the other calling convention (method or function) is
+/// expected.
+///
+/// rbxts-rs: only the object literal members so far; class elements (`validateHeritageClause`) come with the classes
+/// area.
+pub fn validate_method_assignment(state: &mut TransformState<'_>, node: P<Node>) {
+    if tsrs_ast::is_class_element(node) && node.parent().is_some_and(tsrs_ast::is_class_like) && node.name().is_some() {
+        // rbxts-rs: `validateHeritageClause` for each super type node, with the classes area
+    } else if is_object_literal_element_like(node) {
+        if node.kind() == Kind::SpreadAssignment {
+            if node.expression().is_some_and(|e| e.kind() != Kind::ObjectLiteralExpression) {
+                validate_spread(state, node);
+            }
+        } else {
+            validate_object_literal_element(state, node);
+        }
     }
 }

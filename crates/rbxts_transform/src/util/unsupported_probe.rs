@@ -24,15 +24,12 @@ pub fn is_unsupported_statement_kind(kind: Kind) -> bool {
 pub fn is_unsupported_expression_kind(kind: Kind) -> bool {
     matches!(
         kind,
-        Kind::ArrayLiteralExpression
-            | Kind::ClassExpression
+        Kind::ClassExpression
             | Kind::JsxElement
             | Kind::JsxExpression
             | Kind::JsxFragment
             | Kind::JsxSelfClosingElement
             | Kind::NewExpression
-            | Kind::ObjectLiteralExpression
-            | Kind::SpreadElement
     )
 }
 
