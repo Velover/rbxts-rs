@@ -80,7 +80,10 @@ Hand-written transform fixtures live in `crates/rbxts_transform/tests/fixtures/<
 `node_modules` (`src`, `tsconfig.json`, `default.project.json`) and `expected/`, stock roblox-ts's output for it
 (`node roblox-ts-test/probe/rbxts-driver.cjs <roblox-ts checkout> tsconfig.json --backend ts5`, from the fixture with a
 `node_modules` linked in). `cargo test -p rbxts_transform --test fixtures` builds each one in a temporary copy, linking
-in `RBXTS_RS_FIXTURE_NODE_MODULES` (default: the roblox-ts tests project's `node_modules`), and compares byte for byte.
+in `RBXTS_RS_FIXTURE_NODE_MODULES` (default: the roblox-ts tests project's `node_modules`, found as
+`roblox-ts/tests` or `roblox-ts-test/roblox-ts/tests` beside the checkout or a directory above it), and compares byte
+for byte; any diagnostic fails the fixture. Without a `node_modules` the tests are skipped with a note on the terminal;
+a variable naming a directory without the packages is an error.
 
 ## Plugins (`rbxts_plugin`, `rbxts_transform::plugins`, `rbxts_cli`)
 

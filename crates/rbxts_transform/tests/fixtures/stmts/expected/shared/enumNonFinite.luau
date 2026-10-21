@@ -8,10 +8,10 @@ do
 	NonFinite = setmetatable({}, {
 		__index = _inverse,
 	})
-	NonFinite.Inf = Infinity
-	_inverse[Infinity] = "Inf"
-	NonFinite.NegInf = -Infinity
-	_inverse[-Infinity] = "NegInf"
+	NonFinite.Inf = math.huge
+	_inverse[math.huge] = "Inf"
+	NonFinite.NegInf = -math.huge
+	_inverse[-math.huge] = "NegInf"
 	NonFinite.Large = 1e+301
 	_inverse[1e+301] = "Large"
 	NonFinite.Finite = 2
