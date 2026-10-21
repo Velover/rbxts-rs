@@ -337,28 +337,32 @@ fn expr(v: &Value) -> R<Expr> {
     let sub = |name: &str| expr(field(v, name)?);
     let list = |name: &str| exprs(array(v, name)?.iter());
     Ok(match kind(v)? {
-        "Identifier" => Expr::Identifier(Identifier { name: str_field(v, "name")? }),
+        "Identifier" => Expr::Identifier(Identifier { name: str_field(v, "name")?, facts: Facts::default() }),
         "TemporaryIdentifier" => Expr::TemporaryIdentifier(TemporaryIdentifier {
             name: str_field(v, "name")?,
             id: field(v, "id")?.as_u64().ok_or("temporary id is not a number")? as u32,
+            facts: Facts::default(),
         }),
         "ComputedIndexExpression" => Expr::ComputedIndex(Box::new(ComputedIndexExpression {
             expression: sub("expression")?,
             index: sub("index")?,
+            facts: Facts::default(),
         })),
         "PropertyAccessExpression" => Expr::PropertyAccess(Box::new(PropertyAccessExpression {
             expression: sub("expression")?,
             name: str_field(v, "name")?,
+            facts: Facts::default(),
         })),
         "CallExpression" => {
-            Expr::Call(Box::new(CallExpression { expression: sub("expression")?, args: list("args")? }))
+            Expr::Call(Box::new(CallExpression { expression: sub("expression")?, args: list("args")?, facts: Facts::default() }))
         }
         "MethodCallExpression" => Expr::MethodCall(Box::new(MethodCallExpression {
             name: str_field(v, "name")?,
             expression: sub("expression")?,
             args: list("args")?,
+            facts: Facts::default(),
         })),
-        "ParenthesizedExpression" => Expr::Parenthesized(Box::new(sub("expression")?)),
+        "ParenthesizedExpression" => Expr::Parenthesized(Box::new(ParenthesizedExpression { expression: sub("expression")?, facts: Facts::default() })),
         "None" => Expr::None,
         "NilLiteral" => Expr::Nil,
         "FalseLiteral" => Expr::False,
@@ -378,6 +382,7 @@ fn expr(v: &Value) -> R<Expr> {
             parameters: any_identifiers(array(v, "parameters")?.iter().collect())?,
             has_dot_dot_dot: bool_field(v, "hasDotDotDot")?,
             statements: statements(field(v, "statements")?)?,
+            facts: Facts::default(),
         })),
         "BinaryExpression" => {
             let operator = str_field(v, "operator")?;
@@ -385,6 +390,7 @@ fn expr(v: &Value) -> R<Expr> {
                 left: sub("left")?,
                 operator: BinaryOperator::parse(&operator).ok_or_else(|| format!("operator {operator}"))?,
                 right: sub("right")?,
+                facts: Facts::default(),
             }))
         }
         "UnaryExpression" => {
@@ -392,12 +398,14 @@ fn expr(v: &Value) -> R<Expr> {
             Expr::Unary(Box::new(UnaryExpression {
                 operator: UnaryOperator::parse(&operator).ok_or_else(|| format!("operator {operator}"))?,
                 expression: sub("expression")?,
+                facts: Facts::default(),
             }))
         }
         "IfExpression" => Expr::If(Box::new(IfExpression {
             condition: sub("condition")?,
             expression: sub("expression")?,
             alternative: sub("alternative")?,
+            facts: Facts::default(),
         })),
         "InterpolatedString" => Expr::InterpolatedString(InterpolatedString {
             parts: array(v, "parts")?
@@ -407,6 +415,7 @@ fn expr(v: &Value) -> R<Expr> {
                     _ => Ok(InterpolatedStringPart::Expression(expr(p)?)),
                 })
                 .collect::<R<_>>()?,
+            facts: Facts::default(),
         }),
         "Array" => Expr::Array(list("members")?),
         "Set" => Expr::Set(list("members")?),

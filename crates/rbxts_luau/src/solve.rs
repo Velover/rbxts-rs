@@ -283,7 +283,7 @@ impl<'a> Solver<'a> {
                 self.expr(&node.expression);
                 self.exprs(&node.args);
             }
-            Expr::Parenthesized(inner) => self.expr(inner),
+            Expr::Parenthesized(node) => self.expr(&node.expression),
             Expr::Function(node) => self.function(None, &node.parameters, &node.statements),
             Expr::Binary(node) => {
                 self.expr(&node.left);
@@ -432,7 +432,7 @@ fn walk_expr(e: &Expr, f: &mut impl FnMut(&TemporaryIdentifier)) {
             walk_expr(&node.expression, f);
             walk_exprs(&node.args, f);
         }
-        Expr::Parenthesized(inner) => walk_expr(inner, f),
+        Expr::Parenthesized(node) => walk_expr(&node.expression, f),
         Expr::Function(node) => {
             walk_any_identifiers(&node.parameters, f);
             walk_statements(&node.statements, f);

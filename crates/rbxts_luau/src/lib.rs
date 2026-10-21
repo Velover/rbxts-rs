@@ -5,6 +5,7 @@
 //!   tree is `Send` and can be rendered on any thread.
 //! - [`create`]: builders mirroring `luau.create` / `luau.id` / `luau.call` …, and [`TempIds`] (`luau.tempId`).
 //! - [`globals`]: `luau.globals` and `luau.strings`.
+//! - [`facts`]: the evaluation facts roblox-ts records on nodes (`TSTransformer/util/evaluation/facts.ts`).
 //! - [`render()`]: `renderAST`, with [`LateStrings`] for string literals whose text is known only after the
 //!   transform (DESIGN §4 step 5).
 //! - name and number rules: [`is_valid_identifier`], [`is_metamethod`], [`is_reserved_identifier`],
@@ -20,6 +21,7 @@
 
 pub mod ast;
 pub mod create;
+pub mod facts;
 pub mod globals;
 mod render;
 mod solve;
@@ -27,6 +29,7 @@ mod util;
 
 pub use ast::*;
 pub use create::TempIds;
+pub use facts::{Binding, BindingKey, Effects, Facts};
 pub use render::{LateStrings, render, render_ast, render_expr, render_into};
 pub use util::{
     LUAU_METAMETHODS, LUAU_RESERVED_CLASS_FIELDS, LUAU_RESERVED_KEYWORDS, RESERVED_IDENTIFIERS, is_js_whitespace,

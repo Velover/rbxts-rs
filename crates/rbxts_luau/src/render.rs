@@ -446,11 +446,12 @@ impl Renderer<'_> {
                 self.list(&node.args);
                 self.out.push(')');
             }
-            Expr::Parenthesized(inner) => {
+            Expr::Parenthesized(node) => {
                 // nested parentheses collapse, and simple expressions need none
-                let mut innermost = &**inner;
+                let inner = &node.expression;
+                let mut innermost = inner;
                 while let Expr::Parenthesized(e) = innermost {
-                    innermost = e;
+                    innermost = &e.expression;
                 }
                 if innermost.is_simple() {
                     self.expr(inner, Ctx::None);

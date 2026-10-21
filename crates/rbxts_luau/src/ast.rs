@@ -7,7 +7,10 @@
 //!   same as the single node.
 //! - **Node kinds are enum variants.** `luau.isX` guards become `match`; the semantic guards (`is_simple`,
 //!   `is_indexable`, …) are methods.
+//! - **Evaluation facts** ([`Facts`]) ride along on the expression kinds roblox-ts marks; the renderer ignores them.
 //! - **Late strings** ([`Expr::LateString`]) are new: string literals whose text is known only at render time.
+
+use crate::facts::Facts;
 
 /// An expression. The first seven variants are TypeScript's `IndexableExpression`s: the ones that can be called,
 /// indexed or have a method called on them without parentheses (see [`Expr::is_indexable`]).
@@ -20,7 +23,7 @@ pub enum Expr {
     PropertyAccess(Box<PropertyAccessExpression>),
     Call(Box<CallExpression>),
     MethodCall(Box<MethodCallExpression>),
-    Parenthesized(Box<Expr>),
+    Parenthesized(Box<ParenthesizedExpression>),
 
     // expressions
     /// A placeholder for "no expression"; rendering it is a compiler bug.
@@ -54,6 +57,8 @@ pub enum Expr {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Identifier {
     pub name: String,
+    /// Evaluation facts ([`crate::facts`]); not rendered.
+    pub facts: Facts,
 }
 
 /// A local whose final name is chosen at render time, unique within its scope: `_name`, `_name_1`, … (or `_`,
@@ -65,6 +70,8 @@ pub struct Identifier {
 pub struct TemporaryIdentifier {
     pub name: String,
     pub id: u32,
+    /// Evaluation facts ([`crate::facts`]); not rendered.
+    pub facts: Facts,
 }
 
 /// `expression[index]`, or `expression.name` when the index is a string literal that is a valid identifier.
@@ -73,6 +80,8 @@ pub struct ComputedIndexExpression {
     /// Should be indexable ([`Expr::is_indexable`]).
     pub expression: Expr,
     pub index: Expr,
+    /// Evaluation facts ([`crate::facts`]); not rendered.
+    pub facts: Facts,
 }
 
 /// `expression.name`, or `expression["name"]` when `name` is not a valid identifier (the name is not escaped).
@@ -81,6 +90,8 @@ pub struct PropertyAccessExpression {
     /// Should be indexable ([`Expr::is_indexable`]).
     pub expression: Expr,
     pub name: String,
+    /// Evaluation facts ([`crate::facts`]); not rendered.
+    pub facts: Facts,
 }
 
 /// `expression(args)`
@@ -89,6 +100,8 @@ pub struct CallExpression {
     /// Should be indexable ([`Expr::is_indexable`]).
     pub expression: Expr,
     pub args: Vec<Expr>,
+    /// Evaluation facts ([`crate::facts`]); not rendered.
+    pub facts: Facts,
 }
 
 /// `expression:name(args)`. Rendering asserts that `name` is a valid identifier.
@@ -98,6 +111,8 @@ pub struct MethodCallExpression {
     /// Should be indexable ([`Expr::is_indexable`]).
     pub expression: Expr,
     pub args: Vec<Expr>,
+    /// Evaluation facts ([`crate::facts`]); not rendered.
+    pub facts: Facts,
 }
 
 /// A number literal, as source text. Text that is not a valid Luau number literal (`0o17`, `Infinity`) is
@@ -146,6 +161,16 @@ pub struct FunctionExpression {
     /// Adds `...` after the parameters.
     pub has_dot_dot_dot: bool,
     pub statements: Vec<Stmt>,
+    /// Evaluation facts ([`crate::facts`]); not rendered.
+    pub facts: Facts,
+}
+
+/// `(expression)`; rendered without parentheses when the innermost expression is simple.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParenthesizedExpression {
+    pub expression: Expr,
+    /// Evaluation facts ([`crate::facts`]); not rendered.
+    pub facts: Facts,
 }
 
 /// `left operator right`, parenthesized when the parent binds tighter.
@@ -154,6 +179,8 @@ pub struct BinaryExpression {
     pub left: Expr,
     pub operator: BinaryOperator,
     pub right: Expr,
+    /// Evaluation facts ([`crate::facts`]); not rendered.
+    pub facts: Facts,
 }
 
 /// `operator expression`, parenthesized when the parent binds tighter.
@@ -161,6 +188,8 @@ pub struct BinaryExpression {
 pub struct UnaryExpression {
     pub operator: UnaryOperator,
     pub expression: Expr,
+    /// Evaluation facts ([`crate::facts`]); not rendered.
+    pub facts: Facts,
 }
 
 /// `if condition then expression else alternative`; an [`IfExpression`] alternative renders as `elseif`.
@@ -169,12 +198,16 @@ pub struct IfExpression {
     pub condition: Expr,
     pub expression: Expr,
     pub alternative: Expr,
+    /// Evaluation facts ([`crate::facts`]); not rendered.
+    pub facts: Facts,
 }
 
 /// `` `text{expression}text` ``
 #[derive(Clone, Debug, PartialEq)]
 pub struct InterpolatedString {
     pub parts: Vec<InterpolatedStringPart>,
+    /// Evaluation facts ([`crate::facts`]); not rendered.
+    pub facts: Facts,
 }
 
 /// A part of an [`InterpolatedString`].
@@ -480,6 +513,63 @@ impl Expr {
     /// `isNone`
     pub fn is_none(&self) -> bool {
         matches!(self, Expr::None)
+    }
+
+    /// The node's evaluation facts, for the kinds that carry them.
+    pub fn facts(&self) -> Option<&Facts> {
+        Some(match self {
+            Expr::Identifier(n) => &n.facts,
+            Expr::TemporaryIdentifier(n) => &n.facts,
+            Expr::ComputedIndex(n) => &n.facts,
+            Expr::PropertyAccess(n) => &n.facts,
+            Expr::Call(n) => &n.facts,
+            Expr::MethodCall(n) => &n.facts,
+            Expr::Parenthesized(n) => &n.facts,
+            Expr::Function(n) => &n.facts,
+            Expr::Binary(n) => &n.facts,
+            Expr::Unary(n) => &n.facts,
+            Expr::If(n) => &n.facts,
+            Expr::InterpolatedString(n) => &n.facts,
+            _ => return None,
+        })
+    }
+
+    /// Mutable [`Expr::facts`]; `None` for kinds that carry no facts (a mark on them is dropped, see
+    /// [`crate::facts`]).
+    pub fn facts_mut(&mut self) -> Option<&mut Facts> {
+        Some(match self {
+            Expr::Identifier(n) => &mut n.facts,
+            Expr::TemporaryIdentifier(n) => &mut n.facts,
+            Expr::ComputedIndex(n) => &mut n.facts,
+            Expr::PropertyAccess(n) => &mut n.facts,
+            Expr::Call(n) => &mut n.facts,
+            Expr::MethodCall(n) => &mut n.facts,
+            Expr::Parenthesized(n) => &mut n.facts,
+            Expr::Function(n) => &mut n.facts,
+            Expr::Binary(n) => &mut n.facts,
+            Expr::Unary(n) => &mut n.facts,
+            Expr::If(n) => &mut n.facts,
+            Expr::InterpolatedString(n) => &mut n.facts,
+            _ => return None,
+        })
+    }
+}
+
+impl AnyIdentifier {
+    /// The identifier's evaluation facts.
+    pub fn facts(&self) -> &Facts {
+        match self {
+            AnyIdentifier::Identifier(n) => &n.facts,
+            AnyIdentifier::Temporary(n) => &n.facts,
+        }
+    }
+
+    /// Mutable [`AnyIdentifier::facts`].
+    pub fn facts_mut(&mut self) -> &mut Facts {
+        match self {
+            AnyIdentifier::Identifier(n) => &mut n.facts,
+            AnyIdentifier::Temporary(n) => &mut n.facts,
+        }
     }
 }
 

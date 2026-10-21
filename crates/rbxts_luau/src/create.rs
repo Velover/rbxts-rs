@@ -5,6 +5,7 @@
 //! identifier's copies keep its id, so they still render as one name).
 
 use crate::ast::*;
+use crate::facts::Facts;
 use crate::util::js_number_to_string;
 
 /// Hands out the ids of [`TemporaryIdentifier`]s (`luau.tempId`). One per file: ids only need to be unique within
@@ -23,7 +24,7 @@ impl TempIds {
     pub fn temp_id(&mut self, name: impl Into<String>) -> TemporaryIdentifier {
         let id = self.next;
         self.next += 1;
-        TemporaryIdentifier { name: name.into(), id }
+        TemporaryIdentifier { name: name.into(), id, facts: Facts::default() }
     }
 
     /// [`TempIds::temp_id`] as an expression.
@@ -34,12 +35,12 @@ impl TempIds {
 
 /// `luau.id`: an identifier.
 pub fn id(name: impl Into<String>) -> Expr {
-    Expr::Identifier(Identifier { name: name.into() })
+    Expr::Identifier(Identifier { name: name.into(), facts: Facts::default() })
 }
 
 /// An identifier as an [`AnyIdentifier`] (parameters, locals, loop variables).
 pub fn any_id(name: impl Into<String>) -> AnyIdentifier {
-    AnyIdentifier::Identifier(Identifier { name: name.into() })
+    AnyIdentifier::Identifier(Identifier { name: name.into(), facts: Facts::default() })
 }
 
 /// `luau.none`
@@ -58,9 +59,16 @@ pub fn bool(value: bool) -> Expr {
 }
 
 /// `luau.number`: a literal for non-negative values (as JavaScript's `String(value)`), a negation of one otherwise.
-/// NaN becomes the literal `NaN` (TypeScript's `luau.number(NaN)` never returns).
+///
+/// rbxts-rs: values that have no Luau literal are written as expressions that evaluate to them: NaN as `0/0`,
+/// infinity as `math.huge` (and `-math.huge`). TypeScript's `luau.number(NaN)` recurses forever, and its
+/// `luau.number(Infinity)` renders `Infinity`, which is an undefined global in Luau.
 pub fn number(value: f64) -> Expr {
-    if value >= 0.0 || value.is_nan() {
+    if value.is_nan() {
+        binary(number(0.0), BinaryOperator::Div, number(0.0))
+    } else if value == f64::INFINITY {
+        property(id("math"), "huge")
+    } else if value >= 0.0 {
         Expr::Number(NumberLiteral { value: js_number_to_string(value) })
     } else {
         unary(UnaryOperator::Neg, number(-value))
@@ -114,51 +122,51 @@ pub fn mixed_table(fields: Vec<TableField>) -> Expr {
 
 /// `luau.binary`
 pub fn binary(left: Expr, operator: BinaryOperator, right: Expr) -> Expr {
-    Expr::Binary(Box::new(BinaryExpression { left, operator, right }))
+    Expr::Binary(Box::new(BinaryExpression { left, operator, right, facts: Facts::default() }))
 }
 
 /// `luau.unary`
 pub fn unary(operator: UnaryOperator, expression: Expr) -> Expr {
-    Expr::Unary(Box::new(UnaryExpression { operator, expression }))
+    Expr::Unary(Box::new(UnaryExpression { operator, expression, facts: Facts::default() }))
 }
 
 /// `luau.property`: `expression.name`.
 pub fn property(expression: Expr, name: impl Into<String>) -> Expr {
     debug_assert!(expression.is_indexable(), "property access on a non-indexable expression");
-    Expr::PropertyAccess(Box::new(PropertyAccessExpression { expression, name: name.into() }))
+    Expr::PropertyAccess(Box::new(PropertyAccessExpression { expression, name: name.into(), facts: Facts::default() }))
 }
 
 /// `expression[index]`
 pub fn computed_index(expression: Expr, index: Expr) -> Expr {
     debug_assert!(expression.is_indexable(), "index into a non-indexable expression");
-    Expr::ComputedIndex(Box::new(ComputedIndexExpression { expression, index }))
+    Expr::ComputedIndex(Box::new(ComputedIndexExpression { expression, index, facts: Facts::default() }))
 }
 
 /// `luau.call`: `expression(args)`.
 pub fn call(expression: Expr, args: Vec<Expr>) -> Expr {
     debug_assert!(expression.is_indexable(), "call of a non-indexable expression");
-    Expr::Call(Box::new(CallExpression { expression, args }))
+    Expr::Call(Box::new(CallExpression { expression, args, facts: Facts::default() }))
 }
 
 /// `expression:name(args)`
 pub fn method_call(expression: Expr, name: impl Into<String>, args: Vec<Expr>) -> Expr {
     debug_assert!(expression.is_indexable(), "method call on a non-indexable expression");
-    Expr::MethodCall(Box::new(MethodCallExpression { name: name.into(), expression, args }))
+    Expr::MethodCall(Box::new(MethodCallExpression { name: name.into(), expression, args, facts: Facts::default() }))
 }
 
 /// `(expression)`; rendered without parentheses when the expression is simple.
 pub fn paren(expression: Expr) -> Expr {
-    Expr::Parenthesized(Box::new(expression))
+    Expr::Parenthesized(Box::new(ParenthesizedExpression { expression, facts: Facts::default() }))
 }
 
 /// `if condition then expression else alternative`
 pub fn if_expr(condition: Expr, expression: Expr, alternative: Expr) -> Expr {
-    Expr::If(Box::new(IfExpression { condition, expression, alternative }))
+    Expr::If(Box::new(IfExpression { condition, expression, alternative, facts: Facts::default() }))
 }
 
 /// `function(parameters[, ...]) statements end`
 pub fn function(parameters: Vec<AnyIdentifier>, has_dot_dot_dot: bool, statements: Vec<Stmt>) -> Expr {
-    Expr::Function(Box::new(FunctionExpression { parameters, has_dot_dot_dot, statements }))
+    Expr::Function(Box::new(FunctionExpression { parameters, has_dot_dot_dot, statements, facts: Facts::default() }))
 }
 
 /// `...`
@@ -168,7 +176,7 @@ pub fn var_args() -> Expr {
 
 /// An interpolated string.
 pub fn interpolated_string(parts: Vec<InterpolatedStringPart>) -> Expr {
-    Expr::InterpolatedString(InterpolatedString { parts })
+    Expr::InterpolatedString(InterpolatedString { parts, facts: Facts::default() })
 }
 
 /// A call statement; `call` must be a call or a method call.
