@@ -1,17 +1,30 @@
 //! `nodes/statements/transformVariableStatement.ts`
 
-use rbxts_luau::{AssignmentOperator, Expr, Stmt, create};
+use rbxts_luau::{AnyIdentifier, AssignmentOperator, Expr, Stmt, create};
 use tsrs_ast::{Kind, Node, NodeFlags};
 use tsrs_core::P;
 
-use crate::classes::prereqs::{Prereqs, as_any_identifier};
+use crate::classes::prereqs::{Prereqs, as_any_identifier, temp_id};
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
+use crate::nodes::binding::transform_array_binding_pattern::{
+    is_omitted_binding_element, transform_array_binding_pattern,
+};
+use crate::nodes::binding::transform_object_binding_pattern::transform_object_binding_pattern;
 use crate::nodes::expressions::transform_identifier::transform_identifier_defined;
+use crate::nodes::transform_initializer::transform_initializer;
 use crate::shared::diagnostics::errors;
+use crate::util::array_binding_pattern_contains_hoists::{
+    array_binding_pattern_contains_hoists, array_like_expression_contains_spread,
+};
+use crate::util::binding::object_accessor::object_accessor;
+use crate::util::binding::transform_binding_pattern::transform_binding_pattern;
 use crate::util::check_variable_hoist::check_variable_hoist;
+use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
 use crate::util::evaluation::facts::{copy_value_facts, get_call_effects, is_constant_reference};
 use crate::util::symbols::{is_symbol_mutable, validate_identifier};
+use crate::util::types::is_lua_tuple_type;
+use crate::util::validate_not_any::validate_not_any_type;
 use crate::util::wrap_expression_statement::wrap_expression_statement;
 
 /// `transformVariable`: declares (or, for `export let`, assigns) one variable. Returns the expression it is now
@@ -59,6 +72,83 @@ pub fn transform_variable(
     left
 }
 
+/// `transformOptimizedArrayBindingPattern`: `local a, b = rhs`, for a call returning a LuaTuple (`rhs` is one
+/// expression) or an array literal (`rhs` is its members).
+fn transform_optimized_array_binding_pattern(
+    state: &mut TransformState<'_>,
+    binding_pattern: P<Node>,
+    rhs: Vec<Expr>,
+) -> Vec<Stmt> {
+    let mut ids: Vec<AnyIdentifier> = Vec::new();
+    let mut binding_statements = Vec::new();
+    for &element in binding_pattern.elements() {
+        if is_omitted_binding_element(element) {
+            ids.push(AnyIdentifier::Temporary(temp_id("")));
+            continue;
+        }
+        let binding_element = element.as_binding_element();
+        let name = binding_element.name().expect("a binding element has a name");
+        if name.kind() == Kind::Identifier {
+            validate_identifier(state, name);
+            let id = transform_identifier_defined(state, name);
+            ids.push(as_any_identifier(id.clone()));
+            if let Some(initializer) = binding_element.initializer() {
+                binding_statements.push(transform_initializer(state, id, initializer));
+            }
+        } else {
+            let id = temp_id("binding");
+            ids.push(AnyIdentifier::Temporary(id.clone()));
+            let id = Expr::TemporaryIdentifier(id);
+            if let Some(initializer) = binding_element.initializer() {
+                binding_statements.push(transform_initializer(state, id.clone(), initializer));
+            }
+
+            let mut binding_prereqs = Prereqs::new();
+            if name.kind() == Kind::ArrayBindingPattern {
+                transform_array_binding_pattern(state, &mut binding_prereqs, name, id);
+            } else {
+                transform_object_binding_pattern(state, &mut binding_prereqs, name, id);
+            }
+            binding_statements.extend(binding_prereqs.statements);
+        }
+    }
+
+    assert!(!ids.is_empty(), "an optimized binding pattern declares something");
+    let mut statements = vec![create::locals(ids, rhs)];
+    statements.extend(binding_statements);
+    statements
+}
+
+/// `transformOptimizedObjectBindingPattern`: `{ a }` or `{ a: b }` reads one named property of the receiver once,
+/// without computed key prerequisites.
+fn transform_optimized_object_binding_pattern(
+    state: &mut TransformState<'_>,
+    binding_pattern: P<Node>,
+    rhs: Expr,
+) -> Vec<Stmt> {
+    validate_not_any_type(state, binding_pattern);
+    let element = binding_pattern.elements()[0].as_binding_element();
+    let name = element.name().expect("a binding element has a name");
+
+    let mut prereqs = Prereqs::new();
+    let receiver_type = state.get_type(binding_pattern);
+    let access = object_accessor(
+        state,
+        &mut prereqs,
+        convert_to_indexable_expression(rhs),
+        receiver_type,
+        element.property_name().unwrap_or(name),
+    )
+    .value;
+    let id = transform_variable(state, &mut prereqs, name, Some(access));
+    if let Some(initializer) = element.initializer() {
+        let statement = transform_initializer(state, id, initializer);
+        prereqs.push(statement);
+    }
+
+    prereqs.statements
+}
+
 /// `transformVariableDeclaration`
 pub fn transform_variable_declaration(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stmt> {
     let mut statements = Vec::new();
@@ -86,7 +176,44 @@ pub fn transform_variable_declaration(state: &mut TransformState<'_>, node: P<No
             }
             return statements;
         }
-        state.unsupported_subtree(name, &format!("{:?} variable", name.kind()));
+
+        let initializer = initializer.expect("a destructuring declaration has an initializer");
+        if name.kind() == Kind::ArrayBindingPattern {
+            if value.is_call()
+                && {
+                    let t = state.get_type(initializer);
+                    is_lua_tuple_type(state, t)
+                }
+                && !array_binding_pattern_contains_hoists(state, name)
+                && !array_like_expression_contains_spread(name)
+            {
+                statements.extend(transform_optimized_array_binding_pattern(state, name, vec![value]));
+            } else if matches!(&value, Expr::Array(members) if !members.is_empty())
+                // we can't localize multiple variables at the same time if any of them are hoisted
+                && !array_binding_pattern_contains_hoists(state, name)
+                && !array_like_expression_contains_spread(name)
+            {
+                let Expr::Array(members) = value else { unreachable!() };
+                statements.extend(transform_optimized_array_binding_pattern(state, name, members));
+            } else {
+                let mut binding_prereqs = Prereqs::new();
+                transform_binding_pattern(state, &mut binding_prereqs, name, value);
+                statements.extend(binding_prereqs.statements);
+            }
+        } else {
+            let element = name.elements()[0].as_binding_element();
+            if name.elements().len() == 1
+                && element.name().is_some_and(|name| name.kind() == Kind::Identifier)
+                && element.dot_dot_dot_token().is_none()
+                && element.property_name().is_none_or(|property| property.kind() == Kind::Identifier)
+            {
+                statements.extend(transform_optimized_object_binding_pattern(state, name, value));
+            } else {
+                let mut binding_prereqs = Prereqs::new();
+                transform_binding_pattern(state, &mut binding_prereqs, name, value);
+                statements.extend(binding_prereqs.statements);
+            }
+        }
     }
 
     statements

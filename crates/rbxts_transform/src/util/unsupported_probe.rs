@@ -22,10 +22,6 @@ pub fn is_unsupported_expression_kind(_kind: Kind) -> bool {
     false
 }
 
-fn is_binding_pattern(node: P<Node>) -> bool {
-    matches!(node.kind(), Kind::ObjectBindingPattern | Kind::ArrayBindingPattern)
-}
-
 /// The macro a call expands, as the transform labels it.
 fn macro_label(state: &mut TransformState<'_>, call: P<Node>) -> Option<String> {
     if tsrs_ast::is_import_call(call) {
@@ -65,34 +61,6 @@ fn classify(state: &mut TransformState<'_>, node: P<Node>) -> Option<String> {
             let symbol = state.checker.get_symbol_at_location_exported(node)?;
             let r#macro = state.macro_manager.get_identifier_macro(state.checker, symbol)?;
             r#macro.transform.is_none().then(|| format!("identifier macro {}", r#macro.name))
-        }
-        Kind::BinaryExpression => {
-            let binary = node.as_binary_expression();
-            if tsrs_ast::is_assignment_operator(binary.operator_token.kind()) {
-                match binary.left.kind() {
-                    Kind::ArrayLiteralExpression => Some("array destructuring assignment".to_owned()),
-                    Kind::ObjectLiteralExpression => Some("object destructuring assignment".to_owned()),
-                    _ => None,
-                }
-            } else {
-                None
-            }
-        }
-        Kind::VariableDeclaration => {
-            let name = node.name()?;
-            (is_binding_pattern(name) && !name.elements().is_empty()).then(|| format!("{:?} variable", name.kind()))
-        }
-        Kind::Parameter => {
-            let name = node.name()?;
-            if !is_binding_pattern(name) {
-                return None;
-            }
-            let is_rest = node.as_parameter_declaration().dot_dot_dot_token().is_some();
-            Some(if is_rest && name.kind() == Kind::ArrayBindingPattern {
-                "rest parameter array binding pattern".to_owned()
-            } else {
-                format!("{:?} parameter", name.kind())
-            })
         }
         _ => None,
     }

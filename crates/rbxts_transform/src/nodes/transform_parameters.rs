@@ -4,8 +4,12 @@ use rbxts_luau::{AnyIdentifier, Expr, Stmt, create, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
-use crate::classes::prereqs::{as_any_identifier, temp_id};
+use crate::classes::prereqs::{Prereqs, as_any_identifier, temp_id};
 use crate::classes::transform_state::TransformState;
+use crate::nodes::binding::transform_array_binding_pattern::{
+    is_omitted_binding_element, transform_array_binding_pattern,
+};
+use crate::nodes::binding::transform_object_binding_pattern::transform_object_binding_pattern;
 use crate::nodes::expressions::transform_identifier::transform_identifier_defined;
 use crate::nodes::transform_initializer::transform_initializer;
 use crate::util::array_binding_pattern_contains_hoists::array_like_expression_contains_spread;
@@ -17,6 +21,45 @@ pub struct TransformedParameters {
     pub parameters: Vec<AnyIdentifier>,
     pub statements: Vec<Stmt>,
     pub has_dot_dot_dot: bool,
+}
+
+/// `optimizeArraySpreadParameter`: parameters in the form `...[a, b, c]: [A, B, C]` become just `(a, b, c)`.
+fn optimize_array_spread_parameter(
+    state: &mut TransformState<'_>,
+    prereqs: &mut Prereqs,
+    parameters: &mut Vec<AnyIdentifier>,
+    binding_pattern: P<Node>,
+) {
+    for &element in binding_pattern.elements() {
+        if is_omitted_binding_element(element) {
+            parameters.push(AnyIdentifier::Temporary(temp_id("")));
+            continue;
+        }
+        let binding_element = element.as_binding_element();
+        let name = binding_element.name().expect("a binding element has a name");
+        if name.kind() == Kind::Identifier {
+            let param_id = transform_identifier_defined(state, name);
+            validate_identifier(state, name);
+            parameters.push(as_any_identifier(param_id.clone()));
+            if let Some(initializer) = binding_element.initializer() {
+                let statement = transform_initializer(state, param_id, initializer);
+                prereqs.push(statement);
+            }
+        } else {
+            let param_id = temp_id("param");
+            parameters.push(AnyIdentifier::Temporary(param_id.clone()));
+            let param_id = Expr::TemporaryIdentifier(param_id);
+            if let Some(initializer) = binding_element.initializer() {
+                let statement = transform_initializer(state, param_id.clone(), initializer);
+                prereqs.push(statement);
+            }
+            if name.kind() == Kind::ArrayBindingPattern {
+                transform_array_binding_pattern(state, prereqs, name, param_id);
+            } else {
+                transform_object_binding_pattern(state, prereqs, name, param_id);
+            }
+        }
+    }
 }
 
 /// `transformParameters`: the Luau parameter list (`self` first for methods), with defaults, rest parameters and
@@ -39,8 +82,9 @@ pub fn transform_parameters(state: &mut TransformState<'_>, node: P<Node>) -> Tr
         let is_rest = declaration.dot_dot_dot_token().is_some();
 
         if is_rest && name.kind() == Kind::ArrayBindingPattern && !array_like_expression_contains_spread(name) {
-            // `...[a, b, c]: [A, B, C]` becomes `(a, b, c)`
-            state.unsupported_subtree(parameter, "rest parameter array binding pattern");
+            let mut parameter_prereqs = Prereqs::new();
+            optimize_array_spread_parameter(state, &mut parameter_prereqs, &mut parameters, name);
+            statements.extend(parameter_prereqs.statements);
             continue;
         }
 
@@ -68,7 +112,13 @@ pub fn transform_parameters(state: &mut TransformState<'_>, node: P<Node>) -> Tr
 
         // destructuring
         if name.kind() != Kind::Identifier {
-            state.unsupported_subtree(name, &format!("{:?} parameter", name.kind()));
+            let mut binding_prereqs = Prereqs::new();
+            if name.kind() == Kind::ArrayBindingPattern {
+                transform_array_binding_pattern(state, &mut binding_prereqs, name, param_id);
+            } else {
+                transform_object_binding_pattern(state, &mut binding_prereqs, name, param_id);
+            }
+            statements.extend(binding_prereqs.statements);
         }
     }
 

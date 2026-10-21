@@ -3,6 +3,7 @@
 pub mod add_index_diagnostics;
 pub mod add_one_if_array_type;
 pub mod array_binding_pattern_contains_hoists;
+pub mod binding;
 pub mod check_variable_hoist;
 pub mod clean_module_name;
 pub mod convert_to_indexable_expression;
