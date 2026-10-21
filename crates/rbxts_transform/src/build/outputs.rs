@@ -33,6 +33,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rbxts_project::{ProjectServices, nodepath};
 
 use crate::plugins::lifecycle::{remove_file, write_if_changed};
+use crate::project::copy_include::effective_include_path;
 
 /// The outputs of one build.
 #[derive(Debug, Default)]
@@ -218,7 +219,8 @@ pub fn get_project_outputs(inputs: &OutputInputs<'_>) -> Result<ProjectOutputs, 
     for config in services.rojo_resolver.config_files() {
         outputs.keep.insert(path_key(services, config));
     }
-    outputs.keep_dirs.push(include);
+    // the include folder this build writes: under the override when it lies in the outDir
+    outputs.keep_dirs.push(effective_include_path(services, inputs.out_dir_override));
     Ok(outputs)
 }
 
@@ -290,9 +292,9 @@ pub fn output_roots(
     roots
 }
 
-/// Lists the files under `roots`.
-pub fn list(services: &ProjectServices, roots: &[String]) -> Listing {
-    let include = path_key(services, &nodepath::resolve(&[&services.data.options.include_path]));
+/// Lists the files under `roots` (the include folder the build with this outDir override writes is not entered).
+pub fn list(services: &ProjectServices, roots: &[String], out_dir_override: Option<&str>) -> Listing {
+    let include = path_key(services, &effective_include_path(services, out_dir_override));
     let mut listing = Listing { roots: roots.to_vec(), ..Listing::default() };
     // a root that is a link is not entered (roblox-ts's `existsSync` + `readdirSync` would follow it; its clean of
     // the link's contents would delete files outside the project)

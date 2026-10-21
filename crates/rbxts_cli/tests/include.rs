@@ -264,3 +264,67 @@ fn command_line_parity() {
         )
     );
 }
+
+/// An outDir override (parity runs, the harness) with the include folder inside the outDir: every build writes it
+/// under the override and the clean keeps it there, build after build; nothing reaches the project's own outDir.
+#[test]
+fn override_keeps_include_across_builds() {
+    let Some(node_modules) = node_modules() else { return };
+    let fixture = Fixture::new("override", &node_modules);
+    let tsconfig = std::fs::read_to_string(fixture.game.join("tsconfig.json")).unwrap();
+    std::fs::write(
+        fixture.game.join("tsconfig.json"),
+        tsconfig.replacen(
+            "\"compilerOptions\": {",
+            "\"rbxts\": { \"includePath\": \"out/include\" },\n\t\"compilerOptions\": {",
+            1,
+        ),
+    )
+    .unwrap();
+    let project = std::fs::read_to_string(fixture.game.join("default.project.json")).unwrap();
+    std::fs::write(
+        fixture.game.join("default.project.json"),
+        project.replace("\"$path\": \"include\"", "\"$path\": \"out/include\""),
+    )
+    .unwrap();
+    let elsewhere = fixture.root.join("X");
+    let cwd = fixture.game.to_string_lossy().into_owned();
+    let out_dir = elsewhere.to_string_lossy().into_owned();
+    for build in 1..=4 {
+        let (cwd, out_dir) = (cwd.clone(), out_dir.clone());
+        let report = std::thread::Builder::new()
+            .stack_size(rbxts_project::STACK_SIZE)
+            .spawn(move || {
+                rbxts_transform::compile_project(&rbxts_transform::CompileOptions {
+                    tsconfig: "tsconfig.json".into(),
+                    cwd,
+                    project_options: rbxts_project::ProjectOptionLayer::default(),
+                    out_dir_override: Some(out_dir),
+                    write_partial: false,
+                    no_write: false,
+                })
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert!(!report.has_errors(), "build {build}: {:?}", report.fatal);
+        let mut files: Vec<String> = Vec::new();
+        let mut stack = vec![elsewhere.clone()];
+        while let Some(directory) = stack.pop() {
+            for entry in std::fs::read_dir(&directory).unwrap().flatten() {
+                if entry.file_type().unwrap().is_dir() {
+                    stack.push(entry.path());
+                } else {
+                    files.push(entry.path().strip_prefix(&elsewhere).unwrap().to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+        files.sort();
+        assert_eq!(
+            files,
+            ["include/Promise.luau", "include/RuntimeLib.luau", "server/main.server.luau", "shared/greet.luau"],
+            "build {build}"
+        );
+        assert!(!fixture.game.join("out").exists(), "build {build} wrote into the project's outDir");
+    }
+}

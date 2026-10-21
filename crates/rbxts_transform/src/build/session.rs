@@ -483,6 +483,7 @@ impl<'p> BuildSession<'p> {
         let listing = outputs::list(
             services,
             &outputs::output_roots(services, &project.program.options(), self.options.out_dir_override.as_deref()),
+            self.options.out_dir_override.as_deref(),
         );
         let facts = graph::program_facts(project.program, &mut loaded.versions);
         let project = &loaded.project;

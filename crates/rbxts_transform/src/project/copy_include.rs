@@ -166,6 +166,13 @@ pub fn include_target(include_path: &str, out_dir: &str, out_dir_override: Optio
     }
 }
 
+/// The include folder of a build with this outDir override: [`include_target`], or the project's own when the
+/// override leaves it out (nothing is written there then). The clean keeps it whole.
+pub fn effective_include_path(services: &ProjectServices, out_dir_override: Option<&str>) -> String {
+    let include_path = nodepath::resolve(&[&services.data.options.include_path]);
+    include_target(&include_path, &services.path_translator.out_dir, out_dir_override).unwrap_or(include_path)
+}
+
 /// The include copy of this build, with every file read, or None when the project gets none. Fails when the include
 /// source cannot be read, before anything is written.
 pub fn prepare_copy_include(
