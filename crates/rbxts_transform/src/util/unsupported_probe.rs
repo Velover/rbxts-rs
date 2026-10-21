@@ -20,15 +20,9 @@ pub fn is_unsupported_statement_kind(kind: Kind) -> bool {
     )
 }
 
-/// Expression kinds the transform reports as unsupported.
-pub fn is_unsupported_expression_kind(kind: Kind) -> bool {
-    matches!(
-        kind,
-        Kind::JsxElement
-            | Kind::JsxExpression
-            | Kind::JsxFragment
-            | Kind::JsxSelfClosingElement
-    )
+/// Expression kinds the transform reports as unsupported (none since JSX was ported).
+pub fn is_unsupported_expression_kind(_kind: Kind) -> bool {
+    false
 }
 
 fn is_binding_pattern(node: P<Node>) -> bool {

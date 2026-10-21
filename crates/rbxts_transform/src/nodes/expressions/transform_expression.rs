@@ -21,6 +21,10 @@ use super::transform_delete_expression::transform_delete_expression;
 use super::transform_element_access_expression::transform_element_access_expression;
 use super::transform_function_expression::transform_function_expression;
 use super::transform_identifier::transform_identifier;
+use super::transform_jsx_element::transform_jsx_element;
+use super::transform_jsx_expression::transform_jsx_expression;
+use super::transform_jsx_fragment::transform_jsx_fragment;
+use super::transform_jsx_self_closing_element::transform_jsx_self_closing_element;
 use super::transform_new_expression::transform_new_expression;
 use super::transform_no_substitution_template_literal::transform_no_substitution_template_literal;
 use super::transform_numeric_literal::transform_numeric_literal;
@@ -90,6 +94,10 @@ pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereq
         Kind::FalseKeyword => Expr::False,
         Kind::TrueKeyword => Expr::True,
         Kind::Identifier => transform_identifier(state, node),
+        Kind::JsxElement => transform_jsx_element(state, prereqs, node),
+        Kind::JsxExpression => transform_jsx_expression(state, prereqs, node),
+        Kind::JsxFragment => transform_jsx_fragment(state, prereqs, node),
+        Kind::JsxSelfClosingElement => transform_jsx_self_closing_element(state, prereqs, node),
         Kind::NewExpression => transform_new_expression(state, prereqs, node),
         Kind::NoSubstitutionTemplateLiteral => transform_no_substitution_template_literal(node),
         Kind::NumericLiteral => transform_numeric_literal(node),
@@ -107,12 +115,6 @@ pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereq
         Kind::ThisKeyword => transform_this_expression(state, node),
         Kind::VoidExpression => transform_void_expression(state, prereqs, node),
         Kind::YieldExpression => transform_yield_expression(state, prereqs, node),
-
-        // rbxts-rs: kinds roblox-ts transforms that are not ported yet
-        Kind::JsxElement
-        | Kind::JsxExpression
-        | Kind::JsxFragment
-        | Kind::JsxSelfClosingElement => return state.unsupported_subtree(node, &kind_name(node.kind())),
 
         kind => {
             // roblox-ts asserts here; a diagnostic keeps the build going

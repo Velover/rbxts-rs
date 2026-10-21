@@ -3,6 +3,7 @@
 pub mod binding;
 pub mod class;
 pub mod expressions;
+pub mod jsx;
 pub mod statements;
 pub mod transform_entity_name;
 pub mod transform_initializer;
