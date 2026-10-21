@@ -3,9 +3,13 @@
 //! - **Events.** A `notify` watcher (ReadDirectoryChangesW on Windows, or polling with `--usePolling`) on the root
 //!   directories (recursive), the tsconfig's directory and the directories of the configs it extends, of the Rojo
 //!   project files and of the plugins' input files (not recursive), the directories plugins asked to watch
-//!   (`watch_dir`, recursive), and the directories of program files outside those (not `node_modules`). Events
-//!   under the output roots, the include folder, `node_modules` and `.git`, rbxts-rs's own temporary files, and
-//!   writes of this watcher's own artifacts are dropped.
+//!   (`watch_dir`, recursive), and the directories of program files outside those. Under `node_modules` (never
+//!   recursively): `node_modules` and its `@scope` directories, where an added or removed package counts; the
+//!   root and the declaration directories of every package the program uses, of every package an unresolved import
+//!   names, and of every package plugin `resolve_module` calls went through, where a changed `package.json` or
+//!   declaration file counts. Events under the output roots, the include folder and `.git`, other events under
+//!   `node_modules`, a directory's own modification events (its entries' events say more; a directory created or
+//!   moved in counts), rbxts-rs's own temporary files, and writes of this watcher's own artifacts are dropped.
 //! - **Debounce.** Trailing, 100 ms as roblox-ts: each event restarts the wait, and the paths of one burst become
 //!   one rebuild. A rename is its two paths (the session sees a deletion and an addition).
 //! - **Errors.** A panic in a rebuild is reported and the session starts over with a clean build; the watcher
@@ -23,6 +27,7 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::{Duration, SystemTime};
 
+use notify::event::ModifyKind;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -42,6 +47,12 @@ const GENERATION_ENV: &str = "RBXTS_WATCH_GENERATION";
 /// Where a child that asks for a restart leaves its last generation.
 const GENERATION_FILE_ENV: &str = "RBXTS_WATCH_GENERATION_FILE";
 const DEBOUNCE: Duration = Duration::from_millis(100);
+/// `RBXTS_WATCH_DEBUG` set: the watched directories and every raw event go to stderr.
+fn debug() -> bool {
+    static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DEBUG.get_or_init(|| std::env::var_os("RBXTS_WATCH_DEBUG").is_some())
+}
+
 /// The touched path standing for "events were lost".
 const RESCAN: &str = "<rescan>";
 
@@ -155,8 +166,23 @@ struct Watched {
     flat: BTreeSet<String>,
     /// Path keys of the directories whose events are dropped (output roots, include folder).
     ignored_roots: Vec<String>,
-    /// Path keys of the `node_modules` directories watched for plugin module resolutions (their events count).
+    /// Path keys of `node_modules` and its scope directories: any entry added, removed or renamed counts.
+    module_dirs: FxHashSet<String>,
+    /// Path keys of package directories: a changed `package.json` or TypeScript file counts.
     package_dirs: FxHashSet<String>,
+    /// Path keys of the package directories plugin resolutions go through: any event counts.
+    plugin_package_dirs: FxHashSet<String>,
+}
+
+/// The package root of a path under `node_modules`: `…/node_modules/name` or `…/node_modules/@scope/name`.
+fn package_root(path: &str) -> Option<String> {
+    let normalized = nodepath::normalize(path).replace('\\', "/");
+    let at = normalized.rfind("/node_modules/")? + "/node_modules/".len();
+    let rest = &normalized[at..];
+    let mut parts = rest.split('/');
+    let first = parts.next()?;
+    let length = if first.starts_with('@') { first.len() + 1 + parts.next()?.len() } else { first.len() };
+    Some(normalized[..at + length].to_owned())
 }
 
 fn key(path: &str) -> String {
@@ -172,6 +198,10 @@ fn is_under(path_key: &str, root_key: &str) -> bool {
 
 fn watched_set(session: &BuildSession<'_>) -> Watched {
     let mut watched = Watched::default();
+    // the tsconfig's directory, also when no project could be loaded (a broken tsconfig at the first build)
+    watched
+        .flat
+        .insert(nodepath::dirname(&nodepath::resolve(&[&session.options.cwd, &session.options.tsconfig])).to_owned());
     let Some((services, program_files, root_dirs)) = session.watch_roots() else { return watched };
     let project_dir = services.data.project_path.clone();
     let out_dir = session.options.out_dir_override.clone().unwrap_or_else(|| services.path_translator.out_dir.clone());
@@ -205,20 +235,57 @@ fn watched_set(session: &BuildSession<'_>) -> Watched {
             }
         }
         for dir in dirs {
-            watched.package_dirs.insert(key(&dir));
+            watched.plugin_package_dirs.insert(key(&dir));
             watched.flat.insert(dir);
         }
     }
-    for file in program_files {
-        let k = key(&file);
-        if k.contains("/node_modules/") || file.starts_with("bundled:") {
+    // packages: node_modules and its scopes for packages appearing or going, the packages in use (and those an
+    // unresolved import names) for their package.json and declaration files
+    let mut module_dirs = vec![node_modules.clone()];
+    if let Ok(entries) = std::fs::read_dir(&node_modules) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('@') && std::fs::metadata(entry.path()).is_ok_and(|m| m.is_dir()) {
+                module_dirs.push(nodepath::join(&[&node_modules, &name]));
+            }
+        }
+    }
+    for dir in module_dirs {
+        watched.module_dirs.insert(key(&dir));
+        watched.flat.insert(dir);
+    }
+    let mut package_dirs: BTreeSet<String> = BTreeSet::new();
+    for name in session.unresolved_packages() {
+        let package: Vec<&str> = name.split('/').take(if name.starts_with('@') { 2 } else { 1 }).collect();
+        let mut dir = node_modules.clone();
+        for part in package {
+            dir = nodepath::join(&[&dir, part]);
+        }
+        package_dirs.insert(dir);
+    }
+    for file in &program_files {
+        if file.starts_with("bundled:") {
             continue;
         }
-        watched.flat.insert(nodepath::dirname(&file).to_owned());
+        if key(file).contains("/node_modules/") {
+            package_dirs.insert(nodepath::dirname(file).to_owned());
+            if let Some(root) = package_root(file) {
+                package_dirs.insert(root);
+            }
+            continue;
+        }
+        watched.flat.insert(nodepath::dirname(file).to_owned());
+    }
+    for dir in package_dirs {
+        watched.package_dirs.insert(key(&dir));
+        watched.flat.insert(dir);
     }
     // a directory inside a recursive root needs no watch of its own
     let recursive_keys: Vec<String> = watched.recursive.iter().map(|r| key(r)).collect();
     watched.flat.retain(|dir| !recursive_keys.iter().any(|r| is_under(&key(dir), r)));
+    // one watch per directory, whatever its spelling
+    let mut seen = FxHashSet::default();
+    watched.flat.retain(|dir| seen.insert(key(dir)));
     watched
 }
 
@@ -228,13 +295,14 @@ fn relevant(path: &str, watched: &Watched, own: &FxHashMap<String, Version>) -> 
     if watched.ignored_roots.iter().any(|root| is_under(&k, root)) {
         return false;
     }
-    let in_package_dir = watched.package_dirs.contains(nodepath::dirname(&k)) || watched.package_dirs.contains(&k);
-    if !in_package_dir && k.split('/').any(|c| c == "node_modules" || c == ".git") {
-        return false;
-    }
-    // a directory's own events (created, its entries changed) say nothing its files' events do not, except a
-    // directory that is gone (its files went with it) or a watched package directory
-    if !in_package_dir && std::fs::metadata(path).is_ok_and(|m| m.is_dir()) {
+    let parent = nodepath::dirname(&k);
+    let name = nodepath::basename(&k);
+    let package_event = watched.module_dirs.contains(parent)
+        || watched.plugin_package_dirs.contains(parent)
+        || watched.plugin_package_dirs.contains(&k)
+        || (watched.package_dirs.contains(parent)
+            && (name == "package.json" || name.ends_with(".ts") || name.ends_with(".tsx") || name.ends_with(".mts")));
+    if !package_event && k.split('/').any(|c| c == "node_modules" || c == ".git") {
         return false;
     }
     let name = nodepath::basename(&k);
@@ -256,7 +324,19 @@ struct Subscriptions {
 }
 
 impl Subscriptions {
+    /// Watches what `watched` lists. An empty set (no project loaded: a broken tsconfig, a crashed build) keeps
+    /// the current watches, so the fix is seen.
     fn update(&mut self, watched: &Watched) {
+        if watched.recursive.is_empty() && watched.flat.is_empty() {
+            return;
+        }
+        if debug() {
+            eprintln!(
+                "[rbxtsc watch] recursive {:?}
+[rbxtsc watch] flat {:?}",
+                watched.recursive, watched.flat
+            );
+        }
         let wanted: FxHashSet<(String, bool)> = watched
             .recursive
             .iter()
@@ -312,8 +392,7 @@ fn watch(
     let mut generation = if first_generation > 0 { first_generation + 1 } else { 0 };
 
     status("Starting compilation in watch mode...");
-    rebuild(&mut session, build, cwd, generation, &[], &mut own);
-    subscriptions.update(&watched_set(&session));
+    rebuild(&mut session, &mut subscriptions, build, cwd, generation, &[], &mut own);
     loop {
         let Some(paths) = collect(&receiver) else { return 0 };
         let watched = watched_set(&session);
@@ -327,8 +406,7 @@ fn watch(
         }
         generation += 1;
         status("File change detected. Starting incremental compilation...");
-        rebuild(&mut session, build, cwd, generation, &paths, &mut own);
-        subscriptions.update(&watched_set(&session));
+        rebuild(&mut session, &mut subscriptions, build, cwd, generation, &paths, &mut own);
         if let Some(limit) = memory_limit()
             && std::env::var(CHILD_ENV).is_ok()
             && memory_stats::memory_stats().is_some_and(|m| m.physical_mem > limit)
@@ -346,6 +424,17 @@ fn watch(
 fn collect(receiver: &Receiver<notify::Result<Event>>) -> Option<Vec<String>> {
     let mut paths: BTreeSet<String> = BTreeSet::new();
     let add = |event: notify::Result<Event>, paths: &mut BTreeSet<String>| match event {
+        _ if debug() && {
+            eprintln!("[rbxtsc watch] event {event:?}");
+            false
+        } => {}
+        // a directory's own modification (its entries changed) says nothing its entries' events do not; a directory
+        // created, moved in or renamed is kept (on Windows, a directory moved in is one event for the directory)
+        Ok(event)
+            if matches!(
+                event.kind,
+                EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_) | ModifyKind::Metadata(_) | ModifyKind::Other)
+            ) && event.paths.iter().all(|p| std::fs::metadata(p).is_ok_and(|m| m.is_dir())) => {}
         // events were lost (an overflowing buffer): everything may have changed
         Err(_) => {
             paths.insert(RESCAN.to_owned());
@@ -376,8 +465,11 @@ fn path_text(path: &Path) -> String {
 }
 
 /// One build of the watch loop, with its report and events. A panic is reported, and the session starts over.
+/// After the build, the watched directories are brought up to date before anything is printed, so a change made
+/// as soon as the build is reported finished is seen.
 fn rebuild(
     session: &mut BuildSession<'_>,
+    subscriptions: &mut Subscriptions,
     build: &BuildArgs,
     cwd: &str,
     generation: u64,
@@ -388,6 +480,10 @@ fn rebuild(
         println!("{{\"event\":\"build-start\",\"gen\":{generation},\"changes\":{}}}", json_list(paths));
     }
     let result = catch_unwind(AssertUnwindSafe(|| session.build(paths)));
+    if result.is_err() {
+        session.reset();
+    }
+    subscriptions.update(&watched_set(session));
     let (report, summary) = match result {
         Ok(result) => result,
         Err(panic) => {
@@ -397,7 +493,6 @@ fn rebuild(
                 .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
                 .unwrap_or_else(|| "panic".to_owned());
             eprintln!("\u{1b}[31mrbxtsc: the build crashed:\u{1b}[0m {message}\nThe next build starts clean.");
-            session.reset();
             if build.events_json {
                 println!(
                     "{{\"event\":\"build-end\",\"gen\":{generation},\"ok\":false,\"errors\":1,\"crash\":{},\"written\":[],\"deleted\":[]}}",
@@ -430,4 +525,19 @@ fn print_end(generation: u64, report: &CompileReport, summary: &BuildSummary, er
         json_list(&summary.written),
         json_list(&summary.deleted)
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::package_root;
+
+    #[test]
+    fn package_roots() {
+        assert_eq!(
+            package_root("E:/p/node_modules/@rbxts/types/include/a.d.ts").as_deref(),
+            Some("E:/p/node_modules/@rbxts/types")
+        );
+        assert_eq!(package_root("E:/p/node_modules/pkg/lib/x.d.ts").as_deref(), Some("E:/p/node_modules/pkg"));
+        assert_eq!(package_root("E:/p/src/x.ts"), None);
+    }
 }

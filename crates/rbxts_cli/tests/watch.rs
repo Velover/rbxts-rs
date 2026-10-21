@@ -169,3 +169,141 @@ fn the_watcher_debounces_renames_and_recovers_from_errors() {
     assert!(std::fs::read_to_string(root.join("out/shared/d.luau")).unwrap().contains("+ 1"));
     drop(watcher);
 }
+
+/// Unlinks `link` (a junction) without touching its target.
+fn unlink(link: &Path) {
+    let _ = Command::new("cmd").args(["/C", "rmdir"]).arg(link.to_string_lossy().replace('/', "\\")).status();
+}
+
+/// Starts `rbxtsc -w --events json` on `root` and waits for its initial build.
+fn start(root: &Path) -> Watcher {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rbxtsc"))
+        .args(["-w", "--events", "json", "-p"])
+        .arg(root)
+        .env("RBXTS_WATCH_MEMORY_LIMIT_MB", "0")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (event_tx, events) = channel();
+    let (line_tx, lines) = channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if line.starts_with("{\"event\"")
+                && let Ok(value) = serde_json::from_str::<Value>(&line)
+            {
+                let _ = event_tx.send(value);
+            }
+            let _ = line_tx.send(line);
+        }
+    });
+    Watcher { child, root: root.to_path_buf(), events, lines }
+}
+
+impl Watcher {
+    /// Build ends until one that succeeded (a package written in steps can take more than one rebuild), within 60 s.
+    fn until_ok(&self) -> Value {
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match self.events.recv_timeout(left) {
+                Ok(event) if event["event"] == "build-end" && event["ok"] == true => return event,
+                Ok(_) => {}
+                Err(_) => {
+                    let output: Vec<String> = self.lines.try_iter().collect();
+                    panic!("no successful build within 60 s; output:\n{}", output.join("\n"));
+                }
+            }
+        }
+    }
+}
+
+/// Events from outside the sources: a directory moved into `src` from outside the watched roots (one event for the
+/// directory on Windows), and a package installed, then changed, under `node_modules` with no source edit.
+#[test]
+fn the_watcher_sees_directories_moved_in_and_packages_installed() {
+    let node_modules = std::env::var_os("RBXTS_RS_FIXTURE_NODE_MODULES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_NODE_MODULES));
+    if !node_modules.join("@rbxts").join("compiler-types").is_dir() {
+        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        return;
+    }
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../rbxts_transform/tests/watch_fixtures/basic");
+    let base = std::env::temp_dir().join(format!("rbxts-rs-cli-watch-pkg-{}", std::process::id()));
+    let root = base.join("project");
+    let outside = base.join("outside");
+    let _ = std::fs::remove_dir_all(&base);
+    copy_dir(&fixture, &root);
+    let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
+    let tsconfig = tsconfig.replace(
+        "\"plugins\": [{ \"transform\": \"rbxts-transform-stamp\", \"prefix\": \"watch \" }]",
+        "\"plugins\": []",
+    );
+    std::fs::write(root.join("tsconfig.json"), tsconfig).unwrap();
+    // a real node_modules and @rbxts, one junction per package, so a package can be added in the copy alone
+    let scope = root.join("node_modules/@rbxts");
+    std::fs::create_dir_all(&scope).unwrap();
+    let mut links = Vec::new();
+    for entry in std::fs::read_dir(node_modules.join("@rbxts")).unwrap().flatten() {
+        let link = scope.join(entry.file_name());
+        let status = Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link.to_string_lossy().replace('/', "\\"))
+            .arg(entry.path().to_string_lossy().replace('/', "\\"))
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        links.push(link);
+    }
+    std::fs::create_dir_all(outside.join("feat")).unwrap();
+    std::fs::write(outside.join("feat/f.ts"), "export const f = 1;\n").unwrap();
+
+    let watcher = start(&root);
+    let initial = watcher.build_end(0);
+    assert_eq!(initial["ok"], true, "{initial}");
+
+    // a directory moved in from outside the watched roots
+    std::fs::rename(outside.join("feat"), root.join("src/shared/feat")).unwrap();
+    let end = watcher.build_end(1);
+    assert_eq!(end["ok"], true, "{end}");
+    assert!(root.join("out/shared/feat/f.luau").is_file(), "the moved-in directory was built");
+
+    // an import of a package not installed yet
+    std::fs::write(
+        root.join("src/shared/usePkg.ts"),
+        "import { v } from \"@rbxts/vpkg\";\n\nexport const w = v.size();\n",
+    )
+    .unwrap();
+    let end = watcher.build_end(2);
+    assert_eq!(end["ok"], false, "{end}");
+
+    // the package appears (no source edit): a rebuild resolves it
+    let staged = base.join("vpkg");
+    std::fs::create_dir_all(&staged).unwrap();
+    std::fs::write(
+        staged.join("package.json"),
+        "{ \"name\": \"@rbxts/vpkg\", \"main\": \"init.lua\", \"types\": \"index.d.ts\" }\n",
+    )
+    .unwrap();
+    std::fs::write(staged.join("index.d.ts"), "export declare const v: Array<number>;\n").unwrap();
+    std::fs::write(staged.join("init.lua"), "return { v = {} }\n").unwrap();
+    std::fs::rename(&staged, scope.join("vpkg")).unwrap();
+    watcher.until_ok();
+    let use_pkg = std::fs::read_to_string(root.join("out/shared/usePkg.luau")).unwrap();
+    assert!(!use_pkg.contains("ReadonlyMap.size"), "{use_pkg}");
+
+    // the package's declaration changes (no source edit): a rebuild follows it
+    std::fs::write(scope.join("vpkg/index.d.ts"), "export declare const v: Map<number, number>;\n").unwrap();
+    watcher.until_ok();
+    let use_pkg = std::fs::read_to_string(root.join("out/shared/usePkg.luau")).unwrap();
+    assert!(use_pkg.contains("ReadonlyMap.size"), "the package's new types were used:\n{use_pkg}");
+
+    drop(watcher);
+    for link in links {
+        unlink(&link);
+    }
+    let _ = std::fs::remove_dir_all(&base);
+}
