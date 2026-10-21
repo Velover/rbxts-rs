@@ -553,27 +553,82 @@ fn seam_misuse_is_refused_naming_the_plugin() {
 #[test]
 fn a_main_chunk_past_luau_limit_is_spilled_or_an_error() {
     let Some(project) = Project::new("locals") else { return };
-    // 205 locals and 2 spillable hoists: 208 after spilling, still past the limit
-    let mut source = String::new();
-    for i in 1..=205 {
-        source.push_str(&format!("export const v{i} = {i};\n"));
-    }
-    source.push_str("export const s1 = probeSpill(v1);\nexport const s2 = probeSpill(v2);\n");
-    project.write("src/shared/big.ts", &source);
-    let report = project.build(&["stamp", "probe"], |_| {});
+    let lines = |count: usize, line: &dyn Fn(usize) -> String| (1..=count).map(|i| line(i) + "\n").collect::<String>();
+    let build = |source: &str| {
+        project.write("src/shared/big.ts", source);
+        let report = project.build(&["stamp", "probe"], |_| {});
+        let _ = std::fs::remove_dir_all(project.root.join("out"));
+        report
+    };
+    let big = |report: &CompileReport| -> Vec<String> {
+        diagnostics(report).into_iter().filter(|d| d.contains(" big.ts: ")).collect()
+    };
+    let at_line = |report: &CompileReport, line: &str| {
+        let file = report.files.iter().find(|f| f.file_name.ends_with("big.ts")).unwrap();
+        let start = file.diagnostics[0].pos().expect("a position") as usize;
+        let text = std::fs::read_to_string(project.root.join("src/shared/big.ts")).unwrap();
+        assert!(text[start..].trim_start().starts_with(line), "{}", &text[start..]);
+    };
+
+    // 205 tables and 2 spillable hoists: past the limit after spilling too
+    let source = lines(205, &|i| format!("export const v{i} = [{i}];"))
+        + "export const s1 = probeSpill(v1);\nexport const s2 = probeSpill(v2);\n";
+    let report = build(&source);
     assert_eq!(
-        errors(&report),
+        big(&report),
         vec![
-            "error big.ts: This file declares 208 locals in its main chunk, and Luau allows at most 200 there: it \
+            "error big.ts: This file needs 208 local registers in its main chunk, and Luau allows at most 200: it \
              would build, then fail to load (\"Out of local registers\"). The count passes the limit here."
         ]
     );
-    assert!(!project.out_exists());
-    // the error is at the statement where the count passes the limit
-    let file = report.files.iter().find(|f| f.file_name.ends_with("big.ts")).unwrap();
-    let start = file.diagnostics[0].pos().expect("a position");
-    let text = std::fs::read_to_string(project.root.join("src/shared/big.ts")).unwrap();
-    assert!(text[start as usize..].trim_start().starts_with("export const v201 = 201;"), "{}", &text[start as usize..]);
+    at_line(&report, "export const v201 = [201];");
+
+    // 197 tables, a hoist, an import and its use: 200, and `local TS` (added after the transform) makes 201
+    let source = "import { impl } from \"./runtime\";\n".to_owned()
+        + &lines(197, &|i| format!("export const v{i} = [{i}];"))
+        + "print(probeHoist([0]));\nexport const u = impl(\"\", 0);\n";
+    let report = build(&source);
+    assert_eq!(
+        big(&report),
+        vec![
+            "error big.ts: This file needs 201 local registers in its main chunk, and Luau allows at most 200: it \
+             would build, then fail to load (\"Out of local registers\"). The count passes the limit here."
+        ]
+    );
+
+    // constants take no register (Luau folds them at -O1, Roblox's default): 205 of them and a hoist load
+    let report = build(&(lines(205, &|i| format!("export const c{i} = {i};")) + "print(probeHoist([0]));\n"));
+    assert_eq!(big(&report), Vec::<String>::new());
+    // … unless the file opts into --!optimize 0, where every local takes one
+    let report = build(
+        &("//!optimize 0\n".to_owned()
+            + &lines(205, &|i| format!("export const c{i} = {i};"))
+            + "print(probeHoist([0]));\n"),
+    );
+    assert_eq!(
+        big(&report),
+        vec![
+            "error big.ts: This file needs 206 local registers in its main chunk, at --!optimize 0 (every local takes \
+             one), and Luau allows at most 200: it would build, then fail to load (\"Out of local registers\"). The \
+             count passes the limit here."
+        ]
+    );
+
+    // what Luau may fold or not is a warning: the file is written
+    let report = build(&(lines(201, &|i| format!("export const w{i} = 1 + {i};")) + "print(probeHoist([0]));\n"));
+    assert_eq!(
+        big(&report),
+        vec![
+            "warning big.ts: This file may need up to 202 local registers in its main chunk (1 for certain; Luau \
+             folds constant locals into no register), and Luau allows at most 200: it may fail to load (\"Out of \
+             local registers\"). The count passes the limit here."
+        ]
+    );
+    assert!(errors(&report).is_empty(), "{:?}", errors(&report));
+
+    // a file no plugin added a local to is left as roblox-ts leaves it, however many locals it has
+    let report = build(&lines(205, &|i| format!("export const v{i} = [{i}];")));
+    assert_eq!(big(&report), Vec::<String>::new());
 }
 
 #[test]

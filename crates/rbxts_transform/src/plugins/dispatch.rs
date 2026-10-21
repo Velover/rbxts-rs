@@ -1241,8 +1241,24 @@ fn end_file_slow(state: &mut TransformState<'_>, statements: &mut Vec<Stmt>) {
         statements.append(&mut state.plugin_file.root_inserts);
     }
     apply_import_decisions(state, statements);
-    super::spill::check_main_chunk(state, statements);
     place_imports_and_header(state, statements);
+}
+
+/// Statements inserted at `index` into the file's list after end_file (`local exports`, the header comment and
+/// `local TS`), so the plugins' root ranges can be found in the final list.
+#[inline]
+pub fn note_front_insert(state: &mut TransformState<'_>, index: usize, count: usize) {
+    if state.plugins.is_some() {
+        state.plugin_file.front_inserts.push((index, count));
+    }
+}
+
+/// The complete file's main chunk against Luau's local limit, when a plugin added locals to it (`spill`).
+#[inline]
+pub fn check_main_chunk(state: &mut TransformState<'_>, statements: &mut Vec<Stmt>) {
+    if state.plugins.is_some() {
+        super::spill::check_main_chunk(state, statements);
+    }
 }
 
 /// Where a top-level statement's transform began.
@@ -1444,6 +1460,8 @@ fn place_imports_and_header(state: &mut TransformState<'_>, statements: &mut Vec
         }
     }
     let header_at = after_imports.max(directives) + imports.len();
+    state.plugin_file.front_inserts.push((directives, imports.len()));
+    state.plugin_file.front_inserts.push((header_at, header.len()));
     statements.splice(directives..directives, imports);
     statements.splice(header_at..header_at, header);
 }
@@ -1547,6 +1565,7 @@ pub(crate) fn import_named(
         let import = create_import_expression_of_file(state, file, module_file, anchor);
         let statement = create::local(id.clone(), Some(create::computed_index(import, create::string(export))));
         state.plugin_file.main_chunk_locals += 1;
+        state.plugin_file.added_locals = true;
         let value: Expr = id.into();
         state.plugin_file.imports.push(PluginImport {
             specifier: specifier.to_owned(),

@@ -399,6 +399,7 @@ impl HookBackend<'_, '_> {
         self.touch();
         let id = self.seam_temp(hint);
         self.state.plugin_file.main_chunk_locals += 1;
+        self.state.plugin_file.added_locals = true;
         self.state.plugin_file.root_inserts.push(create::local(id.clone(), Some(value)));
         Expr::TemporaryIdentifier(id)
     }
@@ -594,6 +595,7 @@ impl CxBackend for HookBackend<'_, '_> {
     fn prereq(&mut self, stmt: Stmt) {
         if !self.refused("prereq", Row::Lowering) {
             self.touch();
+            self.state.plugin_file.added_locals |= declared_locals(&stmt) > 0;
             self.scope().push(stmt);
         }
     }
@@ -606,6 +608,7 @@ impl CxBackend for HookBackend<'_, '_> {
         // an empty hint is the one roblox-ts derives from the value, made capture-safe like any other
         let hint = if hint.is_empty() { value_to_id_str(&value) } else { hint.to_owned() };
         let hint = self.state.plugin_file.seam_hint(self.state.source_file, &hint);
+        self.state.plugin_file.added_locals = true;
         self.scope().push_to_var(value, &hint)
     }
 
@@ -625,6 +628,7 @@ impl CxBackend for HookBackend<'_, '_> {
             self.note_effect("calling insert_before_root_statement");
             self.touch();
             self.state.plugin_file.main_chunk_locals += stmts.iter().map(declared_locals).sum::<u32>();
+            self.state.plugin_file.added_locals |= stmts.iter().any(|s| declared_locals(s) > 0);
             self.state.plugin_file.root_inserts.extend(stmts);
         }
     }
@@ -634,6 +638,7 @@ impl CxBackend for HookBackend<'_, '_> {
             self.note_effect("calling header");
             self.touch();
             self.state.plugin_file.main_chunk_locals += stmts.iter().map(declared_locals).sum::<u32>();
+            self.state.plugin_file.added_locals |= stmts.iter().any(|s| declared_locals(s) > 0);
             self.state.plugin_file.header.extend(stmts);
         }
     }

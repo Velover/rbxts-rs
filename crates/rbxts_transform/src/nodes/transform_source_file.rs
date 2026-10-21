@@ -97,7 +97,7 @@ fn handle_exports(
     source_file: P<SourceFile>,
     symbol: P<Symbol>,
     statements: &mut Vec<Stmt>,
-) {
+) -> bool {
     let ignored_export_symbols = get_ignored_export_symbols(state, source_file);
 
     let mut must_push_exports = state.has_export_from;
@@ -147,6 +147,7 @@ fn handle_exports(
         if !ends_with_export_equals {
             statements.push(create::return_stmt(globals::exports()));
         }
+        false
     } else if must_push_exports {
         // with an export let or export from, `local exports = {}` goes at the top of the file
         statements.insert(0, create::local(as_any_identifier(globals::exports()), Some(create::map(Vec::new()))));
@@ -158,9 +159,13 @@ fn handle_exports(
             ));
         }
         statements.push(create::return_stmt(globals::exports()));
-    } else if !export_pairs.is_empty() {
-        // only regular exports: return a table at the bottom of the file
-        statements.push(create::return_stmt(create::map(export_pairs)));
+        true
+    } else {
+        if !export_pairs.is_empty() {
+            // only regular exports: return a table at the bottom of the file
+            statements.push(create::return_stmt(create::map(export_pairs)));
+        }
+        false
     }
 }
 
@@ -180,7 +185,10 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
     // rbxts-rs: plugin end_file, import elision decided on the whole file, plugin imports and header (DESIGN §11)
     crate::plugins::dispatch::end_file(state, &mut statements);
 
-    handle_exports(state, node, symbol, &mut statements);
+    if handle_exports(state, node, symbol, &mut statements) {
+        // (`local exports = {}` went first)
+        crate::plugins::dispatch::note_front_insert(state, 0, 1);
+    }
 
     // module scripts must `return nil` if they do not export any values
     let ends_with_return = last_non_comment_statement(&statements).is_some_and(|s| matches!(s, Stmt::Return(_)));
@@ -208,8 +216,12 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
         statements.iter().take_while(|s| matches!(s, Stmt::Comment(text) if text.starts_with('!'))).count();
     let directives: Vec<Stmt> = statements.drain(..directive_count).collect();
 
+    crate::plugins::dispatch::note_front_insert(state, directive_count, header_statements.len());
     statements.splice(0..0, header_statements);
     statements.splice(0..0, directives);
+
+    // rbxts-rs: Luau's local limit on the complete main chunk, when a plugin added locals (DESIGN §9)
+    crate::plugins::dispatch::check_main_chunk(state, &mut statements);
 
     statements
 }

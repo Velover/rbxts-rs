@@ -176,6 +176,13 @@ pub struct PluginFileState {
     pub function_locals: FxHashMap<P<Node>, u32>,
     /// `hoist_spillable` locals, in hoist order: spilled into one table when the main chunk passes Luau's limit.
     pub spillable: Vec<SpillableHoist>,
+    /// A plugin added a local that may be in the main chunk (a hoist, a root insertion, the header, an import, a
+    /// prereq or `push_to_var`): the main chunk's local limit is checked (`spill`).
+    pub added_locals: bool,
+    /// Statements inserted into the file's statement list after its top-level statements were lowered, as
+    /// (index, count) in the order they were inserted: plugin imports, the header, `local exports`, the
+    /// `Compiled with` comment and `local TS`. They move `root_ranges` to the final list.
+    pub front_inserts: Vec<(usize, usize)>,
     /// `local` names declared at the top level of the main chunk so far (statements done, root insertions,
     /// imports, header).
     pub main_chunk_locals: u32,

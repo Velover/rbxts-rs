@@ -65,14 +65,19 @@
 //! `super.m()`) and every link of optional chains. The hook lowers nothing (the lowering primitives are refused, as
 //! in `begin_file`); its answer is the key: `base.key` when it is a valid Luau identifier, else
 //! `base[text_literal(key)]`, and a method callee `base:key(…)` / `base[text_literal(key)](base, …)`. A key equal to
-//! the written one leaves the access as written. An access with a computed key (`obj[k]`) on a marked receiver is an
-//! internal error naming the plugin: `AccessSite` cannot carry it.
+//! the written one leaves the access as written. The answer is kept per access node, so `AccessSite.position` is the
+//! position of the first lowering that asked. An access whose key is not a string literal (`obj[k]`, `obj[0]`,
+//! `obj[k as "x"]`) on a marked receiver is an internal error naming the plugin: `AccessSite` cannot carry it
+//! (`obj[0]` stays as written: roblox-ts offsets numeric indices). Not asked: destructuring sources
+//! (`const { a } = obj`), object literal keys, `"a" in obj`, and callees of roblox-ts macros (no access is emitted).
 //!
 //! **Assignments** (`assignments_by_receiver_symbol`). An assignment, compound or logical assignment, `++` / `--` or
 //! `delete` whose target is `receiver.key` (or `receiver["key"]`) and whose receiver's symbol the plugin classifies
 //! (`SymbolRole::AssignReceiver`), offered before roblox-ts lowers the node and after the expression hooks.
-//! Destructuring targets and `for … of` heads are not offered. A computed key on a classified receiver is an internal
-//! error naming the plugin.
+//! Destructuring targets and `for … of` heads are not offered, and neither are targets whose receiver has no symbol
+//! (`f().x = 1`, `a[i].x = 1`). A computed key on a classified receiver is an internal error naming the plugin.
+//! `compile_binary(op, site.target, value)` reads the target, receiver included: a hook that also writes back
+//! through the receiver (`receiver:set(key, value)`) evaluates the receiver twice.
 //!
 //! **Declining.** Offer state lives in a stack of hook frames ([`file_state::HookFrame`]), one per running hook,
 //! so a hook nested in another (through its `compile_*` calls) never resets the outer one's. A claim hook cannot
@@ -88,7 +93,8 @@
 //! error, so a plugin must decide from the AST and types before compiling anything.
 //!
 //! A claimed value whose node is in statement position is evaluated as a statement (`local _ = value` unless it is a
-//! call), so no lowering drops its effects.
+//! call), so no lowering drops its effects; inside parentheses roblox-ts lowers (a `for` head's `(x = 0)`) it is
+//! returned as it is, and the statement around the parentheses evaluates it (`local _ = (x)`), as without plugins.
 //!
 //! `RBXTS_PLUGIN_CLAIMS=all` asks the other matching plugins of call, `new` and decorator offers too (not the other
 //! kinds), in a scratch scope. A build with it either writes the same output as without it or fails: one where such
@@ -100,10 +106,14 @@
 //! any nested function); approved names and import names avoid the seam temporaries made before them in turn.
 //! roblox-ts's own temporaries keep its naming.
 //!
-//! **Luau's local limit.** Once a file is lowered, its main chunk's locals (plugin imports and header statements
-//! included) are counted: past 200, the `hoist_spillable` locals become fields of one table local (`_spill`), and a
-//! chunk still past the limit is an error at the statement where the count passes it. Builds without plugins keep
-//! roblox-ts's behaviour (no check).
+//! **Luau's local limit** (`spill`). When a plugin added a local to a file (a hoist, a root insertion, the header,
+//! an import, a prereq or `push_to_var`), the file's complete main chunk is checked against Luau's 200 local
+//! registers: every live local counts, those of enclosing blocks included, `local exports` and `local TS` too, but
+//! from -O1 (Roblox's default) a local initialised with a literal and never assigned is folded and takes none
+//! (`--!optimize 0` makes every local count). When the chunk may pass the limit, the `hoist_spillable` locals become
+//! fields of one table local (`_spill`); a chunk that surely still passes it is an error at the statement where it
+//! does, one that may (folding decides) a warning. Other files, and builds without plugins, keep roblox-ts's
+//! behaviour.
 
 pub mod backend;
 pub mod dispatch;
