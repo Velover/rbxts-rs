@@ -51,3 +51,15 @@ export function sharedTables() {
 	const [first, ...others] = sharedTable;
 	return [a, first, others];
 }
+
+export function nestedRest() {
+	let value = 0;
+	let tail: Array<number> = [];
+	[...[value, ...tail]] = new Set([1]);
+	let key: string | number = "";
+	[...[[key, value]]] = new Map([["key", 2]]);
+	[...[value]] = values();
+	[...[key]] = "🍓a";
+	[...[[key]]] = string.gmatch("a,b", "[^,]+");
+	return [value, tail, key];
+}

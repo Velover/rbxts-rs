@@ -44,8 +44,10 @@ fn get_iterable_element_type(state: &mut TransformState<'_>, t: P<Type>, node: P
     let next_signature = state.checker.get_call_signatures(next)[0];
     let result = state.checker.get_return_type_of_signature_exported(next_signature);
     let mut values = Vec::new();
+    // `getTrueType()` without `fresh` is the regular `true`, the type of `done: true`
+    let true_type = state.checker.regular_true_type;
     for part in constituents(result) {
-        if state.checker.get_type_of_property_of_type_exported(part, "done") != Some(state.checker.true_type) {
+        if state.checker.get_type_of_property_of_type_exported(part, "done") != Some(true_type) {
             let value =
                 state.checker.get_type_of_property_of_type_exported(part, "value").expect("an iterator result has a value");
             values.push(value);

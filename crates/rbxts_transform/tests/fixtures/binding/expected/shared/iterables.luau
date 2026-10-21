@@ -273,10 +273,89 @@ local function sharedTables()
 	local others = _rest
 	return { a, first, others }
 end
+local function nestedRest()
+	local value = 0
+	local tail = {}
+	local _binding = {
+		[1] = true,
+	}
+	local _key
+	local _rest = {}
+	local _length = 0
+	while true do
+		_key = next(_binding, _key)
+		if _key == nil then
+			break
+		end
+		_length += 1
+		_rest[_length] = _key
+	end
+	local _binding_1 = _rest
+	value = _binding_1[1]
+	tail = table.move(_binding_1, 2, #_binding_1, 1, {})
+	local key = ""
+	local _binding_2 = {
+		key = 2,
+	}
+	local _key_1
+	local _rest_1 = {}
+	local _length_1 = 0
+	while true do
+		local _value
+		_key_1, _value = next(_binding_2, _key_1)
+		if _key_1 == nil then
+			break
+		end
+		_length_1 += 1
+		_rest_1[_length_1] = { _key_1, _value }
+	end
+	local _binding_3 = _rest_1
+	local _binding_4 = _binding_3[1]
+	key = _binding_4[1]
+	value = _binding_4[2]
+	local _binding_5 = values()
+	local _next = _binding_5.next
+	local _rest_2 = {}
+	local _length_2 = 0
+	while true do
+		local _result = _next()
+		if _result.done then
+			break
+		end
+		_length_2 += 1
+		_rest_2[_length_2] = _result.value
+	end
+	local _binding_6 = _rest_2
+	value = _binding_6[1]
+	local _binding_7 = "🍓a"
+	local _matcher = string.gmatch(_binding_7, utf8.charpattern)
+	local _rest_3 = {}
+	for _char in _matcher do
+		table.insert(_rest_3, _char)
+	end
+	local _binding_8 = _rest_3
+	key = _binding_8[1]
+	local _binding_9 = string.gmatch("a,b", "[^,]+")
+	local _rest_4 = {}
+	local _length_3 = 0
+	while true do
+		local _value = { _binding_9() }
+		if _value[1] == nil then
+			break
+		end
+		_length_3 += 1
+		_rest_4[_length_3] = _value
+	end
+	local _binding_10 = _rest_4
+	local _binding_11 = _binding_10[1]
+	key = _binding_11[1]
+	return { value, tail, key }
+end
 return {
 	values = values,
 	strings = strings,
 	collections = collections,
 	iterators = iterators,
 	sharedTables = sharedTables,
+	nestedRest = nestedRest,
 }
