@@ -370,6 +370,21 @@ name = "rbxts_luau"
 version = "0.0.0"
 
 [[package]]
+name = "rbxts_plugin"
+version = "0.0.0"
+dependencies = [
+ "rbxts_luau",
+ "rbxts_project",
+ "serde_json",
+ "tsrs_ast",
+ "tsrs_checker",
+ "tsrs_compiler",
+ "tsrs_core",
+ "tsrs_diagnostics",
+ "tsrs_scanner",
+]
+
+[[package]]
 name = "rbxts_probe"
 version = "0.0.0"
 dependencies = [

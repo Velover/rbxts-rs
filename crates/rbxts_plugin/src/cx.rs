@@ -1,0 +1,433 @@
+//! `Cx`: what a hook can ask of the compiler (DESIGN §9, §11.3).
+//!
+//! [`CxBackend`] is the compiler's side, one implementation over its per-file transform state. [`Cx`] is what
+//! plugins hold: a thin wrapper that adds the parts needing no compiler ([`Abort`] values, diagnostics builders,
+//! capture scoping), and generic helpers stay off the object-safe trait.
+//!
+//! A plugin gets an `Abort` only from `Cx`, after an error is recorded. That is a convention, not a seal: a
+//! hand-written backend that returns [`Aborted`] without recording anything can make one, which takes deliberate
+//! misuse. The compiler also checks it (a hook's `Err` without a new error is an internal error).
+
+use std::rc::Rc;
+use std::sync::Arc;
+
+use rbxts_project::{PackageInfo, ProjectServices, ResolvedModuleInfo};
+use tsrs_ast::{Diagnostic, Node, SourceFile, Symbol};
+use tsrs_checker::Checker;
+use tsrs_compiler::Program;
+use tsrs_core::{CompilerOptions, P};
+
+use crate::{
+    Abort, Arg, BinOp, CallSite, Callee, FileInfo, JsDocTag, LocalCounts, LuauExpr, LuauIdent,
+    LuauStmt, ObjectEdits, PResult, PluginDiagnostic, Utf16Pos,
+};
+
+/// A backend primitive failed after recording an error diagnostic (a nested node failed to compile, or a
+/// phase-bound primitive was called in the wrong phase and the backend reported an internal error). [`Cx`] turns
+/// it into an [`Abort`]. A backend returns it only after recording an error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Aborted;
+
+/// The compiler's side of [`Cx`], implemented over the per-file transform state and the instance's checker.
+///
+/// One `Cx` is made per hook call; the backend is anchored at the node being dispatched (for diagnostics,
+/// prereq placement and the current function's locals) and knows which plugin is calling (for late-string keys
+/// and messages).
+///
+/// **Phases.** Which hook may call what:
+///
+/// | primitives | claim hooks, `class` | `begin_file`, `end_file` | `classify_symbol` | `explain_checker_diagnostic` |
+/// | --- | --- | --- | --- | --- |
+/// | program, file, checker, project, module and package queries, source facts | yes | yes | yes | yes |
+/// | lowering: `compile_*`, `compile_receiver`, `prereq`, `push_to_var`, capture, `insert_before_root_statement`, `hoist`, `hoist_spillable`, `comment` | yes | refused | refused | refused |
+/// | file-level: `header`, `import_named`, `mark_import_used`, `request_import_elision`, `temp_id`, `late_string` | yes | yes | refused | refused |
+/// | `report` (and `Cx::error` / `warning`) | yes | yes | refused | yes |
+///
+/// A refused call records an internal error naming the plugin (so the build fails) and returns `Err(Aborted)`, or
+/// a placeholder `nil` / does nothing for the primitives without a `Result`.
+///
+/// **Positions** are UTF-16, from TypeScript's `getStart()`: trivia skipped, JSDoc not included. Lines are counted
+/// as TypeScript's `computeLineStarts` counts them: a line break is CR, LF, CRLF (one break), U+2028 or U+2029.
+pub trait CxBackend {
+    // --- program, file, checker ---
+
+    /// The program. Valid for the whole build.
+    fn program(&self) -> &'static Program;
+    /// The program's effective compiler options.
+    fn options(&self) -> P<CompilerOptions>;
+    /// The file being transformed.
+    fn file(&self) -> &FileInfo;
+    /// The instance's own checker. The `&mut` borrow ends before any other backend call, so no checker
+    /// reference survives a `compile_*` call.
+    fn checker(&mut self) -> &mut Checker;
+    /// The project services: directories, project type, Rojo resolver, path translator, package.json cache.
+    fn project(&self) -> &ProjectServices;
+    /// Where `specifier` resolves when imported from `from` (the program's resolution, else a resolver with the
+    /// program's options).
+    fn resolve_module(&self, specifier: &str, from: P<SourceFile>) -> Option<ResolvedModuleInfo>;
+    /// The package.json of the package that declares `symbol` (its first declaration's file), if any.
+    fn declaring_package(&self, symbol: P<Symbol>) -> Option<Arc<PackageInfo>>;
+
+    // --- lowering original nodes the roblox-ts way ---
+
+    /// Compiles an original expression node in the current prereq scope; nested nodes are dispatched to plugins
+    /// as usual.
+    fn compile_expr(&mut self, node: P<Node>) -> Result<LuauExpr, Aborted>;
+    /// Compiles expressions keeping their evaluation order (`ensureTransformOrder`): earlier values are bound to
+    /// locals when a later one has prereqs.
+    fn compile_in_order(&mut self, nodes: &[P<Node>]) -> Result<Vec<LuauExpr>, Aborted>;
+    /// The receiver of a [`crate::CallKind::Method`] call, compiled once and, inside an optional chain, already
+    /// nil-checked by the chain lowering (roblox-ts's property-call macro shape).
+    fn compile_receiver(&mut self, call: &CallSite) -> Result<LuauExpr, Aborted>;
+    /// Compiles the call with another callee and/or argument slots; `Original` slots are compiled in order.
+    fn compile_call(
+        &mut self,
+        call: &CallSite,
+        callee: Callee,
+        args: Vec<Arg>,
+    ) -> Result<LuauExpr, Aborted>;
+    /// Compiles an object literal node with edits; spreads, methods and computed keys are kept.
+    fn compile_object_literal(
+        &mut self,
+        node: P<Node>,
+        edits: ObjectEdits,
+    ) -> Result<LuauExpr, Aborted>;
+    /// `left op right` on original operands, with roblox-ts's operator lowering (string `+` stays `..`).
+    fn compile_binary(
+        &mut self,
+        op: BinOp,
+        left: P<Node>,
+        right: P<Node>,
+    ) -> Result<LuauExpr, Aborted>;
+
+    // --- prereqs and placement ---
+
+    /// Appends a statement to the current prereq scope: it runs before the expression being built.
+    fn prereq(&mut self, stmt: LuauStmt);
+    /// Binds `value` to a new temporary local in the prereqs and returns that local.
+    fn push_to_var(&mut self, value: LuauExpr, hint: &str) -> LuauExpr;
+    /// Opens a nested prereq scope. Paired with [`CxBackend::end_capture`]; scopes nest.
+    fn begin_capture(&mut self);
+    /// Closes the innermost scope opened by [`CxBackend::begin_capture`] and returns its statements.
+    fn end_capture(&mut self) -> Vec<LuauStmt>;
+    /// Statements placed before the top-level statement that contains the current node.
+    fn insert_before_root_statement(&mut self, stmts: Vec<LuauStmt>);
+    /// Statements placed once per file, after the imports, in call order.
+    fn header(&mut self, stmts: Vec<LuauStmt>);
+    /// A local holding `value`, declared before the current root statement; returns the local.
+    fn hoist(&mut self, value: LuauExpr, hint: &str) -> LuauExpr;
+    /// As `hoist`, but the compiler may turn the local into a field of one spill table when the main chunk would
+    /// pass Luau's 200-local limit; returns the expression to use either way.
+    fn hoist_spillable(&mut self, value: LuauExpr, hint: &str) -> LuauExpr;
+    /// The value of `export` from module `specifier`, imported once per file and placed with roblox-ts's imports
+    /// (reusing a user import of the same export).
+    fn import_named(&mut self, specifier: &str, export: &str) -> Result<LuauExpr, Aborted>;
+    /// Keeps an import alias declaration alive through import elision, though no remaining value use names it.
+    fn mark_import_used(&mut self, alias_declaration: P<Node>);
+    /// The calling plugin removed value uses of this import alias declaration (an ImportSpecifier, ImportClause,
+    /// NamespaceImport or ImportEqualsDeclaration): it claimed the nodes that used it and did not compile them.
+    /// The checker still counts those uses, so without this request the import would stay (a runtime `require` of
+    /// a types-only module). The compiler then elides the alias unless the Luau it emits for this file still
+    /// needs it: a reference to it that the compiler compiled itself (its own lowering or a plugin's `compile_*`),
+    /// or a [`CxBackend::mark_import_used`] on it. When every alias of a declaration is elided, the whole import
+    /// goes, as roblox-ts elides imports.
+    fn request_import_elision(&mut self, alias_declaration: P<Node>);
+    /// A new temporary local name (`luau.tempId`), unique in its scope at render time.
+    fn temp_id(&mut self, hint: &str) -> LuauIdent;
+    /// `name` can be declared as a local here: not reserved, and not shadowing a global the output uses.
+    fn is_usable_local_name(&self, name: &str) -> bool;
+    /// Locals declared so far in the current function and in the main chunk. It counts the Luau built so far, so
+    /// it is exact only for code already emitted: statements after the current node (and the rest of the current
+    /// statement) are not counted yet.
+    fn locals(&self) -> LocalCounts;
+    /// A string literal whose text the calling plugin provides in `finish` under the same key
+    /// ([`crate::FinishCx::resolve_late`]).
+    ///
+    /// **Contract.** Keys are per plugin. The compiler records, per file, the late keys its Luau uses and their
+    /// committed values. Every `finish` must resolve the keys of every current file, cached files included; a
+    /// missing one fails the build, naming the plugin and the key. A key's value may change between builds: after
+    /// finish the compiler re-renders (or re-transforms) every cached file whose values changed. Plugins should
+    /// still keep the values of committed keys stable where they can (Flamework appends new ids from its
+    /// persistent table), so this rarely fires.
+    fn late_string(&mut self, key: &str) -> LuauExpr;
+    /// A Luau comment before the next statement emitted.
+    fn comment(&mut self, text: &str);
+
+    // --- source facts ---
+
+    /// The node's start (`getStart()`) in UTF-16: offset, and line and character as TypeScript's
+    /// `getLineAndCharacterOfPosition` gives them (line breaks CR, LF, CRLF, U+2028, U+2029).
+    fn utf16_pos(&self, node: P<Node>) -> Utf16Pos;
+    /// The node's width from `getStart()` to its end, in UTF-16 code units.
+    fn utf16_width(&self, node: P<Node>) -> u32;
+    /// The node's source text from `getStart()` to its end (safe for every kind, unlike `Node::text`).
+    fn source_text(&self, node: P<Node>) -> &'static str;
+    /// The JSDoc tags of a declaration, with `{@link}` names resolved on this checker. Cached per checker.
+    fn jsdoc_tags(&mut self, declaration: P<Node>) -> Rc<[JsDocTag]>;
+    /// The checker's diagnostics of this file (read-only; nothing is checked again).
+    fn file_diagnostics(&self) -> &[P<Diagnostic>];
+
+    // --- diagnostics ---
+
+    /// Records a diagnostic for this file. Any error fails the build: nothing is written.
+    fn report(&mut self, diagnostic: PluginDiagnostic);
+}
+
+/// The context of one hook call. See [`CxBackend`] for what each primitive guarantees; the methods here forward
+/// to it, turning [`Aborted`] into [`Abort`].
+pub struct Cx<'a> {
+    backend: &'a mut dyn CxBackend,
+}
+
+impl<'a> Cx<'a> {
+    /// Wraps the compiler's backend for one hook call.
+    pub fn new(backend: &'a mut dyn CxBackend) -> Cx<'a> {
+        Cx { backend }
+    }
+
+    // --- program, file, checker ---
+
+    /// The program ([`CxBackend::program`]).
+    pub fn program(&self) -> &'static Program {
+        self.backend.program()
+    }
+
+    /// The compiler options ([`CxBackend::options`]).
+    pub fn options(&self) -> P<CompilerOptions> {
+        self.backend.options()
+    }
+
+    /// The file being transformed: source, index, paths, Rojo facts.
+    pub fn file(&self) -> &FileInfo {
+        self.backend.file()
+    }
+
+    /// This instance's checker, for type queries. Raw tsrs: names follow tsrs's on every rebase.
+    pub fn checker(&mut self) -> &mut Checker {
+        self.backend.checker()
+    }
+
+    /// The project services ([`CxBackend::project`]).
+    pub fn project(&self) -> &ProjectServices {
+        self.backend.project()
+    }
+
+    /// Module resolution from a file ([`CxBackend::resolve_module`]).
+    pub fn resolve_module(
+        &self,
+        specifier: &str,
+        from: P<SourceFile>,
+    ) -> Option<ResolvedModuleInfo> {
+        self.backend.resolve_module(specifier, from)
+    }
+
+    /// The package declaring a symbol ([`CxBackend::declaring_package`]).
+    pub fn declaring_package(&self, symbol: P<Symbol>) -> Option<Arc<PackageInfo>> {
+        self.backend.declaring_package(symbol)
+    }
+
+    // --- lowering ---
+
+    /// Compiles an original expression ([`CxBackend::compile_expr`]).
+    pub fn compile_expr(&mut self, node: P<Node>) -> PResult<LuauExpr> {
+        self.backend.compile_expr(node).map_err(abort)
+    }
+
+    /// Compiles expressions in evaluation order ([`CxBackend::compile_in_order`]).
+    pub fn compile_in_order(&mut self, nodes: &[P<Node>]) -> PResult<Vec<LuauExpr>> {
+        self.backend.compile_in_order(nodes).map_err(abort)
+    }
+
+    /// The compiled, nil-checked receiver of a method call ([`CxBackend::compile_receiver`]).
+    pub fn compile_receiver(&mut self, call: &CallSite) -> PResult<LuauExpr> {
+        self.backend.compile_receiver(call).map_err(abort)
+    }
+
+    /// The call with another callee or argument slots ([`CxBackend::compile_call`]).
+    pub fn compile_call(
+        &mut self,
+        call: &CallSite,
+        callee: Callee,
+        args: Vec<Arg>,
+    ) -> PResult<LuauExpr> {
+        self.backend.compile_call(call, callee, args).map_err(abort)
+    }
+
+    /// An object literal with edits ([`CxBackend::compile_object_literal`]).
+    pub fn compile_object_literal(
+        &mut self,
+        node: P<Node>,
+        edits: ObjectEdits,
+    ) -> PResult<LuauExpr> {
+        self.backend
+            .compile_object_literal(node, edits)
+            .map_err(abort)
+    }
+
+    /// A binary operation on original operands ([`CxBackend::compile_binary`]).
+    pub fn compile_binary(
+        &mut self,
+        op: BinOp,
+        left: P<Node>,
+        right: P<Node>,
+    ) -> PResult<LuauExpr> {
+        self.backend.compile_binary(op, left, right).map_err(abort)
+    }
+
+    // --- prereqs and placement ---
+
+    /// A statement that runs before the expression being built ([`CxBackend::prereq`]).
+    pub fn prereq(&mut self, stmt: LuauStmt) {
+        self.backend.prereq(stmt);
+    }
+
+    /// Binds a value to a temporary local in the prereqs ([`CxBackend::push_to_var`]).
+    pub fn push_to_var(&mut self, value: LuauExpr, hint: &str) -> LuauExpr {
+        self.backend.push_to_var(value, hint)
+    }
+
+    /// Runs `f` with a fresh prereq scope and returns its result with the statements it emitted, instead of
+    /// letting them reach the enclosing scope (for wrapping them in a `do` block, a function, or a branch).
+    ///
+    /// `end_capture` runs on every exit: when `f` returns `Err` the scope is closed and its statements are
+    /// dropped, and when `f` panics the scope is closed before the panic continues, so the backend's scope stack
+    /// stays balanced for the per-file panic handler.
+    pub fn capture<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> PResult<T>,
+    ) -> PResult<(T, Vec<LuauStmt>)> {
+        self.backend.begin_capture();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut *self)));
+        let statements = self.backend.end_capture();
+        match result {
+            Ok(result) => result.map(|value| (value, statements)),
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+
+    /// Statements before the current root statement ([`CxBackend::insert_before_root_statement`]).
+    pub fn insert_before_root_statement(&mut self, stmts: impl IntoIterator<Item = LuauStmt>) {
+        self.backend
+            .insert_before_root_statement(stmts.into_iter().collect());
+    }
+
+    /// Statements after the file's imports ([`CxBackend::header`]).
+    pub fn header(&mut self, stmts: impl IntoIterator<Item = LuauStmt>) {
+        self.backend.header(stmts.into_iter().collect());
+    }
+
+    /// A hoisted local ([`CxBackend::hoist`]).
+    pub fn hoist(&mut self, value: LuauExpr, hint: &str) -> LuauExpr {
+        self.backend.hoist(value, hint)
+    }
+
+    /// A hoisted local that may spill into a table ([`CxBackend::hoist_spillable`]).
+    pub fn hoist_spillable(&mut self, value: LuauExpr, hint: &str) -> LuauExpr {
+        self.backend.hoist_spillable(value, hint)
+    }
+
+    /// An imported value ([`CxBackend::import_named`]).
+    pub fn import_named(&mut self, specifier: &str, export: &str) -> PResult<LuauExpr> {
+        self.backend.import_named(specifier, export).map_err(abort)
+    }
+
+    /// Keeps an import alive ([`CxBackend::mark_import_used`]).
+    pub fn mark_import_used(&mut self, alias_declaration: P<Node>) {
+        self.backend.mark_import_used(alias_declaration);
+    }
+
+    /// Asks the compiler to elide an import whose value uses this plugin removed, if nothing it emits still
+    /// needs it ([`CxBackend::request_import_elision`]).
+    pub fn request_import_elision(&mut self, alias_declaration: P<Node>) {
+        self.backend.request_import_elision(alias_declaration);
+    }
+
+    /// A unique temporary local name ([`CxBackend::temp_id`]).
+    pub fn temp_id(&mut self, hint: &str) -> LuauIdent {
+        self.backend.temp_id(hint)
+    }
+
+    /// Whether a local can take this name ([`CxBackend::is_usable_local_name`]).
+    pub fn is_usable_local_name(&self, name: &str) -> bool {
+        self.backend.is_usable_local_name(name)
+    }
+
+    /// Local counts of the Luau built so far, exact only for code already emitted ([`CxBackend::locals`]).
+    pub fn locals(&self) -> LocalCounts {
+        self.backend.locals()
+    }
+
+    /// A string literal filled in by this plugin's `finish` ([`crate::FinishCx::resolve_late`]) under the same
+    /// `key`. Keys are per plugin; the same key may be handed out any number of times. A value may change between
+    /// builds (cached files using it are re-rendered); see the contract on [`CxBackend::late_string`].
+    pub fn late_string(&mut self, key: &str) -> LuauExpr {
+        self.backend.late_string(key)
+    }
+
+    /// A Luau comment before the next statement ([`CxBackend::comment`]).
+    pub fn comment(&mut self, text: &str) {
+        self.backend.comment(text);
+    }
+
+    // --- source facts ---
+
+    /// The node's UTF-16 start, with TypeScript's line counting ([`CxBackend::utf16_pos`]).
+    pub fn utf16_pos(&self, node: P<Node>) -> Utf16Pos {
+        self.backend.utf16_pos(node)
+    }
+
+    /// The node's UTF-16 width ([`CxBackend::utf16_width`]).
+    pub fn utf16_width(&self, node: P<Node>) -> u32 {
+        self.backend.utf16_width(node)
+    }
+
+    /// The node's source text ([`CxBackend::source_text`]).
+    pub fn source_text(&self, node: P<Node>) -> &'static str {
+        self.backend.source_text(node)
+    }
+
+    /// A declaration's JSDoc tags ([`CxBackend::jsdoc_tags`]).
+    pub fn jsdoc_tags(&mut self, declaration: P<Node>) -> Rc<[JsDocTag]> {
+        self.backend.jsdoc_tags(declaration)
+    }
+
+    /// The JSDoc tags of every declaration of `symbol`, in declaration order.
+    pub fn symbol_jsdoc_tags(&mut self, symbol: P<Symbol>) -> Vec<JsDocTag> {
+        let mut tags = Vec::new();
+        for &declaration in symbol.declarations() {
+            tags.extend(self.backend.jsdoc_tags(declaration).iter().cloned());
+        }
+        tags
+    }
+
+    /// The file's checker diagnostics ([`CxBackend::file_diagnostics`]).
+    pub fn file_diagnostics(&self) -> &[P<Diagnostic>] {
+        self.backend.file_diagnostics()
+    }
+
+    // --- diagnostics ---
+
+    /// Records an error at `node` and returns the [`Abort`] to return: `return Err(cx.error(node, "…"))`.
+    pub fn error(&mut self, node: P<Node>, message: impl Into<String>) -> Abort {
+        self.backend.report(PluginDiagnostic::error(node, message));
+        Abort(())
+    }
+
+    /// Records a warning at `node`.
+    pub fn warning(&mut self, node: P<Node>, message: impl Into<String>) {
+        self.backend
+            .report(PluginDiagnostic::warning(node, message));
+    }
+
+    /// Records a diagnostic. Returns `Some(Abort)` when it is an error, for `if let Some(a) = cx.report(d)
+    /// { return Err(a) }`.
+    pub fn report(&mut self, diagnostic: PluginDiagnostic) -> Option<Abort> {
+        let is_error = diagnostic.category == tsrs_diagnostics::Category::Error;
+        self.backend.report(diagnostic);
+        is_error.then_some(Abort(()))
+    }
+}
+
+fn abort(_: Aborted) -> Abort {
+    Abort(())
+}
