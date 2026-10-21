@@ -95,7 +95,8 @@
 //! A claimed value whose node is in statement position is evaluated as a statement (`local _ = value` unless it is a
 //! call), so no lowering drops its effects; inside parentheses roblox-ts lowers (a `for` head's `(x = 0)`) it is
 //! returned as it is, and the statement around the parentheses evaluates it (`local _ = (x)`), as without plugins.
-//! A claimed literal that is then indexed or called is rendered in parentheses (`("x"):m()`), as Luau needs.
+//! A literal that is indexed or called, a claimed value or one roblox-ts lowers there itself (a cast, an inlined const
+//! enum member), is rendered in parentheses (`("x"):m()`), as Luau needs.
 //!
 //! `RBXTS_PLUGIN_CLAIMS=all` asks the other matching plugins of call, `new` and decorator offers too (not the other
 //! kinds), in a scratch scope. A build with it either writes the same output as without it or fails: one where such

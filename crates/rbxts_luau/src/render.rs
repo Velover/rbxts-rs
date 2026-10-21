@@ -405,9 +405,10 @@ impl Renderer<'_> {
         self.out.push_str(name);
     }
 
-    /// What is indexed or called. rbxts-rs: a literal (`nil`, a boolean, a number, a string) keeps its parentheses
-    /// there, which roblox-ts's renderer drops around a simple value (`"x":rep(2)`, which does not parse); roblox-ts
-    /// never lowers a literal into that position itself, but a plugin's claimed value can land there.
+    /// What is indexed or called. rbxts-rs: every literal (`nil`, a boolean, a number, a string) keeps its
+    /// parentheses there, which roblox-ts's renderer drops around a simple value (`"x":rep(2)`, `(5).x` as `5.x`,
+    /// neither of which parses). roblox-ts lowers literals into that position itself (a cast such as
+    /// `(true as unknown as T).m()`, an inlined const enum member, `void 0`), and so can a plugin's claimed value.
     fn base(&mut self, e: &Expr) {
         let mut innermost = e;
         while let Expr::Parenthesized(p) = innermost {
