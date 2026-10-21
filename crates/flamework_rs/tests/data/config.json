@@ -1,0 +1,1225 @@
+{
+	"cases": [
+		{
+			"name": "comments and trailing commas",
+			"text": "{\n\t// like tsconfig\n\t\"transformer\": { \"hashPrefix\": \"$c\", \"optimizations\": { \"guardGenerationDedupLimit\": 4, }, },\n}",
+			"env": [],
+			"result": "{\"transformer\":{\"hashPrefix\":\"$c\",\"optimizations\":{\"guardGenerationDedupLimit\":4}}}"
+		},
+		{
+			"name": "drops $schema",
+			"text": "{ \"$schema\": \"./x.json\", \"transformer\": { \"obfuscation\": true } }",
+			"env": [],
+			"result": "{\"transformer\":{\"obfuscation\":true}}"
+		},
+		{
+			"name": "unknown top-level key",
+			"text": "{ \"hashPrefix\": \"$c\" }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  / must NOT have additional properties 'hashPrefix'"
+		},
+		{
+			"name": "unknown section key",
+			"text": "{ \"transformer\": { \"hashPrefx\": \"$c\" } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer must NOT have additional properties 'hashPrefx'"
+		},
+		{
+			"name": "bad idGenerationMode",
+			"text": "{ \"transformer\": { \"idGenerationMode\": \"medium\" } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer/idGenerationMode must be equal to one of the allowed values: \"full\", \"short\", \"tiny\", \"obfuscated\""
+		},
+		{
+			"name": "bad streamingMode",
+			"text": "{ \"components\": { \"streamingMode\": \"Sometimes\" } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /components/streamingMode must be equal to one of the allowed values: \"Disabled\", \"Watching\", \"Contextual\""
+		},
+		{
+			"name": "serialization not a boolean",
+			"text": "{ \"networking\": { \"serialization\": \"yes\" } }",
+			"env": [],
+			"error": "<FILE>: '/networking/serialization' is \"yes\", which is not a boolean (true, false, 1 or 0)."
+		},
+		{
+			"name": "watchRenames true",
+			"text": "{ \"components\": { \"watchRenames\": true } }",
+			"env": [],
+			"result": "{\"components\":{\"watchRenames\":true}}"
+		},
+		{
+			"name": "watchRenames env false",
+			"text": "{ \"components\": { \"watchRenames\": \"${WATCH}\" } }",
+			"env": [
+				[
+					"WATCH",
+					"false"
+				]
+			],
+			"result": "{\"components\":{\"watchRenames\":false}}"
+		},
+		{
+			"name": "watchRenames env sometimes",
+			"text": "{ \"components\": { \"watchRenames\": \"${WATCH}\" } }",
+			"env": [
+				[
+					"WATCH",
+					"sometimes"
+				]
+			],
+			"error": "<FILE>: '/components/watchRenames' is \"sometimes\", which is not a boolean (true, false, 1 or 0)."
+		},
+		{
+			"name": "watchRenames 1",
+			"text": "{ \"components\": { \"watchRenames\": 1 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /components/watchRenames must be boolean"
+		},
+		{
+			"name": "checks all",
+			"text": "{ \"serialization\": { \"checks\": { \"category\": \"all\", \"mode\": \"warn\", \"side\": \"server\" } } }",
+			"env": [],
+			"result": "{\"serialization\":{\"checks\":{\"category\":\"all\",\"mode\":\"warn\",\"side\":\"server\"}}}"
+		},
+		{
+			"name": "checks empty",
+			"text": "{ \"serialization\": { \"checks\": {} } }",
+			"env": [],
+			"result": "{\"serialization\":{\"checks\":{}}}"
+		},
+		{
+			"name": "checks mode env",
+			"text": "{ \"serialization\": { \"checks\": { \"mode\": \"${MODE:-assert}\" } } }",
+			"env": [
+				[
+					"MODE",
+					"warn"
+				]
+			],
+			"result": "{\"serialization\":{\"checks\":{\"mode\":\"warn\"}}}"
+		},
+		{
+			"name": "checks mode fallback",
+			"text": "{ \"serialization\": { \"checks\": { \"mode\": \"${MODE:-assert}\" } } }",
+			"env": [],
+			"result": "{\"serialization\":{\"checks\":{\"mode\":\"assert\"}}}"
+		},
+		{
+			"name": "checks categry",
+			"text": "{ \"serialization\": { \"checks\": { \"categry\": \"all\" } } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /serialization/checks must NOT have additional properties 'categry'"
+		},
+		{
+			"name": "serialization check",
+			"text": "{ \"serialization\": { \"check\": {} } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /serialization must NOT have additional properties 'check'"
+		},
+		{
+			"name": "category strict",
+			"text": "{ \"serialization\": { \"checks\": { \"category\": \"strict\" } } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /serialization/checks/category must be equal to one of the allowed values: \"implicit\", \"all\", \"none\""
+		},
+		{
+			"name": "mode raise",
+			"text": "{ \"serialization\": { \"checks\": { \"mode\": \"raise\" } } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /serialization/checks/mode must be equal to one of the allowed values: \"assert\", \"warn\""
+		},
+		{
+			"name": "side Server",
+			"text": "{ \"serialization\": { \"checks\": { \"side\": \"Server\" } } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /serialization/checks/side must be equal to one of the allowed values: \"both\", \"server\", \"client\""
+		},
+		{
+			"name": "side true",
+			"text": "{ \"serialization\": { \"checks\": { \"side\": true } } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /serialization/checks/side must be string"
+		},
+		{
+			"name": "types true",
+			"text": "{ \"serialization\": { \"checks\": { \"types\": true, \"mode\": \"warn\" } } }",
+			"env": [],
+			"result": "{\"serialization\":{\"checks\":{\"types\":true,\"mode\":\"warn\"}}}"
+		},
+		{
+			"name": "types env undefined",
+			"text": "{ \"serialization\": { \"checks\": { \"types\": \"${TYPES:-false}\" } } }",
+			"env": [],
+			"result": "{\"serialization\":{\"checks\":{\"types\":false}}}"
+		},
+		{
+			"name": "types env true",
+			"text": "{ \"serialization\": { \"checks\": { \"types\": \"${TYPES:-false}\" } } }",
+			"env": [
+				[
+					"TYPES",
+					"true"
+				]
+			],
+			"result": "{\"serialization\":{\"checks\":{\"types\":true}}}"
+		},
+		{
+			"name": "types env 1",
+			"text": "{ \"serialization\": { \"checks\": { \"types\": \"${TYPES:-false}\" } } }",
+			"env": [
+				[
+					"TYPES",
+					"1"
+				]
+			],
+			"result": "{\"serialization\":{\"checks\":{\"types\":true}}}"
+		},
+		{
+			"name": "types env sometimes",
+			"text": "{ \"serialization\": { \"checks\": { \"types\": \"${TYPES:-false}\" } } }",
+			"env": [
+				[
+					"TYPES",
+					"sometimes"
+				]
+			],
+			"error": "<FILE>: '/serialization/checks/types' is \"sometimes\", which is not a boolean (true, false, 1 or 0)."
+		},
+		{
+			"name": "types yes",
+			"text": "{ \"serialization\": { \"checks\": { \"types\": \"yes\" } } }",
+			"env": [],
+			"error": "<FILE>: '/serialization/checks/types' is \"yes\", which is not a boolean (true, false, 1 or 0)."
+		},
+		{
+			"name": "types 1",
+			"text": "{ \"serialization\": { \"checks\": { \"types\": 1 } } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /serialization/checks/types must be boolean"
+		},
+		{
+			"name": "checks type",
+			"text": "{ \"serialization\": { \"checks\": { \"type\": true } } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /serialization/checks must NOT have additional properties 'type'"
+		},
+		{
+			"name": "concurrency 2",
+			"text": "{ \"testing\": { \"concurrency\": 2 } }",
+			"env": [],
+			"result": "{\"testing\":{\"concurrency\":2}}"
+		},
+		{
+			"name": "concurrency env undefined",
+			"text": "{ \"testing\": { \"concurrency\": \"${CONCURRENCY:-4}\" } }",
+			"env": [],
+			"result": "{\"testing\":{\"concurrency\":4}}"
+		},
+		{
+			"name": "concurrency env \"1\"",
+			"text": "{ \"testing\": { \"concurrency\": \"${CONCURRENCY:-4}\" } }",
+			"env": [
+				[
+					"CONCURRENCY",
+					"1"
+				]
+			],
+			"result": "{\"testing\":{\"concurrency\":1}}"
+		},
+		{
+			"name": "concurrency env \"many\"",
+			"text": "{ \"testing\": { \"concurrency\": \"${CONCURRENCY:-4}\" } }",
+			"env": [
+				[
+					"CONCURRENCY",
+					"many"
+				]
+			],
+			"error": "<FILE>: '/testing/concurrency' is \"many\", which is not a number."
+		},
+		{
+			"name": "concurrency env \" 7 \"",
+			"text": "{ \"testing\": { \"concurrency\": \"${CONCURRENCY:-4}\" } }",
+			"env": [
+				[
+					"CONCURRENCY",
+					" 7 "
+				]
+			],
+			"result": "{\"testing\":{\"concurrency\":7}}"
+		},
+		{
+			"name": "concurrency env \"0x10\"",
+			"text": "{ \"testing\": { \"concurrency\": \"${CONCURRENCY:-4}\" } }",
+			"env": [
+				[
+					"CONCURRENCY",
+					"0x10"
+				]
+			],
+			"result": "{\"testing\":{\"concurrency\":16}}"
+		},
+		{
+			"name": "concurrency env \"1e1\"",
+			"text": "{ \"testing\": { \"concurrency\": \"${CONCURRENCY:-4}\" } }",
+			"env": [
+				[
+					"CONCURRENCY",
+					"1e1"
+				]
+			],
+			"result": "{\"testing\":{\"concurrency\":10}}"
+		},
+		{
+			"name": "concurrency env \"Infinity\"",
+			"text": "{ \"testing\": { \"concurrency\": \"${CONCURRENCY:-4}\" } }",
+			"env": [
+				[
+					"CONCURRENCY",
+					"Infinity"
+				]
+			],
+			"error": "Invalid <FILE>:\n  /testing/concurrency must be integer"
+		},
+		{
+			"name": "concurrency env \"\"",
+			"text": "{ \"testing\": { \"concurrency\": \"${CONCURRENCY:-4}\" } }",
+			"env": [
+				[
+					"CONCURRENCY",
+					""
+				]
+			],
+			"error": "<FILE>: '/testing/concurrency' is \"\", which is not a number."
+		},
+		{
+			"name": "concurrency env \"  \"",
+			"text": "{ \"testing\": { \"concurrency\": \"${CONCURRENCY:-4}\" } }",
+			"env": [
+				[
+					"CONCURRENCY",
+					"  "
+				]
+			],
+			"error": "<FILE>: '/testing/concurrency' is \"  \", which is not a number."
+		},
+		{
+			"name": "concurrency env \"1_0\"",
+			"text": "{ \"testing\": { \"concurrency\": \"${CONCURRENCY:-4}\" } }",
+			"env": [
+				[
+					"CONCURRENCY",
+					"1_0"
+				]
+			],
+			"error": "<FILE>: '/testing/concurrency' is \"1_0\", which is not a number."
+		},
+		{
+			"name": "concurrency env \".5\"",
+			"text": "{ \"testing\": { \"concurrency\": \"${CONCURRENCY:-4}\" } }",
+			"env": [
+				[
+					"CONCURRENCY",
+					".5"
+				]
+			],
+			"error": "Invalid <FILE>:\n  /testing/concurrency must be integer"
+		},
+		{
+			"name": "concurrency env \"5.\"",
+			"text": "{ \"testing\": { \"concurrency\": \"${CONCURRENCY:-4}\" } }",
+			"env": [
+				[
+					"CONCURRENCY",
+					"5."
+				]
+			],
+			"result": "{\"testing\":{\"concurrency\":5}}"
+		},
+		{
+			"name": "concurrency env \"-3\"",
+			"text": "{ \"testing\": { \"concurrency\": \"${CONCURRENCY:-4}\" } }",
+			"env": [
+				[
+					"CONCURRENCY",
+					"-3"
+				]
+			],
+			"error": "Invalid <FILE>:\n  /testing/concurrency must be >= 1"
+		},
+		{
+			"name": "concurrency 0",
+			"text": "{ \"testing\": { \"concurrency\": 0 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /testing/concurrency must be >= 1"
+		},
+		{
+			"name": "concurrency 1.5",
+			"text": "{ \"testing\": { \"concurrency\": 1.5 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /testing/concurrency must be integer"
+		},
+		{
+			"name": "concurrency -2",
+			"text": "{ \"testing\": { \"concurrency\": -2 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /testing/concurrency must be >= 1"
+		},
+		{
+			"name": "parallel 2",
+			"text": "{ \"flameworkTest\": { \"parallel\": 2 } }",
+			"env": [],
+			"result": "{\"flameworkTest\":{\"parallel\":2}}"
+		},
+		{
+			"name": "parallel env undefined",
+			"text": "{ \"flameworkTest\": { \"parallel\": \"${PARALLEL:-1}\" } }",
+			"env": [],
+			"result": "{\"flameworkTest\":{\"parallel\":1}}"
+		},
+		{
+			"name": "parallel env 4",
+			"text": "{ \"flameworkTest\": { \"parallel\": \"${PARALLEL:-1}\" } }",
+			"env": [
+				[
+					"PARALLEL",
+					"4"
+				]
+			],
+			"result": "{\"flameworkTest\":{\"parallel\":4}}"
+		},
+		{
+			"name": "parallel env lots",
+			"text": "{ \"flameworkTest\": { \"parallel\": \"${PARALLEL:-1}\" } }",
+			"env": [
+				[
+					"PARALLEL",
+					"lots"
+				]
+			],
+			"error": "<FILE>: '/flameworkTest/parallel' is \"lots\", which is not a number."
+		},
+		{
+			"name": "parallel 0",
+			"text": "{ \"flameworkTest\": { \"parallel\": 0 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /flameworkTest/parallel must be >= 1"
+		},
+		{
+			"name": "parallel 1.5",
+			"text": "{ \"flameworkTest\": { \"parallel\": 1.5 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /flameworkTest/parallel must be integer"
+		},
+		{
+			"name": "parallel -2",
+			"text": "{ \"flameworkTest\": { \"parallel\": -2 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /flameworkTest/parallel must be >= 1"
+		},
+		{
+			"name": "showWindows true",
+			"text": "{ \"flameworkTest\": { \"showWindows\": true } }",
+			"env": [],
+			"result": "{\"flameworkTest\":{\"showWindows\":true}}"
+		},
+		{
+			"name": "showWindows env undefined",
+			"text": "{ \"flameworkTest\": { \"showWindows\": \"${SHOW:-false}\" } }",
+			"env": [],
+			"result": "{\"flameworkTest\":{\"showWindows\":false}}"
+		},
+		{
+			"name": "showWindows env 1",
+			"text": "{ \"flameworkTest\": { \"showWindows\": \"${SHOW:-false}\" } }",
+			"env": [
+				[
+					"SHOW",
+					"1"
+				]
+			],
+			"result": "{\"flameworkTest\":{\"showWindows\":true}}"
+		},
+		{
+			"name": "showWindows env sometimes",
+			"text": "{ \"flameworkTest\": { \"showWindows\": \"${SHOW:-false}\" } }",
+			"env": [
+				[
+					"SHOW",
+					"sometimes"
+				]
+			],
+			"error": "<FILE>: '/flameworkTest/showWindows' is \"sometimes\", which is not a boolean (true, false, 1 or 0)."
+		},
+		{
+			"name": "showWindows env TRUE",
+			"text": "{ \"flameworkTest\": { \"showWindows\": \"${SHOW:-false}\" } }",
+			"env": [
+				[
+					"SHOW",
+					"TRUE"
+				]
+			],
+			"result": "{\"flameworkTest\":{\"showWindows\":true}}"
+		},
+		{
+			"name": "showWindows env  false ",
+			"text": "{ \"flameworkTest\": { \"showWindows\": \"${SHOW:-false}\" } }",
+			"env": [
+				[
+					"SHOW",
+					" false "
+				]
+			],
+			"result": "{\"flameworkTest\":{\"showWindows\":false}}"
+		},
+		{
+			"name": "showWindows yes",
+			"text": "{ \"flameworkTest\": { \"showWindows\": \"yes\" } }",
+			"env": [],
+			"error": "<FILE>: '/flameworkTest/showWindows' is \"yes\", which is not a boolean (true, false, 1 or 0)."
+		},
+		{
+			"name": "showWindows 1",
+			"text": "{ \"flameworkTest\": { \"showWindows\": 1 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /flameworkTest/showWindows must be boolean"
+		},
+		{
+			"name": "moved testing keys",
+			"text": "{\"testing\":{\"timeout\":5,\"failOnSkip\":true,\"keepAwake\":true,\"lockTimeout\":60,\"lockHold\":30,\"parallel\":2,\"showWindows\":true}}",
+			"env": [],
+			"error": "Invalid <FILE>: flamework-test's settings have a section of their own, \"flameworkTest\":\n  move 'testing.failOnSkip' to 'flameworkTest.failOnSkip'\n  move 'testing.keepAwake' to 'flameworkTest.keepAwake'\n  move 'testing.lockTimeout' to 'flameworkTest.lockTimeout'\n  move 'testing.lockHold' to 'flameworkTest.lockHold'\n  move 'testing.parallel' to 'flameworkTest.parallel'\n  move 'testing.showWindows' to 'flameworkTest.showWindows'"
+		},
+		{
+			"name": "moved cloud keys",
+			"text": "{\"cloud\":{\"testingUniverseId\":\"1\",\"testingPlaceId\":\"2\",\"apiKey\":\"${MISSING_KEY_FOR_THE_REFUSAL}\",\"originalPlace\":\"original.rbxl\"}}",
+			"env": [],
+			"error": "Invalid <FILE>: flamework-test's settings have a section of their own, \"flameworkTest\":\n  move 'cloud.testingUniverseId' to 'flameworkTest.universeId'\n  move 'cloud.testingPlaceId' to 'flameworkTest.placeId'\n  move 'cloud.apiKey' to 'flameworkTest.apiKey'\n  move 'cloud.originalPlace' to 'flameworkTest.originalPlace'\n  remove 'cloud': its keys are in 'flameworkTest' now"
+		},
+		{
+			"name": "cloud empty",
+			"text": "{ \"cloud\": {} }",
+			"env": [],
+			"error": "Invalid <FILE>: flamework-test's settings have a section of their own, \"flameworkTest\":\n  remove 'cloud': its keys are in 'flameworkTest' now"
+		},
+		{
+			"name": "cloud null",
+			"text": "{ \"cloud\": null }",
+			"env": [],
+			"error": "Invalid <FILE>: flamework-test's settings have a section of their own, \"flameworkTest\":\n  remove 'cloud': its keys are in 'flameworkTest' now"
+		},
+		{
+			"name": "cloud array",
+			"text": "{ \"cloud\": [1] }",
+			"env": [],
+			"error": "Invalid <FILE>: flamework-test's settings have a section of their own, \"flameworkTest\":\n  remove 'cloud': its keys are in 'flameworkTest' now"
+		},
+		{
+			"name": "cloud other keys",
+			"text": "{ \"cloud\": { \"other\": 1, \"apiKey\": \"k\" } }",
+			"env": [],
+			"error": "Invalid <FILE>: flamework-test's settings have a section of their own, \"flameworkTest\":\n  move 'cloud.apiKey' to 'flameworkTest.apiKey'\n  remove 'cloud': its keys are in 'flameworkTest' now"
+		},
+		{
+			"name": "testing moved and cloud",
+			"text": "{ \"testing\": { \"parallel\": 2 }, \"cloud\": { \"apiKey\": \"k\" } }",
+			"env": [],
+			"error": "Invalid <FILE>: flamework-test's settings have a section of their own, \"flameworkTest\":\n  move 'testing.parallel' to 'flameworkTest.parallel'\n  move 'cloud.apiKey' to 'flameworkTest.apiKey'\n  remove 'cloud': its keys are in 'flameworkTest' now"
+		},
+		{
+			"name": "testing null with cloud",
+			"text": "{ \"testing\": null, \"cloud\": \"x\" }",
+			"env": [],
+			"error": "Invalid <FILE>: flamework-test's settings have a section of their own, \"flameworkTest\":\n  remove 'cloud': its keys are in 'flameworkTest' now"
+		},
+		{
+			"name": "flameworkTest every key",
+			"text": "{\"flameworkTest\":{\"failOnSkip\":true,\"keepAwake\":false,\"lockTimeout\":60,\"lockHold\":30,\"parallel\":2,\"showWindows\":true,\"universeId\":\"1\",\"placeId\":\"2\",\"apiKey\":\"key\",\"originalPlace\":\"original.rbxl\"}}",
+			"env": [],
+			"result": "{\"flameworkTest\":{\"failOnSkip\":true,\"keepAwake\":false,\"lockTimeout\":60,\"lockHold\":30,\"parallel\":2,\"showWindows\":true,\"universeId\":\"1\",\"placeId\":\"2\",\"apiKey\":\"key\",\"originalPlace\":\"original.rbxl\"}}"
+		},
+		{
+			"name": "flameworkTest testingPlaceId",
+			"text": "{ \"flameworkTest\": { \"testingPlaceId\": \"2\" } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /flameworkTest must NOT have additional properties 'testingPlaceId'"
+		},
+		{
+			"name": "parse error",
+			"text": "{ \"transformer\": ",
+			"env": [],
+			"error": "Failed to parse <FILE>: Expression expected."
+		},
+		{
+			"name": "hashPrefix 1",
+			"text": "{ \"transformer\": { \"hashPrefix\": 1 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer/hashPrefix must be string"
+		},
+		{
+			"name": "unset flag",
+			"text": "{ \"transformer\": { \"obfuscation\": \"${FW_UNSET_FLAG}\" } }",
+			"env": [],
+			"error": "<FILE>: '/transformer/obfuscation' uses $FW_UNSET_FLAG, which is not set in the environment, .env or .env.local and has no fallback. Set it, or write ${FW_UNSET_FLAG:-value} to give it one."
+		},
+		{
+			"name": "obfuscation maybe",
+			"text": "{ \"transformer\": { \"obfuscation\": \"maybe\" } }",
+			"env": [],
+			"error": "<FILE>: '/transformer/obfuscation' is \"maybe\", which is not a boolean (true, false, 1 or 0)."
+		},
+		{
+			"name": "env prefix and salt",
+			"text": "{ \"transformer\": { \"hashPrefix\": \"${PREFIX}\", \"salt\": \"${SALT:-fixed}\" } }",
+			"env": [
+				[
+					"PREFIX",
+					"$e"
+				]
+			],
+			"result": "{\"transformer\":{\"hashPrefix\":\"$e\",\"salt\":\"fixed\"}}"
+		},
+		{
+			"name": "env prefix and salt given",
+			"text": "{ \"transformer\": { \"hashPrefix\": \"${PREFIX}\", \"salt\": \"${SALT:-fixed}\" } }",
+			"env": [
+				[
+					"PREFIX",
+					"$e"
+				],
+				[
+					"SALT",
+					"given"
+				]
+			],
+			"result": "{\"transformer\":{\"hashPrefix\":\"$e\",\"salt\":\"given\"}}"
+		},
+		{
+			"name": "convert all",
+			"text": "{\n\t\"transformer\": { \"obfuscation\": \"${OBFUSCATE:-false}\", \"optimizations\": { \"guardGenerationDedupLimit\": \"${DEDUP}\" } },\n\t\"scopes\": { \"active\": \"${SCOPES:-}\" }\n}",
+			"env": [
+				[
+					"OBFUSCATE",
+					"TRUE"
+				],
+				[
+					"DEDUP",
+					"4"
+				],
+				[
+					"SCOPES",
+					"components, providers"
+				]
+			],
+			"result": "{\"transformer\":{\"obfuscation\":true,\"optimizations\":{\"guardGenerationDedupLimit\":4}},\"scopes\":{\"active\":[\"components\",\"providers\"]}}"
+		},
+		{
+			"name": "convert empty list",
+			"text": "{\n\t\"transformer\": { \"obfuscation\": \"${OBFUSCATE:-false}\", \"optimizations\": { \"guardGenerationDedupLimit\": \"${DEDUP}\" } },\n\t\"scopes\": { \"active\": \"${SCOPES:-}\" }\n}",
+			"env": [
+				[
+					"DEDUP",
+					"2"
+				],
+				[
+					"SCOPES",
+					""
+				]
+			],
+			"result": "{\"transformer\":{\"obfuscation\":false,\"optimizations\":{\"guardGenerationDedupLimit\":2}},\"scopes\":{\"active\":[]}}"
+		},
+		{
+			"name": "convert star",
+			"text": "{\n\t\"transformer\": { \"obfuscation\": \"${OBFUSCATE:-false}\", \"optimizations\": { \"guardGenerationDedupLimit\": \"${DEDUP}\" } },\n\t\"scopes\": { \"active\": \"${SCOPES:-}\" }\n}",
+			"env": [
+				[
+					"DEDUP",
+					"2"
+				],
+				[
+					"SCOPES",
+					"*"
+				]
+			],
+			"result": "{\"transformer\":{\"obfuscation\":false,\"optimizations\":{\"guardGenerationDedupLimit\":2}},\"scopes\":{\"active\":[\"*\"]}}"
+		},
+		{
+			"name": "convert list edges",
+			"text": "{\n\t\"transformer\": { \"obfuscation\": \"${OBFUSCATE:-false}\", \"optimizations\": { \"guardGenerationDedupLimit\": \"${DEDUP}\" } },\n\t\"scopes\": { \"active\": \"${SCOPES:-}\" }\n}",
+			"env": [
+				[
+					"DEDUP",
+					"2"
+				],
+				[
+					"SCOPES",
+					" a ,, b , ,c,"
+				]
+			],
+			"result": "{\"transformer\":{\"obfuscation\":false,\"optimizations\":{\"guardGenerationDedupLimit\":2}},\"scopes\":{\"active\":[\"a\",\"b\",\"c\"]}}"
+		},
+		{
+			"name": "convert dedup 0",
+			"text": "{\n\t\"transformer\": { \"obfuscation\": \"${OBFUSCATE:-false}\", \"optimizations\": { \"guardGenerationDedupLimit\": \"${DEDUP}\" } },\n\t\"scopes\": { \"active\": \"${SCOPES:-}\" }\n}",
+			"env": [
+				[
+					"DEDUP",
+					"0"
+				]
+			],
+			"error": "Invalid <FILE>:\n  /transformer/optimizations/guardGenerationDedupLimit must be >= 1"
+		},
+		{
+			"name": "convert dedup 2.5",
+			"text": "{\n\t\"transformer\": { \"obfuscation\": \"${OBFUSCATE:-false}\", \"optimizations\": { \"guardGenerationDedupLimit\": \"${DEDUP}\" } },\n\t\"scopes\": { \"active\": \"${SCOPES:-}\" }\n}",
+			"env": [
+				[
+					"DEDUP",
+					"2.5"
+				]
+			],
+			"error": "Invalid <FILE>:\n  /transformer/optimizations/guardGenerationDedupLimit must be integer"
+		},
+		{
+			"name": "obfuscate maybe",
+			"text": "{ \"transformer\": { \"obfuscation\": \"${OBFUSCATE}\" } }",
+			"env": [
+				[
+					"OBFUSCATE",
+					"maybe"
+				]
+			],
+			"error": "<FILE>: '/transformer/obfuscation' is \"maybe\", which is not a boolean (true, false, 1 or 0)."
+		},
+		{
+			"name": "timeout soon",
+			"text": "{ \"components\": { \"warningTimeout\": \"${TIMEOUT}\" } }",
+			"env": [
+				[
+					"TIMEOUT",
+					"soon"
+				]
+			],
+			"error": "<FILE>: '/components/warningTimeout' is \"soon\", which is not a number."
+		},
+		{
+			"name": "prefix unset",
+			"text": "{ \"transformer\": { \"hashPrefix\": \"${PREFIX}\" } }",
+			"env": [],
+			"error": "<FILE>: '/transformer/hashPrefix' uses $PREFIX, which is not set in the environment, .env or .env.local and has no fallback. Set it, or write ${PREFIX:-value} to give it one."
+		},
+		{
+			"name": "literal dollar",
+			"text": "{ \"transformer\": { \"hashPrefix\": \"$$g\", \"salt\": \"plain\" } }",
+			"env": [],
+			"result": "{\"transformer\":{\"hashPrefix\":\"$g\",\"salt\":\"plain\"}}"
+		},
+		{
+			"name": "placeholder forms",
+			"text": "{ \"flameworkTest\": { \"universeId\": \"$${A}\", \"placeId\": \"${A}${B:-b}$$${C:-}\", \"apiKey\": \"${1A} ${A ${A:-x}y} $\", \"originalPlace\": \"${B:-a}b}\" } }",
+			"env": [
+				[
+					"A",
+					"1"
+				]
+			],
+			"result": "{\"flameworkTest\":{\"universeId\":\"${A}\",\"placeId\":\"1b$\",\"apiKey\":\"${1A} ${A 1y} $\",\"originalPlace\":\"ab}\"}}"
+		},
+		{
+			"name": "placeholder in list",
+			"text": "{ \"scopes\": { \"active\": [\"${A}\", \"${B:-x,y}\", \"z\"] } }",
+			"env": [
+				[
+					"A",
+					"a,b"
+				]
+			],
+			"result": "{\"scopes\":{\"active\":[\"a,b\",\"x,y\",\"z\"]}}"
+		},
+		{
+			"name": "placeholder in key",
+			"text": "{ \"${A}\": 1 }",
+			"env": [
+				[
+					"A",
+					"transformer"
+				]
+			],
+			"error": "Invalid <FILE>:\n  / must NOT have additional properties '${A}'"
+		},
+		{
+			"name": "placeholder first missing in order",
+			"text": "{ \"testing\": { \"entry\": \"${MISSING_B}\" }, \"core\": { \"profiling\": \"${MISSING_A}\" } }",
+			"env": [],
+			"error": "<FILE>: '/testing/entry' uses $MISSING_B, which is not set in the environment, .env or .env.local and has no fallback. Set it, or write ${MISSING_B:-value} to give it one."
+		},
+		{
+			"name": "placeholder empty value",
+			"text": "{ \"transformer\": { \"salt\": \"${EMPTY}\" } }",
+			"env": [
+				[
+					"EMPTY",
+					""
+				]
+			],
+			"result": "{\"transformer\":{\"salt\":\"\"}}"
+		},
+		{
+			"name": "placeholder unicode",
+			"text": "{ \"transformer\": { \"salt\": \"${U}ü\" } }",
+			"env": [
+				[
+					"U",
+					"😀"
+				]
+			],
+			"result": "{\"transformer\":{\"salt\":\"😀ü\"}}"
+		},
+		{
+			"name": "two unknown top keys",
+			"text": "{ \"zeta\": 1, \"alpha\": 2 }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  / must NOT have additional properties 'zeta'"
+		},
+		{
+			"name": "unknown and bad",
+			"text": "{ \"core\": { \"profiling\": 1 }, \"bogus\": 1 }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  / must NOT have additional properties 'bogus'"
+		},
+		{
+			"name": "bad in two sections, schema order",
+			"text": "{ \"core\": { \"profiling\": 1 }, \"transformer\": { \"salt\": 1 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer/salt must be string"
+		},
+		{
+			"name": "bad in one section, schema order",
+			"text": "{ \"transformer\": { \"obfuscation\": \"x1\", \"salt\": 1 } }",
+			"env": [],
+			"error": "<FILE>: '/transformer/obfuscation' is \"x1\", which is not a boolean (true, false, 1 or 0)."
+		},
+		{
+			"name": "bad after unknown inside",
+			"text": "{ \"transformer\": { \"salt\": 1, \"nope\": 2 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer must NOT have additional properties 'nope'"
+		},
+		{
+			"name": "root array",
+			"text": "[]",
+			"env": [],
+			"error": "Failed to parse <FILE>: The root value of a 'tsconfig.json' file must be an object."
+		},
+		{
+			"name": "root string",
+			"text": "\"x\"",
+			"env": [],
+			"error": "Failed to parse <FILE>: The root value of a 'tsconfig.json' file must be an object."
+		},
+		{
+			"name": "root null",
+			"text": "null",
+			"env": [],
+			"error": "Failed to parse <FILE>: The root value of a 'tsconfig.json' file must be an object."
+		},
+		{
+			"name": "root number",
+			"text": "12",
+			"env": [],
+			"error": "Failed to parse <FILE>: The root value of a 'tsconfig.json' file must be an object."
+		},
+		{
+			"name": "section not object",
+			"text": "{ \"transformer\": [] }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer must be object"
+		},
+		{
+			"name": "section null",
+			"text": "{ \"transformer\": null }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer must be object"
+		},
+		{
+			"name": "section string",
+			"text": "{ \"core\": \"x\" }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /core must be object"
+		},
+		{
+			"name": "$schema not string",
+			"text": "{ \"$schema\": 1 }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /$schema must be string"
+		},
+		{
+			"name": "plugins ok",
+			"text": "{ \"transformer\": { \"plugins\": [\"./a.cjs\", { \"path\": \"b\", \"options\": { \"x\": 1 } }] } }",
+			"env": [],
+			"result": "{\"transformer\":{\"plugins\":[\"./a.cjs\",{\"path\":\"b\",\"options\":{\"x\":1}}]}}"
+		},
+		{
+			"name": "plugins number",
+			"text": "{ \"transformer\": { \"plugins\": [1] } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer/plugins/0 must be string\n  /transformer/plugins/0 must be object\n  /transformer/plugins/0 must match exactly one schema in oneOf"
+		},
+		{
+			"name": "plugins object without path",
+			"text": "{ \"transformer\": { \"plugins\": [{ \"options\": {} }] } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer/plugins/0 must be string\n  /transformer/plugins/0 must have required property 'path'\n  /transformer/plugins/0 must match exactly one schema in oneOf"
+		},
+		{
+			"name": "plugins object extra",
+			"text": "{ \"transformer\": { \"plugins\": [{ \"path\": \"a\", \"extra\": 1 }] } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer/plugins/0 must be string\n  /transformer/plugins/0 must NOT have additional properties 'extra'\n  /transformer/plugins/0 must match exactly one schema in oneOf"
+		},
+		{
+			"name": "plugins options not object",
+			"text": "{ \"transformer\": { \"plugins\": [{ \"path\": \"a\", \"options\": [] }] } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer/plugins/0 must be string\n  /transformer/plugins/0/options must be object\n  /transformer/plugins/0 must match exactly one schema in oneOf"
+		},
+		{
+			"name": "plugins not array",
+			"text": "{ \"transformer\": { \"plugins\": \"a,b\" } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer/plugins must be array"
+		},
+		{
+			"name": "plugins second bad",
+			"text": "{ \"transformer\": { \"plugins\": [\"a\", 2, 3] } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer/plugins/1 must be string\n  /transformer/plugins/1 must be object\n  /transformer/plugins/1 must match exactly one schema in oneOf"
+		},
+		{
+			"name": "dedup 0",
+			"text": "{ \"transformer\": { \"optimizations\": { \"guardGenerationDedupLimit\": 0 } } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer/optimizations/guardGenerationDedupLimit must be >= 1"
+		},
+		{
+			"name": "dedup string",
+			"text": "{ \"transformer\": { \"optimizations\": { \"guardGenerationDedupLimit\": \"x\" } } }",
+			"env": [],
+			"error": "<FILE>: '/transformer/optimizations/guardGenerationDedupLimit' is \"x\", which is not a number."
+		},
+		{
+			"name": "dedup float",
+			"text": "{ \"transformer\": { \"optimizations\": { \"guardGenerationDedupLimit\": 2.5 } } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer/optimizations/guardGenerationDedupLimit must be integer"
+		},
+		{
+			"name": "optimizations unknown",
+			"text": "{ \"transformer\": { \"optimizations\": { \"other\": 1 } } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /transformer/optimizations must NOT have additional properties 'other'"
+		},
+		{
+			"name": "warningTimeout -1",
+			"text": "{ \"components\": { \"warningTimeout\": -1 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /components/warningTimeout must be >= 0"
+		},
+		{
+			"name": "warningTimeout string",
+			"text": "{ \"components\": { \"warningTimeout\": \"x1\" } }",
+			"env": [],
+			"error": "<FILE>: '/components/warningTimeout' is \"x1\", which is not a number."
+		},
+		{
+			"name": "warningTimeout bool",
+			"text": "{ \"components\": { \"warningTimeout\": true } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /components/warningTimeout must be number"
+		},
+		{
+			"name": "attributeWarningTimeout",
+			"text": "{ \"components\": { \"attributeWarningTimeout\": 3 } }",
+			"env": [],
+			"result": "{\"components\":{\"attributeWarningTimeout\":3}}"
+		},
+		{
+			"name": "lockHold 0.5",
+			"text": "{ \"flameworkTest\": { \"lockHold\": 0.5 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /flameworkTest/lockHold must be >= 1"
+		},
+		{
+			"name": "active not list",
+			"text": "{ \"scopes\": { \"active\": 1 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /scopes/active must be array"
+		},
+		{
+			"name": "active item number",
+			"text": "{ \"scopes\": { \"active\": [\"a\", 1] } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /scopes/active/1 must be string"
+		},
+		{
+			"name": "active string split",
+			"text": "{ \"scopes\": { \"active\": \"a,b\" } }",
+			"env": [],
+			"result": "{\"scopes\":{\"active\":[\"a\",\"b\"]}}"
+		},
+		{
+			"name": "activeIn string",
+			"text": "{ \"testing\": { \"activeIn\": \"x, y\", \"inactiveIn\": \"\" } }",
+			"env": [],
+			"result": "{\"testing\":{\"activeIn\":[\"x\",\"y\"],\"inactiveIn\":[]}}"
+		},
+		{
+			"name": "entry ok",
+			"text": "{ \"testing\": { \"entry\": \"src/server/main\", \"enabled\": \"${E:-0}\" } }",
+			"env": [],
+			"result": "{\"testing\":{\"entry\":\"src/server/main\",\"enabled\":false}}"
+		},
+		{
+			"name": "everything",
+			"text": "{\"transformer\":{\"plugins\":[],\"noSemanticDiagnostics\":false,\"salt\":\"s\",\"hashPrefix\":\"h\",\"obfuscation\":false,\"idGenerationMode\":\"tiny\",\"optimizations\":{}},\"serialization\":{\"checks\":{\"category\":\"none\",\"mode\":\"assert\",\"side\":\"both\",\"types\":false}},\"core\":{\"profiling\":true},\"networking\":{\"serialization\":false},\"components\":{\"warningTimeout\":0,\"attributeWarningTimeout\":1.5,\"streamingMode\":\"Watching\",\"watchRenames\":false},\"scopes\":{\"active\":[\"*\"]},\"testing\":{\"enabled\":true,\"activeIn\":[],\"inactiveIn\":[\"x\"],\"autoRun\":true,\"timeout\":0,\"concurrency\":1,\"entry\":\"e\"}}",
+			"env": [],
+			"result": "{\"transformer\":{\"plugins\":[],\"noSemanticDiagnostics\":false,\"salt\":\"s\",\"hashPrefix\":\"h\",\"obfuscation\":false,\"idGenerationMode\":\"tiny\",\"optimizations\":{}},\"serialization\":{\"checks\":{\"category\":\"none\",\"mode\":\"assert\",\"side\":\"both\",\"types\":false}},\"core\":{\"profiling\":true},\"networking\":{\"serialization\":false},\"components\":{\"warningTimeout\":0,\"attributeWarningTimeout\":1.5,\"streamingMode\":\"Watching\",\"watchRenames\":false},\"scopes\":{\"active\":[\"*\"]},\"testing\":{\"enabled\":true,\"activeIn\":[],\"inactiveIn\":[\"x\"],\"autoRun\":true,\"timeout\":0,\"concurrency\":1,\"entry\":\"e\"}}"
+		},
+		{
+			"name": "key order kept",
+			"text": "{ \"testing\": { \"timeout\": 1, \"autoRun\": true }, \"core\": {}, \"transformer\": { \"salt\": \"s\", \"hashPrefix\": \"h\" } }",
+			"env": [],
+			"result": "{\"testing\":{\"timeout\":1,\"autoRun\":true},\"core\":{},\"transformer\":{\"salt\":\"s\",\"hashPrefix\":\"h\"}}"
+		},
+		{
+			"name": "pointer escaping",
+			"text": "{ \"a/b\": 1 }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  / must NOT have additional properties 'a/b'"
+		},
+		{
+			"name": "pointer escaping 2",
+			"text": "{ \"core\": { \"a~b/c\": 1 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /core must NOT have additional properties 'a~b/c'"
+		},
+		{
+			"name": "integer-like keys",
+			"text": "{ \"core\": {}, \"1\": 1, \"0\": 0 }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  / must NOT have additional properties '0'"
+		},
+		{
+			"name": "duplicate keys",
+			"text": "{ \"transformer\": { \"salt\": \"a\" }, \"core\": {}, \"transformer\": { \"salt\": \"b\" } }",
+			"env": [],
+			"result": "{\"transformer\":{\"salt\":\"b\"},\"core\":{}}"
+		},
+		{
+			"name": "numbers",
+			"text": "{ \"testing\": { \"timeout\": 1e1, \"concurrency\": 3.0 }, \"components\": { \"warningTimeout\": -0, \"attributeWarningTimeout\": 0.000001 } }",
+			"env": [],
+			"result": "{\"testing\":{\"timeout\":10,\"concurrency\":3},\"components\":{\"warningTimeout\":0,\"attributeWarningTimeout\":0.000001}}"
+		},
+		{
+			"name": "number forms",
+			"text": "{ \"testing\": { \"timeout\": .5 } }",
+			"env": [],
+			"result": "{\"testing\":{\"timeout\":0.5}}"
+		},
+		{
+			"name": "number hex",
+			"text": "{ \"testing\": { \"timeout\": 0x10 } }",
+			"env": [],
+			"result": "{\"testing\":{\"timeout\":16}}"
+		},
+		{
+			"name": "number huge",
+			"text": "{ \"testing\": { \"timeout\": 1e400 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /testing/timeout must be number"
+		},
+		{
+			"name": "negative minimum",
+			"text": "{ \"testing\": { \"timeout\": -5 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /testing/timeout must be >= 0"
+		},
+		{
+			"name": "empty file",
+			"text": "",
+			"env": [],
+			"result": "{}"
+		},
+		{
+			"name": "whitespace only",
+			"text": " \n\t ",
+			"env": [],
+			"result": "{}"
+		},
+		{
+			"name": "comment only",
+			"text": "// nothing\n/* here */",
+			"env": [],
+			"result": "{}"
+		},
+		{
+			"name": "bom",
+			"text": "﻿{ \"core\": {} }",
+			"env": [],
+			"result": "{\"core\":{}}"
+		},
+		{
+			"name": "block comments",
+			"text": "{ /* a */ \"core\" /* b */ : /* c */ { } /* d */ }",
+			"env": [],
+			"result": "{\"core\":{}}"
+		},
+		{
+			"name": "single quotes",
+			"text": "{ 'core': { 'profiling': true } }",
+			"env": [],
+			"error": "Failed to parse <FILE>: String literal with double quotes expected."
+		},
+		{
+			"name": "unquoted key",
+			"text": "{ core: {} }",
+			"env": [],
+			"error": "Failed to parse <FILE>: String literal with double quotes expected."
+		},
+		{
+			"name": "missing comma",
+			"text": "{ \"core\": {} \"networking\": {} }",
+			"env": [],
+			"error": "Failed to parse <FILE>: ',' expected."
+		},
+		{
+			"name": "missing colon",
+			"text": "{ \"core\" {} }",
+			"env": [],
+			"error": "Failed to parse <FILE>: ':' expected."
+		},
+		{
+			"name": "missing value",
+			"text": "{ \"core\": }",
+			"env": [],
+			"error": "Failed to parse <FILE>: Expression expected."
+		},
+		{
+			"name": "unterminated string",
+			"text": "{ \"core\": { \"profiling\": \"tr",
+			"env": [],
+			"error": "Failed to parse <FILE>: Unterminated string literal."
+		},
+		{
+			"name": "unterminated object",
+			"text": "{ \"core\": { \"profiling\": true }",
+			"env": [],
+			"error": "Failed to parse <FILE>: '}' expected."
+		},
+		{
+			"name": "unterminated comment",
+			"text": "{ \"core\": {} /* never",
+			"env": [],
+			"error": "Failed to parse <FILE>: '*/' expected."
+		},
+		{
+			"name": "trailing garbage",
+			"text": "{ \"core\": {} } x",
+			"env": [],
+			"error": "Failed to parse <FILE>: Unexpected token."
+		},
+		{
+			"name": "two objects",
+			"text": "{ \"core\": {} } { }",
+			"env": [],
+			"error": "Failed to parse <FILE>: Unexpected token."
+		},
+		{
+			"name": "double comma",
+			"text": "{ \"core\": {},, \"networking\": {} }",
+			"env": [],
+			"error": "Failed to parse <FILE>: Property assignment expected."
+		},
+		{
+			"name": "leading comma",
+			"text": "{ , \"core\": {} }",
+			"env": [],
+			"error": "Failed to parse <FILE>: Property assignment expected."
+		},
+		{
+			"name": "array trailing comma",
+			"text": "{ \"scopes\": { \"active\": [\"a\", \"b\",] } }",
+			"env": [],
+			"result": "{\"scopes\":{\"active\":[\"a\",\"b\"]}}"
+		},
+		{
+			"name": "array double comma",
+			"text": "{ \"scopes\": { \"active\": [\"a\",, \"b\"] } }",
+			"env": [],
+			"error": "Failed to parse <FILE>: Property value can only be string literal, numeric literal, 'true', 'false', 'null', object literal or array literal."
+		},
+		{
+			"name": "unclosed array",
+			"text": "{ \"scopes\": { \"active\": [\"a\" } }",
+			"env": [],
+			"error": "Failed to parse <FILE>: ',' expected."
+		},
+		{
+			"name": "escapes",
+			"text": "{ \"flameworkTest\": { \"apiKey\": \"a\\u00e9\\n\\t\\\"\\\\\\/\" } }",
+			"env": [],
+			"result": "{\"flameworkTest\":{\"apiKey\":\"aé\\n\\t\\\"\\\\/\"}}"
+		},
+		{
+			"name": "bad escape",
+			"text": "{ \"flameworkTest\": { \"apiKey\": \"a\\qb\" } }",
+			"env": [],
+			"result": "{\"flameworkTest\":{\"apiKey\":\"aqb\"}}"
+		},
+		{
+			"name": "raw newline in string",
+			"text": "{ \"flameworkTest\": { \"apiKey\": \"a\nb\" } }",
+			"env": [],
+			"error": "Failed to parse <FILE>: Unterminated string literal."
+		},
+		{
+			"name": "true as key",
+			"text": "{ true: 1 }",
+			"env": [],
+			"error": "Failed to parse <FILE>: String literal with double quotes expected."
+		},
+		{
+			"name": "expression value",
+			"text": "{ \"testing\": { \"timeout\": 1 + 2 } }",
+			"env": [],
+			"error": "Failed to parse <FILE>: Property value can only be string literal, numeric literal, 'true', 'false', 'null', object literal or array literal."
+		},
+		{
+			"name": "identifier value",
+			"text": "{ \"testing\": { \"timeout\": abc } }",
+			"env": [],
+			"error": "Failed to parse <FILE>: Property value can only be string literal, numeric literal, 'true', 'false', 'null', object literal or array literal."
+		},
+		{
+			"name": "negative via minus",
+			"text": "{ \"testing\": { \"timeout\": - 5 } }",
+			"env": [],
+			"error": "Invalid <FILE>:\n  /testing/timeout must be >= 0"
+		},
+		{
+			"name": "crlf",
+			"text": "{\r\n\t\"core\": {\r\n\t\t\"profiling\": false\r\n\t}\r\n}\r\n",
+			"env": [],
+			"result": "{\"core\":{\"profiling\":false}}"
+		},
+		{
+			"name": "unicode values",
+			"text": "{ \"flameworkTest\": { \"apiKey\": \"ü😀 \" } }",
+			"env": [],
+			"result": "{\"flameworkTest\":{\"apiKey\":\"ü😀 \"}}"
+		}
+	]
+}

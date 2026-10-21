@@ -1,0 +1,453 @@
+{
+	"version": 1,
+	"flameworkVersion": "2.0.0-alpha.8",
+	"identifiers": {
+		"flamework-test-place:out/client/Features/Testing/Controllers/FwTestController@FwTestClientScratch": "client/Features/Testing/Controllers/FwTestController@FwTestClientScratch",
+		"flamework-test-place:out/client/Features/Testing/Controllers/FwTestClientDependency@FwTestClientDependency": "client/Features/Testing/Controllers/FwTestClientDependency@FwTestClientDependency",
+		"flamework-test-place:out/client/Features/Testing/Controllers/FwTestController@FwTestController": "client/Features/Testing/Controllers/FwTestController@FwTestController",
+		"flamework-test-place:out/shared/Features/Testing/FwTestConfig@FwTestConfig": "shared/Features/Testing/FwTestConfig@FwTestConfig",
+		"flamework-test-place:out/client/Features/Testing/Controllers/FwTestClientLazyProvider@FwTestClientLazyProvider": "client/Features/Testing/Controllers/FwTestClientLazyProvider@FwTestClientLazyProvider",
+		"flamework-test-place:out/client/Features/Testing/Components/FwTestStreamPartClientComponent@FwTestStreamPartClientComponent": "client/Features/Testing/Components/FwTestStreamPartClientComponent@FwTestStreamPartClientComponent",
+		"flamework-test-place:out/client/Tests/client@ClientTests": "client/Tests/client@ClientTests",
+		"flamework-test-place:out/client/Tests/client@ClientTests.onStart.ClientLate": "client/Tests/client@ClientTests.onStart.ClientLate",
+		"flamework-test-place:out/client/Tests/client@ClientTests.onStart.ClientEarly": "client/Tests/client@ClientTests.onStart.ClientEarly",
+		"flamework-test-place:out/server/Features/Testing/Services/FwTestService@FwTestScratch": "server/Features/Testing/Services/FwTestService@FwTestScratch",
+		"flamework-test-place:out/server/Features/Testing/Services/FwTestDependency@FwTestDependency": "server/Features/Testing/Services/FwTestDependency@FwTestDependency",
+		"flamework-test-place:out/server/Features/Testing/Services/FwTestService@FwTestService": "server/Features/Testing/Services/FwTestService@FwTestService",
+		"flamework-test-place:out/server/Features/Testing/Services/FwTestLazyProvider@FwTestLazyProvider": "server/Features/Testing/Services/FwTestLazyProvider@FwTestLazyProvider",
+		"flamework-test-place:out/server/Features/Testing/Components/FwTestPartComponent@FwTestPartComponent": "server/Features/Testing/Components/FwTestPartComponent@FwTestPartComponent",
+		"flamework-test-place:out/server/Tests/di@DiTests": "server/Tests/di@DiTests",
+		"flamework-test-place:out/server/Tests/modding@ModdingTests": "server/Tests/modding@ModdingTests",
+		"flamework-test-place:out/server/Tests/modules@ModuleTests": "server/Tests/modules@ModuleTests",
+		"flamework-test-place:out/server/Fixtures/moduleProviders@Widget": "server/Fixtures/moduleProviders@Widget",
+		"flamework-test-place:out/server/Fixtures/moduleProviders@Consumer": "server/Fixtures/moduleProviders@Consumer",
+		"flamework-test-place:out/server/Fixtures/moduleProviders@Gadget": "server/Fixtures/moduleProviders@Gadget",
+		"flamework-test-place:out/server/Fixtures/moduleProviders@Ticking": "server/Fixtures/moduleProviders@Ticking",
+		"flamework-test-place:out/server/Tests/paths@PathTests": "server/Tests/paths@PathTests",
+		"flamework-test-place:out/server/Discovery/exported@DiscoveryExported": "server/Discovery/exported@DiscoveryExported",
+		"flamework-test-place:out/server/Tests/networking@NetworkingTests": "server/Tests/networking@NetworkingTests",
+		"flamework-test-place:out/client/Tests/networking@NetworkingClientTests": "client/Tests/networking@NetworkingClientTests",
+		"flamework-test-place:out/client/Tests/packing@PackingClientTests": "client/Tests/packing@PackingClientTests",
+		"flamework-test-place:out/server/Tests/packing@PackingTests": "server/Tests/packing@PackingTests",
+		"flamework-test-place:out/client/Features/Testing/Components/FwTestPartClientComponent@FwTestPartClientComponent": "client/Features/Testing/Components/FwTestPartClientComponent@FwTestPartClientComponent",
+		"flamework-test-place:out/client/Features/Testing/Components/FwTestStreamLinkComponent@FwTestStreamLinkComponent": "client/Features/Testing/Components/FwTestStreamLinkComponent@FwTestStreamLinkComponent",
+		"flamework-test-place:out/client/Features/Testing/Components/FwTestStreamModelClientComponent@FwTestStreamModelClientComponent": "client/Features/Testing/Components/FwTestStreamModelClientComponent@FwTestStreamModelClientComponent",
+		"flamework-test-place:out/client/Tests/streaming@StreamingTests": "client/Tests/streaming@StreamingTests",
+		"flamework-test-place:out/server/Features/Testing/Components/FwTestLinkComponent@FwTestLinkComponent": "server/Features/Testing/Components/FwTestLinkComponent@FwTestLinkComponent",
+		"flamework-test-place:out/server/Tests/components@ComponentTests": "server/Tests/components@ComponentTests",
+		"flamework-test-place:out/server/Tests/components@ComponentTests.onStart.ComponentsHolder": "server/Tests/components@ComponentTests.onStart.ComponentsHolder",
+		"flamework-test-place:out/server/Discovery/exported@DiscoveryExportedComponent": "server/Discovery/exported@DiscoveryExportedComponent",
+		"flamework-test-place:out/shared/Tests/components@ExplainedOwner": "shared/Tests/components@ExplainedOwner",
+		"flamework-test-place:out/shared/Tests/components@Rig": "shared/Tests/components@Rig",
+		"flamework-test-place:out/shared/Tests/components@PartOnly": "shared/Tests/components@PartOnly",
+		"flamework-test-place:out/server/Tests/scopes@NeverRegistered": "server/Tests/scopes@NeverRegistered",
+		"flamework-test-place:out/server/Tests/scopes@StandsDownForTests": "server/Tests/scopes@StandsDownForTests",
+		"flamework-test-place:out/server/Tests/scopes@ScopeTests": "server/Tests/scopes@ScopeTests",
+		"flamework-test-place:out/server/Discovery/hidden@DiscoveryHidden": "server/Discovery/hidden@DiscoveryHidden",
+		"flamework-test-place:out/server/Discovery/hidden@DiscoveryHiddenComponent": "server/Discovery/hidden@DiscoveryHiddenComponent",
+		"flamework-test-place:out/server/Discovery/hidden@DiscoveryInjectable": "server/Discovery/hidden@DiscoveryInjectable",
+		"flamework-test-place:out/server/Discovery/hidden@makeDiscoveryLocal.DiscoveryLocal": "server/Discovery/hidden@makeDiscoveryLocal.DiscoveryLocal",
+		"flamework-test-place:out/server/Discovery/nested/deep@DiscoveryDeep": "server/Discovery/nested/deep@DiscoveryDeep",
+		"flamework-test-place:out/server/Discovery/nested/deep@DiscoveryDeepComponent": "server/Discovery/nested/deep@DiscoveryDeepComponent",
+		"flamework-test-place:out/server/Tests/duplicateIds@DuplicateIdTests": "server/Tests/duplicateIds@DuplicateIdTests",
+		"flamework-test-place:out/server/Fixtures/duplicateProviders@DupLedger": "server/Fixtures/duplicateProviders@DupLedger",
+		"flamework-test-place:out/shared/Tests/components@Tagged": "shared/Tests/components@Tagged",
+		"flamework-test-place:out/shared/Tests/components@Defaulted": "shared/Tests/components@Defaulted",
+		"flamework-test-place:out/shared/Tests/components@Manual": "shared/Tests/components@Manual",
+		"flamework-test-place:out/shared/Tests/components@Watched": "shared/Tests/components@Watched",
+		"flamework-test-place:out/shared/Tests/components@Unrenamed": "shared/Tests/components@Unrenamed",
+		"flamework-test-place:out/shared/Tests/components@Frozen": "shared/Tests/components@Frozen",
+		"flamework-test-place:out/shared/Tests/components@Contextual": "shared/Tests/components@Contextual",
+		"flamework-test-place:out/shared/Tests/components@Atomic": "shared/Tests/components@Atomic",
+		"flamework-test-place:out/shared/Tests/components@Blocked": "shared/Tests/components@Blocked",
+		"flamework-test-place:out/shared/Tests/components@Allowed": "shared/Tests/components@Allowed",
+		"flamework-test-place:out/shared/Tests/components@Enemy": "shared/Tests/components@Enemy",
+		"flamework-test-place:out/shared/Tests/components@Damageable": "shared/Tests/components@Damageable",
+		"flamework-test-place:out/shared/Tests/components@Deep": "shared/Tests/components@Deep",
+		"flamework-test-place:out/shared/Tests/components@DeepImpatient": "shared/Tests/components@DeepImpatient",
+		"flamework-test-place:out/shared/Tests/components@Parted": "shared/Tests/components@Parted",
+		"flamework-test-place:out/shared/Tests/components@FrozenRig": "shared/Tests/components@FrozenRig",
+		"flamework-test-place:out/shared/Tests/components@FrozenRigOwner": "shared/Tests/components@FrozenRigOwner",
+		"flamework-test-place:out/shared/Tests/components@LateRigChildOwner": "shared/Tests/components@LateRigChildOwner",
+		"flamework-test-place:out/shared/Tests/components@LateRig": "shared/Tests/components@LateRig",
+		"flamework-test-place:out/shared/Tests/components@RootedImpatient": "shared/Tests/components@RootedImpatient",
+		"flamework-test-place:out/shared/Tests/components@Speedy": "shared/Tests/components@Speedy",
+		"flamework-test-place:out/shared/Tests/components@Initialised": "shared/Tests/components@Initialised",
+		"flamework-test-place:out/shared/Tests/components@InitialisedOwner": "shared/Tests/components@InitialisedOwner",
+		"flamework-test-place:out/shared/Tests/components@BrokenInit": "shared/Tests/components@BrokenInit",
+		"flamework-test-place:out/shared/Tests/components@BrokenInitTagged": "shared/Tests/components@BrokenInitTagged",
+		"flamework-test-place:out/shared/Tests/components@BrokenOwner": "shared/Tests/components@BrokenOwner",
+		"flamework-test-place:out/shared/Tests/components@BrokenCar": "shared/Tests/components@BrokenCar",
+		"flamework-test-place:out/shared/Tests/components@Flaky": "shared/Tests/components@Flaky",
+		"flamework-test-place:out/shared/Tests/components@FlakyCar": "shared/Tests/components@FlakyCar",
+		"flamework-test-place:out/shared/Tests/components@BrokenPointer": "shared/Tests/components@BrokenPointer",
+		"flamework-test-place:out/shared/Tests/components@Engine": "shared/Tests/components@Engine",
+		"flamework-test-place:out/shared/Tests/components@Car": "shared/Tests/components@Car",
+		"flamework-test-place:out/shared/Tests/components@Handler": "shared/Tests/components@Handler",
+		"flamework-test-place:out/shared/Tests/components@LateRigOwner": "shared/Tests/components@LateRigOwner",
+		"flamework-test-place:out/shared/Tests/components@Strict": "shared/Tests/components@Strict",
+		"flamework-test-place:out/shared/Tests/components@StrictOwner": "shared/Tests/components@StrictOwner",
+		"flamework-test-place:out/shared/Tests/components@StrictCar": "shared/Tests/components@StrictCar",
+		"flamework-test-place:out/shared/Tests/components@Rooted": "shared/Tests/components@Rooted",
+		"flamework-test-place:out/shared/Tests/components@FrozenPointer": "shared/Tests/components@FrozenPointer",
+		"flamework-test-place:out/shared/Tests/components@Twin": "shared/Tests/components@Twin",
+		"flamework-test-place:out/shared/Tests/components@Extra": "shared/Tests/components@Extra",
+		"flamework-test-place:out/shared/Tests/components@BaseHandler": "shared/Tests/components@BaseHandler",
+		"flamework-test-place:out/shared/Tests/components@DerivedHandler": "shared/Tests/components@DerivedHandler",
+		"flamework-test-place:out/shared/Tests/components@BaseOwner": "shared/Tests/components@BaseOwner",
+		"flamework-test-place:out/shared/Tests/components@FrozenOwner": "shared/Tests/components@FrozenOwner",
+		"flamework-test-place:out/shared/Tests/components@AtomicOwner": "shared/Tests/components@AtomicOwner",
+		"flamework-test-place:out/shared/Tests/components@Choosy": "shared/Tests/components@Choosy",
+		"flamework-test-place:out/shared/Tests/components@ChoosyOwner": "shared/Tests/components@ChoosyOwner",
+		"flamework-test-place:out/shared/Tests/components@PairOwner": "shared/Tests/components@PairOwner",
+		"flamework-test-place:out/shared/Tests/components@FrozenPair": "shared/Tests/components@FrozenPair",
+		"flamework-test-place:out/shared/Tests/components@Impatient": "shared/Tests/components@Impatient",
+		"flamework-test-place:out/shared/Tests/components@ImpatientOwner": "shared/Tests/components@ImpatientOwner",
+		"flamework-test-place:out/shared/Tests/components@Ignition": "shared/Tests/components@Ignition",
+		"flamework-test-place:out/shared/Tests/components@Starter": "shared/Tests/components@Starter",
+		"flamework-test-place:out/shared/Tests/components@StarterOwner": "shared/Tests/components@StarterOwner",
+		"flamework-test-place:out/shared/Tests/components@Owner": "shared/Tests/components@Owner",
+		"flamework-test-place:out/shared/Tests/components@OwnerPointer": "shared/Tests/components@OwnerPointer",
+		"flamework-test-place:out/shared/Tests/components@OwnerCar": "shared/Tests/components@OwnerCar",
+		"flamework-test-place:out/shared/Tests/components@FrozenOwnerPointer": "shared/Tests/components@FrozenOwnerPointer",
+		"flamework-test-place:out/shared/Tests/components@FrozenOwnerCar": "shared/Tests/components@FrozenOwnerCar",
+		"flamework-test-place:out/shared/Tests/components@BrokenOwnerPointer": "shared/Tests/components@BrokenOwnerPointer",
+		"flamework-test-place:out/shared/Tests/components@SpeedOwner": "shared/Tests/components@SpeedOwner",
+		"flamework-test-place:out/shared/Tests/components@TwoChildOwner": "shared/Tests/components@TwoChildOwner",
+		"flamework-test-place:out/shared/Tests/components@Repairer": "shared/Tests/components@Repairer",
+		"flamework-test-place:out/shared/Tests/components@Bolt": "shared/Tests/components@Bolt",
+		"flamework-test-place:out/shared/Tests/components@Chassis": "shared/Tests/components@Chassis",
+		"flamework-test-place:out/shared/Tests/components@HideableItem": "shared/Tests/components@HideableItem",
+		"flamework-test-place:out/shared/Tests/components@UnparentingContainer": "shared/Tests/components@UnparentingContainer",
+		"flamework-test-place:out/shared/Tests/components@StoringContainer": "shared/Tests/components@StoringContainer",
+		"flamework-test-place:out/shared/Tests/components@LinkedContainer": "shared/Tests/components@LinkedContainer",
+		"flamework-test-place:out/shared/Tests/components@PointingContainer": "shared/Tests/components@PointingContainer",
+		"flamework-test-place:out/shared/Tests/components@ShapedContainer": "shared/Tests/components@ShapedContainer",
+		"flamework-test-place:out/shared/Tests/components@HideableGem": "shared/Tests/components@HideableGem",
+		"flamework-test-place:out/shared/Tests/components@StashingRaiser": "shared/Tests/components@StashingRaiser",
+		"flamework-test-place:out/shared/Tests/components@PointerDefault": "shared/Tests/components@PointerDefault",
+		"flamework-test-place:out/shared/Tests/components@SpareDefault": "shared/Tests/components@SpareDefault",
+		"flamework-test-place:out/shared/Tests/components@Pointer": "shared/Tests/components@Pointer",
+		"flamework-test-place:out/shared/Tests/components@Picky": "shared/Tests/components@Picky",
+		"flamework-test-place:out/shared/Tests/components@LeakPair": "shared/Tests/components@LeakPair",
+		"flamework-test-place:out/shared/Tests/components@Throwy": "shared/Tests/components@Throwy",
+		"flamework-test-place:out/shared/Tests/components@ThrowyPointer": "shared/Tests/components@ThrowyPointer",
+		"flamework-test-place:out/shared/Tests/components@Fussy": "shared/Tests/components@Fussy",
+		"flamework-test-place:out/shared/Tests/components@FussyPointer": "shared/Tests/components@FussyPointer",
+		"flamework-test-place:out/shared/Tests/components@Static": "shared/Tests/components@Static",
+		"flamework-test-place:out/shared/Tests/components@ComponentSpecs": "shared/Tests/components@ComponentSpecs",
+		"flamework-test-place:out/shared/Tests/components@ComponentSpecs.onStart.EarlyAdder": "shared/Tests/components@ComponentSpecs.onStart.EarlyAdder",
+		"flamework-test-place:out/server/Tests/assets@AssetTests": "server/Tests/assets@AssetTests",
+		"flamework-test-place:out/server/Tests/lifecycle@FrameListener": "server/Tests/lifecycle@FrameListener",
+		"flamework-test-place:out/server/Tests/lifecycle@TickCounter": "server/Tests/lifecycle@TickCounter",
+		"flamework-test-place:out/server/Tests/lifecycle@Detaching": "server/Tests/lifecycle@Detaching",
+		"flamework-test-place:out/server/Tests/lifecycle@Scratch": "server/Tests/lifecycle@Scratch",
+		"flamework-test-place:out/server/Tests/lifecycle@LifecycleTests": "server/Tests/lifecycle@LifecycleTests",
+		"flamework-test-place:out/server/Tests/lifecycle@LifecycleTests.onStart.OrderHeavy": "server/Tests/lifecycle@LifecycleTests.onStart.OrderHeavy",
+		"flamework-test-place:out/server/Tests/lifecycle@LifecycleTests.onStart.OrderNeedy": "server/Tests/lifecycle@LifecycleTests.onStart.OrderNeedy",
+		"flamework-test-place:out/server/Tests/lifecycle@LifecycleTests.onStart.OrderPlain": "server/Tests/lifecycle@LifecycleTests.onStart.OrderPlain",
+		"flamework-test-place:out/server/Tests/lifecycle@LifecycleTests.onStart.OrderFirst": "server/Tests/lifecycle@LifecycleTests.onStart.OrderFirst",
+		"flamework-test-place:out/server/Tests/lifecycle@LifecycleTests.onStart.OrderYielder": "server/Tests/lifecycle@LifecycleTests.onStart.OrderYielder",
+		"flamework-test-place:out/server/Tests/lifecycle@LifecycleTests.onStart.OrderFollower": "server/Tests/lifecycle@LifecycleTests.onStart.OrderFollower",
+		"flamework-test-place:out/server/Tests/lifecycle@LifecycleTests.onStart.message.OrderInfinite": "server/Tests/lifecycle@LifecycleTests.onStart.message.OrderInfinite",
+		"flamework-test-place:out/server/Tests/serialization@SerializationTests": "server/Tests/serialization@SerializationTests",
+		"flamework-test-place:out/shared/Tests/concurrent@ConcurrentSpecs": "shared/Tests/concurrent@ConcurrentSpecs",
+		"flamework-test-place:out/shared/Tests/projects@ProjectSpecs": "shared/Tests/projects@ProjectSpecs",
+		"flamework-test-place:out/server/Discovery/exportEquals@DiscoveryExportEquals": "server/Discovery/exportEquals@DiscoveryExportEquals",
+		"flamework-test-place:out/server/Discovery/namespaced@Inner.DiscoveryNamespaced": "server/Discovery/namespaced@Inner.DiscoveryNamespaced",
+		"flamework-test-place:out/server/Fixtures/discoveryOutside@DiscoveryOutside": "server/Fixtures/discoveryOutside@DiscoveryOutside",
+		"flamework-test-place:out/server/Fixtures/lifecycleProviders@LazyInit": "server/Fixtures/lifecycleProviders@LazyInit",
+		"flamework-test-place:out/server/Fixtures/lifecycleProviders@LazyResolver": "server/Fixtures/lifecycleProviders@LazyResolver",
+		"flamework-test-place:out/server/Fixtures/lifecycleProviders@Multi": "server/Fixtures/lifecycleProviders@Multi",
+		"flamework-test-place:out/server/Fixtures/lifecycleProviders@DupBase": "server/Fixtures/lifecycleProviders@DupBase",
+		"flamework-test-place:out/server/Fixtures/lifecycleProviders@DupChild": "server/Fixtures/lifecycleProviders@DupChild"
+	},
+	"idGenerationMode": "full",
+	"metadata": {
+		"paths": {
+			"uses": {
+				"src/client/Tests/client.ts": [
+					{
+						"path": "src/server/Required",
+						"macro": "requireModules",
+						"line": 70,
+						"column": 40,
+						"raises": true
+					}
+				],
+				"src/server/Tests/paths.ts": [
+					{
+						"path": "src/server/Discovery",
+						"macro": "registerProviders",
+						"line": 251,
+						"column": 56
+					},
+					{
+						"path": "src/server/Required",
+						"macro": "requireModules",
+						"line": 306,
+						"column": 20,
+						"raises": true
+					},
+					{
+						"path": "src/server/Required",
+						"macro": "requireModules",
+						"line": 321,
+						"column": 19,
+						"raises": true
+					},
+					{
+						"path": "src/server/NotInThePlace",
+						"macro": "requireModules",
+						"line": 330,
+						"column": 40,
+						"raises": true
+					},
+					{
+						"path": "src/client/Core",
+						"macro": "requireModules",
+						"line": 341,
+						"column": 40,
+						"raises": true
+					}
+				],
+				"src/client/Core/runtime.client.ts": [
+					{
+						"path": "src/shared/Tests",
+						"macro": "registerProviders",
+						"line": 20,
+						"column": 3
+					},
+					{
+						"path": "src/client/Tests",
+						"macro": "registerProviders",
+						"line": 19,
+						"column": 3
+					},
+					{
+						"path": "src/shared/Features",
+						"macro": "registerProviders",
+						"line": 15,
+						"column": 3
+					},
+					{
+						"path": "src/shared/Core",
+						"macro": "registerProviders",
+						"line": 14,
+						"column": 3
+					},
+					{
+						"path": "src/client/Features",
+						"macro": "registerProviders",
+						"line": 13,
+						"column": 3
+					},
+					{
+						"path": "src/client/Core",
+						"macro": "registerProviders",
+						"line": 12,
+						"column": 3
+					},
+					{
+						"path": "src/client/Features/Testing/Components",
+						"macro": "ComponentPlugin.fromPath",
+						"line": 11,
+						"column": 33
+					}
+				],
+				"src/server/Core/main.ts": [
+					{
+						"path": "src/shared/Tests",
+						"macro": "registerProviders",
+						"line": 31,
+						"column": 4
+					},
+					{
+						"path": "src/server/Tests",
+						"macro": "registerProviders",
+						"line": 30,
+						"column": 4
+					},
+					{
+						"path": "src/shared/Features",
+						"macro": "registerProviders",
+						"line": 27,
+						"column": 4
+					},
+					{
+						"path": "src/shared/Core",
+						"macro": "registerProviders",
+						"line": 26,
+						"column": 4
+					},
+					{
+						"path": "src/server/Features",
+						"macro": "registerProviders",
+						"line": 25,
+						"column": 4
+					},
+					{
+						"path": "src/server/Core",
+						"macro": "registerProviders",
+						"line": 24,
+						"column": 4
+					},
+					{
+						"path": "src/server/Features/Testing/Components",
+						"macro": "ComponentPlugin.fromPath",
+						"line": 23,
+						"column": 34
+					}
+				],
+				"src/server/Tests/components.ts": [
+					{
+						"path": "src/server/Discovery/nested",
+						"macro": "ComponentPlugin.fromPath",
+						"line": 101,
+						"column": 37
+					},
+					{
+						"path": "src/server/Discovery",
+						"macro": "ComponentPlugin.fromPath",
+						"line": 150,
+						"column": 38
+					},
+					{
+						"path": "src/server/Discovery/nested",
+						"macro": "ComponentPlugin.fromPath",
+						"line": 151,
+						"column": 38
+					},
+					{
+						"path": "src/server/Discovery/nested",
+						"macro": "ComponentPlugin.fromPath",
+						"line": 164,
+						"column": 38
+					}
+				],
+				"src/server/Tests/scopes.ts": [
+					{
+						"path": "src/server/Discovery",
+						"macro": "registerProviders",
+						"line": 86,
+						"column": 45
+					},
+					{
+						"path": "src/server/Discovery",
+						"macro": "ComponentPlugin.fromPath",
+						"line": 109,
+						"column": 37
+					}
+				],
+				"src/server/Tests/duplicateIds.ts": [
+					{
+						"path": "src/server/Discovery",
+						"macro": "ComponentPlugin.fromPath",
+						"line": 144,
+						"column": 43
+					},
+					{
+						"path": "src/server/Discovery",
+						"macro": "builder.registerProviders",
+						"line": 167,
+						"column": 13
+					},
+					{
+						"path": "src/server/Discovery/nested",
+						"macro": "builder.registerProviders",
+						"line": 168,
+						"column": 13
+					},
+					{
+						"path": "src/server/Discovery/nested",
+						"macro": "builder.registerProviders",
+						"line": 185,
+						"column": 13
+					}
+				]
+			}
+		},
+		"globs": {
+			"paths": {
+				"src/server/Discovery/**/*.ts": [
+					"out/server/Discovery/reexport.lua",
+					"out/server/Discovery/namespaced.lua",
+					"out/server/Discovery/hidden.lua",
+					"out/server/Discovery/exportEquals.lua",
+					"out/server/Discovery/exported.lua",
+					"out/server/Discovery/nested/deep.lua"
+				],
+				"src/server/Discovery/hid*.ts": [
+					"out/server/Discovery/hidden.lua"
+				],
+				"src/server/Discovery/*.ts": [
+					"out/server/Discovery/reexport.lua",
+					"out/server/Discovery/namespaced.lua",
+					"out/server/Discovery/hidden.lua",
+					"out/server/Discovery/exportEquals.lua",
+					"out/server/Discovery/exported.lua"
+				]
+			},
+			"origins": {
+				"src/server/Tests/paths.ts": [
+					"src/server/Discovery/**/*.ts"
+				],
+				"src/server/Tests/components.ts": [
+					"src/server/Discovery/hid*.ts",
+					"src/server/Discovery/hid*.ts"
+				],
+				"src/server/Tests/scopes.ts": [
+					"src/server/Discovery/*.ts"
+				],
+				"src/server/Tests/duplicateIds.ts": [
+					"src/server/Discovery/**/*.ts"
+				]
+			},
+			"uses": {
+				"src/server/Tests/paths.ts": [
+					{
+						"glob": "src/server/Discovery/**/*.ts",
+						"text": "src/server/Discovery/**/*.ts",
+						"macro": "registerProvidersGlob",
+						"line": 267,
+						"column": 31
+					}
+				],
+				"src/server/Tests/components.ts": [
+					{
+						"glob": "src/server/Discovery/hid*.ts",
+						"text": "src/server/Discovery/hid*.ts",
+						"macro": "fromGlob",
+						"line": 102,
+						"column": 37
+					},
+					{
+						"glob": "src/server/Discovery/hid*.ts",
+						"text": "src/server/Discovery/hid*.ts",
+						"macro": "fromGlob",
+						"line": 169,
+						"column": 38
+					}
+				],
+				"src/server/Tests/scopes.ts": [
+					{
+						"glob": "src/server/Discovery/*.ts",
+						"text": "src/server/Discovery/*.ts",
+						"macro": "registerProvidersGlob",
+						"line": 98,
+						"column": 7
+					}
+				],
+				"src/server/Tests/duplicateIds.ts": [
+					{
+						"glob": "src/server/Discovery/**/*.ts",
+						"text": "src/server/Discovery/**/*.ts",
+						"macro": "registerProvidersGlob",
+						"line": 184,
+						"column": 13
+					}
+				]
+			}
+		}
+	}
+}

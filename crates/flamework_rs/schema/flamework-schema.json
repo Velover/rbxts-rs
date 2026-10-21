@@ -1,0 +1,119 @@
+{
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"$id": "#root",
+	"type": "object",
+	"properties": {
+		"globs": {
+			"$id": "globs",
+			"type": "object",
+			"properties": {
+				"paths": {
+					"type": "object",
+					"additionalProperties": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					}
+				},
+				"origins": {
+					"type": "object",
+					"additionalProperties": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					}
+				},
+				"uses": {
+					"type": "object",
+					"additionalProperties": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"required": ["glob", "text", "macro", "line", "column"],
+							"properties": {
+								"glob": { "type": "string" },
+								"text": { "type": "string" },
+								"macro": { "type": "string" },
+								"line": { "type": "number" },
+								"column": { "type": "number" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"paths": {
+			"$id": "paths",
+			"type": "object",
+			"properties": {
+				"uses": {
+					"type": "object",
+					"additionalProperties": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"required": ["path", "macro", "line", "column"],
+							"properties": {
+								"path": { "type": "string" },
+								"macro": { "type": "string" },
+								"line": { "type": "number" },
+								"column": { "type": "number" },
+								"raises": { "type": "boolean" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"buildInfo": {
+			"$id": "buildInfo",
+			"required": ["version", "flameworkVersion", "identifiers"],
+			"type": "object",
+			"properties": {
+				"version": {
+					"type": "number"
+				},
+				"flameworkVersion": {
+					"type": "string"
+				},
+				"identifierPrefix": {
+					"type": "string"
+				},
+				"idGenerationMode": {
+					"type": "string"
+				},
+				"buildSeed": {
+					"type": "string"
+				},
+				"identifiers": {
+					"type": "object",
+					"additionalProperties": {
+						"type": "string"
+					}
+				},
+				"salt": {
+					"type": "string"
+				},
+				"stringHashes": {
+					"type": "object",
+					"additionalProperties": {
+						"type": "string"
+					}
+				},
+				"metadata": {
+					"type": "object",
+					"properties": {
+						"globs": {
+							"$ref": "globs"
+						},
+						"paths": {
+							"$ref": "paths"
+						}
+					}
+				}
+			}
+		}
+	}
+}

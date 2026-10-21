@@ -1,0 +1,548 @@
+{
+	"problems": [
+		{
+			"text": "{\n\t\"version\": 1,\n\t\"flameworkVe",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Unterminated string in JSON at position 30 (line 3 column 14)).\nDo this."
+		},
+		{
+			"text": "<<<<<<< HEAD\n{\n\t\"version\": 1,\n\t\"flameworkVersion\": \"2.0.0\",\n\t\"identifiers\": {}\n}\n=======\n{\n\t\"version\": 1,\n\t\"flameworkVersion\": \"2.0.0\",\n\t\"identifiers\": {}\n}\n>>>>>>> other\n",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Unexpected token '<', \"<<<<<<< HE\"... is not valid JSON).\nDo this."
+		},
+		{
+			"text": "",
+			"error": "Flamework cannot use broken.build: it is empty.\nDo this."
+		},
+		{
+			"text": "  \n\t",
+			"error": "Flamework cannot use broken.build: it is empty.\nDo this."
+		},
+		{
+			"text": "{ \"version\": \"1\", \"identifiers\": [] }",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/ must have required property 'flameworkVersion').\nDo this."
+		},
+		{
+			"text": "[1, 2]",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/ must be object).\nDo this."
+		},
+		{
+			"text": "{ \"version\": 1, \"flameworkVersion\": \"2.0.0\", \"identifiers\": { \"a\": 1 } }",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/identifiers/a must be string).\nDo this."
+		},
+		{
+			"text": "{\n\t\"version\": 1,\n\t\"flameworkVersion\": \"2.0.0\",\n\t\"identifiers\": {}\n}",
+			"error": null
+		},
+		{
+			"text": "{",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Expected property name or '}' in JSON at position 1 (line 1 column 2)).\nDo this."
+		},
+		{
+			"text": "{}",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/ must have required property 'version').\nDo this."
+		},
+		{
+			"text": "null",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/ must be object).\nDo this."
+		},
+		{
+			"text": "1",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/ must be object).\nDo this."
+		},
+		{
+			"text": "\"x\"",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/ must be object).\nDo this."
+		},
+		{
+			"text": "{ \"version\": 1, \"flameworkVersion\": 2, \"identifiers\": {} }",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/flameworkVersion must be string).\nDo this."
+		},
+		{
+			"text": "{ \"version\": 1, \"flameworkVersion\": \"2\", \"identifiers\": {}, \"salt\": 5 }",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/salt must be string).\nDo this."
+		},
+		{
+			"text": "{ \"version\": 1, \"flameworkVersion\": \"2\", \"identifiers\": {}, \"extra\": 5, \"metadata\": { \"globs\": { \"paths\": { \"a\": [1] } } } }",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/metadata/globs/paths/a/0 must be string).\nDo this."
+		},
+		{
+			"text": "{ \"version\": 1, \"flameworkVersion\": \"2\", \"identifiers\": {}, \"metadata\": { \"globs\": { \"uses\": { \"f\": [{ \"glob\": \"g\", \"text\": \"t\", \"macro\": \"m\", \"line\": 1 }] } } } }",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/metadata/globs/uses/f/0 must have required property 'column').\nDo this."
+		},
+		{
+			"text": "{ \"version\": 1, \"flameworkVersion\": \"2\", \"identifiers\": {}, \"metadata\": { \"paths\": { \"uses\": { \"f\": [{ \"path\": \"p\", \"macro\": \"m\", \"line\": 1, \"column\": 2, \"raises\": \"yes\" }] } } } }",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/metadata/paths/uses/f/0/raises must be boolean).\nDo this."
+		},
+		{
+			"text": "{ \"version\": 1, \"flameworkVersion\": \"2\", \"identifiers\": {}, \"metadata\": [] }",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/metadata must be object).\nDo this."
+		},
+		{
+			"text": "{ \"version\": 1, \"flameworkVersion\": \"2\", \"identifiers\": {}, \"stringHashes\": { \"a\": null } }",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/stringHashes/a must be string).\nDo this."
+		},
+		{
+			"text": "{ \"version\": 1e400, \"flameworkVersion\": \"2\", \"identifiers\": {} }",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/version must be number).\nDo this."
+		},
+		{
+			"text": "{ \"version\": 1, \"flameworkVersion\": \"2\", \"identifiers\": {}, }",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Expected double-quoted property name in JSON at position 60 (line 1 column 61)).\nDo this."
+		},
+		{
+			"text": "{ \"version\": 1 \"flameworkVersion\": \"2\" }",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Expected ',' or '}' after property value in JSON at position 15 (line 1 column 16)).\nDo this."
+		},
+		{
+			"text": "{ 'version': 1 }",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Expected property name or '}' in JSON at position 2 (line 1 column 3)).\nDo this."
+		},
+		{
+			"text": "{ \"a\": tru }",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Unexpected token ' ', \"{ \"a\": tru }\" is not valid JSON).\nDo this."
+		},
+		{
+			"text": "{ \"a\": \"\u0001\" }",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Bad control character in string literal in JSON at position 8 (line 1 column 9)).\nDo this."
+		},
+		{
+			"text": "{ \"a\": \"\\x\" }",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Bad escaped character in JSON at position 9 (line 1 column 10)).\nDo this."
+		},
+		{
+			"text": "{ \"a\": \"\\u12\" }",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Bad Unicode escape in JSON at position 12 (line 1 column 13)).\nDo this."
+		},
+		{
+			"text": "{ \"a\": -x }",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (No number after minus sign in JSON at position 8 (line 1 column 9)).\nDo this."
+		},
+		{
+			"text": "{ \"a\": 1.e5 }",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Unterminated fractional number in JSON at position 9 (line 1 column 10)).\nDo this."
+		},
+		{
+			"text": "{ \"a\": 01 }",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Unexpected number in JSON at position 8 (line 1 column 9)).\nDo this."
+		},
+		{
+			"text": "{ \"a\": 1e }",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Exponent part is missing a number in JSON at position 9 (line 1 column 10)).\nDo this."
+		},
+		{
+			"text": "{ \"a\": \"unterminated",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Unterminated string in JSON at position 20 (line 1 column 21)).\nDo this."
+		},
+		{
+			"text": "[1,]",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Unexpected token ']', \"[1,]\" is not valid JSON).\nDo this."
+		},
+		{
+			"text": "{\"a\" 1}",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Expected ':' after property name in JSON at position 5 (line 1 column 6)).\nDo this."
+		},
+		{
+			"text": "{} x",
+			"error": "Flamework cannot use broken.build: it is not valid JSON (Unexpected non-whitespace character after JSON at position 3 (line 1 column 4)).\nDo this."
+		},
+		{
+			"text": "﻿{}",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/ must have required property 'version').\nDo this."
+		},
+		{
+			"text": "{ \"version\": 1, \"flameworkVersion\": \"2\", \"identifiers\": {}, \"version\": \"x\" }",
+			"error": "Flamework cannot use broken.build: it does not have the shape Flamework writes (/version must be number).\nDo this."
+		}
+	],
+	"sequences": [
+		{
+			"name": "fresh",
+			"ops": [],
+			"results": [],
+			"text": "{\n\t\"version\": 1,\n\t\"flameworkVersion\": \"2.0.0-alpha.8\",\n\t\"identifiers\": {}\n}"
+		},
+		{
+			"name": "game, full",
+			"ops": [
+				[
+					"setIdGenerationMode",
+					"full"
+				],
+				[
+					"setIdentifierPrefix",
+					null
+				],
+				[
+					"addIdentifier",
+					"g:out/a@A",
+					"out/a@A"
+				],
+				[
+					"getLatestId"
+				]
+			],
+			"results": [
+				null,
+				null,
+				null,
+				2
+			],
+			"text": "{\n\t\"version\": 1,\n\t\"flameworkVersion\": \"2.0.0-alpha.8\",\n\t\"identifiers\": {\n\t\t\"g:out/a@A\": \"out/a@A\"\n\t},\n\t\"idGenerationMode\": \"full\"\n}"
+		},
+		{
+			"name": "package",
+			"ops": [
+				[
+					"setIdGenerationMode",
+					"full"
+				],
+				[
+					"setIdentifierPrefix",
+					"@s/p"
+				],
+				[
+					"addIdentifier",
+					"@s/p:out/a@A",
+					"@s/p:a@A"
+				],
+				[
+					"addPathUse",
+					"src/x.ts",
+					{
+						"path": "src/a",
+						"macro": "registerProviders",
+						"line": 3,
+						"column": 9
+					}
+				]
+			],
+			"results": [
+				null,
+				null,
+				null,
+				null
+			],
+			"text": "{\n\t\"version\": 1,\n\t\"flameworkVersion\": \"2.0.0-alpha.8\",\n\t\"identifiers\": {\n\t\t\"@s/p:out/a@A\": \"@s/p:a@A\"\n\t},\n\t\"idGenerationMode\": \"full\",\n\t\"identifierPrefix\": \"@s/p\",\n\t\"metadata\": {\n\t\t\"paths\": {\n\t\t\t\"uses\": {\n\t\t\t\t\"src/x.ts\": [\n\t\t\t\t\t{\n\t\t\t\t\t\t\"path\": \"src/a\",\n\t\t\t\t\t\t\"macro\": \"registerProviders\",\n\t\t\t\t\t\t\"line\": 3,\n\t\t\t\t\t\t\"column\": 9\n\t\t\t\t\t}\n\t\t\t\t]\n\t\t\t}\n\t\t}\n\t}\n}"
+		},
+		{
+			"name": "globs",
+			"ops": [
+				[
+					"setIdGenerationMode",
+					"short"
+				],
+				[
+					"setIdentifierPrefix",
+					null
+				],
+				[
+					"addGlob",
+					"src/a/**",
+					"src/x.ts",
+					{
+						"glob": "src/a/**",
+						"text": "./a/**",
+						"macro": "registerProvidersGlob",
+						"line": 1,
+						"column": 2
+					}
+				],
+				[
+					"addGlob",
+					"src/b/*.ts",
+					"src/x.ts"
+				],
+				[
+					"addGlob",
+					"src/a/**",
+					"src/y.ts",
+					{
+						"glob": "src/a/**",
+						"text": "src/a/**",
+						"macro": "fromGlob",
+						"line": 10,
+						"column": 20
+					}
+				],
+				[
+					"addPathUse",
+					"src/y.ts",
+					{
+						"path": "src/c",
+						"macro": "requireModules",
+						"line": 4,
+						"column": 1,
+						"raises": true
+					}
+				],
+				[
+					"addIdentifier",
+					"g:out/a@A",
+					"a@A{x}"
+				],
+				[
+					"setMetadata",
+					"paths",
+					{
+						"uses": {}
+					}
+				],
+				[
+					"getLatestId"
+				]
+			],
+			"results": [
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				2
+			],
+			"text": "{\n\t\"version\": 1,\n\t\"flameworkVersion\": \"2.0.0-alpha.8\",\n\t\"identifiers\": {\n\t\t\"g:out/a@A\": \"a@A{x}\"\n\t},\n\t\"idGenerationMode\": \"short\",\n\t\"metadata\": {\n\t\t\"globs\": {\n\t\t\t\"paths\": {\n\t\t\t\t\"src/a/**\": [],\n\t\t\t\t\"src/b/*.ts\": []\n\t\t\t},\n\t\t\t\"origins\": {\n\t\t\t\t\"src/x.ts\": [\n\t\t\t\t\t\"src/a/**\",\n\t\t\t\t\t\"src/b/*.ts\"\n\t\t\t\t],\n\t\t\t\t\"src/y.ts\": [\n\t\t\t\t\t\"src/a/**\"\n\t\t\t\t]\n\t\t\t},\n\t\t\t\"uses\": {\n\t\t\t\t\"src/x.ts\": [\n\t\t\t\t\t{\n\t\t\t\t\t\t\"glob\": \"src/a/**\",\n\t\t\t\t\t\t\"text\": \"./a/**\",\n\t\t\t\t\t\t\"macro\": \"registerProvidersGlob\",\n\t\t\t\t\t\t\"line\": 1,\n\t\t\t\t\t\t\"column\": 2\n\t\t\t\t\t}\n\t\t\t\t],\n\t\t\t\t\"src/y.ts\": [\n\t\t\t\t\t{\n\t\t\t\t\t\t\"glob\": \"src/a/**\",\n\t\t\t\t\t\t\"text\": \"src/a/**\",\n\t\t\t\t\t\t\"macro\": \"fromGlob\",\n\t\t\t\t\t\t\"line\": 10,\n\t\t\t\t\t\t\"column\": 20\n\t\t\t\t\t}\n\t\t\t\t]\n\t\t\t}\n\t\t},\n\t\t\"paths\": {\n\t\t\t\"uses\": {}\n\t\t}\n\t}\n}"
+		},
+		{
+			"name": "mode change drops",
+			"ops": [
+				[
+					"setIdGenerationMode",
+					"full"
+				],
+				[
+					"addIdentifier",
+					"a",
+					"b"
+				],
+				[
+					"setIdGenerationMode",
+					"tiny"
+				],
+				[
+					"getIdentifierFromInternal",
+					"a"
+				],
+				[
+					"getLatestId"
+				]
+			],
+			"results": [
+				null,
+				null,
+				"full",
+				null,
+				1
+			],
+			"text": "{\n\t\"version\": 1,\n\t\"flameworkVersion\": \"2.0.0-alpha.8\",\n\t\"identifiers\": {},\n\t\"idGenerationMode\": \"tiny\"\n}"
+		},
+		{
+			"name": "unicode and escapes",
+			"ops": [
+				[
+					"setIdentifierPrefix",
+					"ü\"\\\n\u0001 😀"
+				],
+				[
+					"addIdentifier",
+					"k\t",
+					"v\u001f"
+				]
+			],
+			"results": [
+				null,
+				null
+			],
+			"text": "{\n\t\"version\": 1,\n\t\"flameworkVersion\": \"2.0.0-alpha.8\",\n\t\"identifiers\": {\n\t\t\"k\\t\": \"v\\u001f\"\n\t},\n\t\"identifierPrefix\": \"ü\\\"\\\\\\n\\u0001 😀\"\n}"
+		},
+		{
+			"name": "integer-like keys",
+			"ops": [
+				[
+					"addIdentifier",
+					"b",
+					"1"
+				],
+				[
+					"addIdentifier",
+					"10",
+					"2"
+				],
+				[
+					"addIdentifier",
+					"2",
+					"3"
+				],
+				[
+					"addIdentifier",
+					"01",
+					"4"
+				],
+				[
+					"addIdentifier",
+					"4294967295",
+					"5"
+				],
+				[
+					"addIdentifier",
+					"4294967294",
+					"6"
+				]
+			],
+			"results": [
+				null,
+				null,
+				null,
+				null,
+				null,
+				null
+			],
+			"text": "{\n\t\"version\": 1,\n\t\"flameworkVersion\": \"2.0.0-alpha.8\",\n\t\"identifiers\": {\n\t\t\"2\": \"3\",\n\t\t\"10\": \"2\",\n\t\t\"4294967294\": \"6\",\n\t\t\"b\": \"1\",\n\t\t\"01\": \"4\",\n\t\t\"4294967295\": \"5\"\n\t}\n}"
+		},
+		{
+			"name": "invalidate",
+			"ops": [
+				[
+					"addGlob",
+					"g1",
+					"f1"
+				],
+				[
+					"addGlob",
+					"g2",
+					"f1"
+				],
+				[
+					"addGlob",
+					"g2",
+					"f2"
+				],
+				[
+					"addGlob",
+					"g3",
+					"f3",
+					{
+						"glob": "g3",
+						"text": "g3",
+						"macro": "m",
+						"line": 1,
+						"column": 1
+					}
+				],
+				[
+					"invalidateGlobs",
+					"f1"
+				],
+				[
+					"invalidateGlobs",
+					"f3"
+				],
+				[
+					"addPathUse",
+					"f1",
+					{
+						"path": "p",
+						"macro": "m",
+						"line": 1,
+						"column": 1
+					}
+				],
+				[
+					"invalidatePathUses",
+					"f1"
+				]
+			],
+			"results": [
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				null
+			],
+			"text": "{\n\t\"version\": 1,\n\t\"flameworkVersion\": \"2.0.0-alpha.8\",\n\t\"identifiers\": {},\n\t\"metadata\": {\n\t\t\"globs\": {\n\t\t\t\"paths\": {\n\t\t\t\t\"g2\": []\n\t\t\t},\n\t\t\t\"origins\": {\n\t\t\t\t\"f2\": [\n\t\t\t\t\t\"g2\"\n\t\t\t\t]\n\t\t\t},\n\t\t\t\"uses\": {}\n\t\t},\n\t\t\"paths\": {\n\t\t\t\"uses\": {}\n\t\t}\n\t}\n}"
+		}
+	],
+	"real": [
+		{
+			"name": "packages_core.build",
+			"rewrites": true
+		},
+		{
+			"name": "packages_components.build",
+			"rewrites": true
+		},
+		{
+			"name": "packages_networking.build",
+			"rewrites": true
+		},
+		{
+			"name": "packages_testing.build",
+			"rewrites": true
+		},
+		{
+			"name": "packages_specs.build",
+			"rewrites": true
+		},
+		{
+			"name": "packages_specs_variants_types.build",
+			"rewrites": true
+		},
+		{
+			"name": "packages_transformer_tests_fixture.build",
+			"rewrites": true
+		},
+		{
+			"name": "tests_place.build",
+			"rewrites": true
+		}
+	],
+	"mixed": [
+		{
+			"packages": [],
+			"error": null
+		},
+		{
+			"packages": [
+				{
+					"name": "@flamework-experimental/core",
+					"version": "2.0.0-alpha.7",
+					"file": "node_modules/@flamework-experimental/core/flamework.build"
+				}
+			],
+			"error": "Flamework's packages are not all the same version: @flamework-experimental/transformer is 2.0.0-alpha.8, and this package was built by another version.\n  @flamework-experimental/core 2.0.0-alpha.7 (node_modules/@flamework-experimental/core/flamework.build)\nInstall the same version of every @flamework-experimental package: update it to 2.0.0-alpha.8, or install @flamework-experimental/transformer@2.0.0-alpha.7 instead, then build again."
+		},
+		{
+			"packages": [
+				{
+					"name": "@flamework-experimental/core",
+					"version": "2.0.0-alpha.7",
+					"file": "a/flamework.build"
+				},
+				{
+					"name": "@flamework-experimental/networking",
+					"version": "2.0.0-alpha.7",
+					"file": "b/flamework.build"
+				}
+			],
+			"error": "Flamework's packages are not all the same version: @flamework-experimental/transformer is 2.0.0-alpha.8, and these packages were built by another version.\n  @flamework-experimental/core 2.0.0-alpha.7 (a/flamework.build)\n  @flamework-experimental/networking 2.0.0-alpha.7 (b/flamework.build)\nInstall the same version of every @flamework-experimental package: update them to 2.0.0-alpha.8, or install @flamework-experimental/transformer@2.0.0-alpha.7 instead, then build again."
+		},
+		{
+			"packages": [
+				{
+					"name": "@flamework-experimental/core",
+					"version": "2.0.0-alpha.6",
+					"file": "a/flamework.build"
+				},
+				{
+					"name": "@flamework-experimental/components",
+					"version": "2.0.0-alpha.7",
+					"file": "c/flamework.build"
+				}
+			],
+			"error": "Flamework's packages are not all the same version: @flamework-experimental/transformer is 2.0.0-alpha.8, and these packages were built by another version.\n  @flamework-experimental/core 2.0.0-alpha.6 (a/flamework.build)\n  @flamework-experimental/components 2.0.0-alpha.7 (c/flamework.build)\nInstall the same version of every @flamework-experimental package: update them to 2.0.0-alpha.8, or install @flamework-experimental/transformer@<their version> instead, then build again."
+		}
+	]
+}

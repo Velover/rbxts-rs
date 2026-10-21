@@ -1,0 +1,278 @@
+{
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"$id": "flamework.config.schema.json",
+	"title": "Flamework project configuration",
+	"description": "One file for every Flamework package, read from flamework.config.json next to (or above) your tsconfig.json. The transformer section is read at build time and is the only place transformer options go: the tsconfig entry takes none. The serialization section is read at build time too. The flameworkTest section is read by the flamework-test CLI only. Each of the other sections holds one package's options, read whenever that package needs them: they are compiled into include/flamework/config.json for the runtime packages, and the transformer also reads an option that shapes the code it emits (networking.serialization). Every option says its default; leave an option out to keep the default. Any string may reference the environment as ${NAME} or ${NAME:-fallback} ($$ for a literal dollar), read from .env and .env.local next to this file with the process environment on top; a string where a boolean, number or list is expected is converted.",
+	"type": "object",
+	"additionalProperties": false,
+	"properties": {
+		"$schema": {
+			"type": "string",
+			"description": "Editor support: the path of this schema, relative to this file and starting with a dot, such as ./node_modules/@flamework-experimental/transformer/flamework.config.schema.json. A game's build adds the line when the file has none, and never changes one that is there."
+		},
+		"transformer": {
+			"type": "object",
+			"additionalProperties": false,
+			"description": "Options for @flamework-experimental/transformer, read at build time. The tsconfig entry takes none of them.",
+			"properties": {
+				"plugins": {
+					"type": "array",
+					"description": "Transformer plugins to load. Each entry is a module specifier or a path relative to the package root, optionally with options passed to the plugin as `api.options`. Default: none.",
+					"default": [],
+					"items": {
+						"oneOf": [
+							{ "type": "string" },
+							{
+								"type": "object",
+								"additionalProperties": false,
+								"required": ["path"],
+								"properties": {
+									"path": { "type": "string" },
+									"options": { "type": "object" }
+								}
+							}
+						]
+					}
+				},
+				"noSemanticDiagnostics": {
+					"type": "boolean",
+					"description": "Skips TypeScript's semantic diagnostics. Faster, but type errors no longer stop the build and diagnostic spans may be wrong. Default: false.",
+					"default": false
+				},
+				"salt": {
+					"type": "string",
+					"description": "Salt for generated hashes. Default: a random 64-byte salt, stored in flamework.build. Leave it unset under obfuscation, so that each build gets fresh ids."
+				},
+				"hashPrefix": {
+					"type": "string",
+					"description": "Prefix for generated ids. It cannot start with $, which Flamework's own packages use. Default: the package name in a package, and no prefix in a game, which needs none: every package id starts with its package's prefix and a colon, which none of a game's own ids starts with, so the two cannot collide. A game may still set one, to mark its ids; the ids then change, so change it with a plain build."
+				},
+				"obfuscation": {
+					"type": "boolean",
+					"description": "Obfuscates identifiers: randomises remote names, shuffles metadata and replaces the game's own ids with short hashes. Ids declared in packages keep their published names. Game projects only. Default: false.",
+					"default": false
+				},
+				"idGenerationMode": {
+					"type": "string",
+					"enum": ["full", "short", "tiny", "obfuscated"],
+					"description": "How identifiers are generated. Default: \"obfuscated\" when obfuscation is on, else \"full\". Only shorten in a game; a published package must stay on \"full\" so its ids do not collide with its consumers'."
+				},
+				"optimizations": {
+					"type": "object",
+					"additionalProperties": false,
+					"description": "Output optimisations, outside the 2.x stability promise (docs/stability.md): any of them may change or go in a minor release. Default: none.",
+					"default": {},
+					"properties": {
+						"guardGenerationDedupLimit": {
+							"type": "integer",
+							"minimum": 1,
+							"description": "Object and union types that occur at least this many times inside one generated guard are emitted once as a local and referenced. Default: unset, which turns this off."
+						}
+					}
+				}
+			}
+		},
+		"serialization": {
+			"type": "object",
+			"additionalProperties": false,
+			"description": "Options for the encoding code generated from types: Flamework.createSerializer's serialize, and every networking call site and callback result that packs into a buffer. Read at build time only, since that code is compiled in; changing it needs a plain build (a running watcher keeps the values it started with).",
+			"properties": {
+				"checks": {
+					"type": "object",
+					"additionalProperties": false,
+					"description": "Checks on a value as it is written, for the widths that can refuse one: u8, i8, u16, i16, u32 and i32 take whole numbers in their range, u64 and i64 whole numbers from 0 or -2^53 to 2^53 (the ones a number holds exactly), varint a whole number from 0 to 2^35 - 1, f32 any number but a finite one past its range, string8 and string16 at most 255 and 65535 bytes, buffer16 at most 65535 bytes. f64, string32 and buffer32 hold every value. Reading needs no check: a decoded value always fits its width. With types, every value's type is tested as well. Default: checks on values typed with Serialization.Implicit.*, raising, in both realms, and no type tests.",
+					"properties": {
+						"category": {
+							"type": "string",
+							"enum": ["implicit", "all", "none"],
+							"description": "Which values are checked. \"implicit\": only those typed with an implicit width (Serialization.Implicit.*, or any type with an optional brand). \"all\": strict widths (Serialization.u16 and the other casts) as well. \"none\": nothing, so an implicit value is written as a strict one is: a number that does not fit wraps (70000 as a u16 arrives as 4464), and a string or buffer longer than its length prefix still raises. Default: \"implicit\".",
+							"default": "implicit"
+						},
+						"mode": {
+							"type": "string",
+							"enum": ["assert", "warn"],
+							"description": "What a value that does not fit does. \"assert\": raises where it is written, naming the width, the value (a string's or buffer's length) and where in the type it is, so nothing is sent. \"warn\": warns with the same message and writes the value as it is, so a number wraps; a string or buffer longer than its length prefix cannot be written and still raises. Default: \"assert\".",
+							"default": "assert"
+						},
+						"side": {
+							"type": "string",
+							"enum": ["both", "server", "client"],
+							"description": "The realm whose writes are checked: \"server\", \"client\", or \"both\". Code shared by both realms is checked only where it runs in the realm named; elsewhere a value is written unchecked, as with \"none\". Default: \"both\".",
+							"default": "both"
+						},
+						"types": {
+							"type": "boolean",
+							"description": "Tests every value written to be of its declared type first, whatever category says: a number, a string, a boolean, a buffer, a table for an object, array, set, map or tuple, a Vector3 or another datatype, a member of a literal union or an enum, an Instance, and a member of a union. A value that is not raises naming what was expected, what came and where (\"[Flamework] number expected, got string, at 'move' [0].pos.x\") rather than a buffer error with no field name. A value of the wrong type cannot be written, so mode \"warn\" raises too, except for a boolean, which is warned about and written as whether it is truthy. side applies as for the widths. Costs a type test per value written. Default: false.",
+							"default": false
+						}
+					}
+				}
+			}
+		},
+		"core": {
+			"type": "object",
+			"additionalProperties": false,
+			"description": "Options for @flamework-experimental/core.",
+			"properties": {
+				"profiling": {
+					"type": "boolean",
+					"description": "Wraps every lifecycle event in debug.profilebegin so providers show up in the MicroProfiler. createLifecyclePlugin({ profiling }) overrides it per module. Default: true in Studio, false elsewhere."
+				}
+			}
+		},
+		"networking": {
+			"type": "object",
+			"additionalProperties": false,
+			"description": "Options for @flamework-experimental/networking.",
+			"properties": {
+				"serialization": {
+					"type": "boolean",
+					"description": "Serialises every event and function payload into a buffer, with encode and decode code generated from the event's parameter types at each createServer/createClient call site. Values that cannot live in a buffer (Instances, unknown) travel alongside it. Networking.Serialized* members are packed whatever this says, and Networking.Raw* members never are. Read at build time, since the encoding is compiled in (changing it needs a plain build); the copy in include/flamework/config.json is informational. Default: false.",
+					"default": false
+				}
+			}
+		},
+		"components": {
+			"type": "object",
+			"additionalProperties": false,
+			"description": "Options for @flamework-experimental/components.",
+			"properties": {
+				"warningTimeout": {
+					"type": "number",
+					"minimum": 0,
+					"description": "Seconds before a component that never qualifies produces a warning; 0 disables it. Components that set their own warningTimeout keep it. Default: 5.",
+					"default": 5
+				},
+				"attributeWarningTimeout": {
+					"type": "number",
+					"minimum": 0,
+					"description": "Seconds before an instance-valued attribute that has not streamed in produces a warning; 0 disables it. Used by components that set neither attributeWarningTimeout nor warningTimeout. Default: warningTimeout (this section's, else 5)."
+				},
+				"streamingMode": {
+					"type": "string",
+					"enum": ["Disabled", "Watching", "Contextual"],
+					"description": "Default ComponentStreamingMode for components that do not set one. Default: \"Contextual\".",
+					"default": "Contextual"
+				},
+				"watchRenames": {
+					"type": "boolean",
+					"description": "Default watchRenames for components that do not set one: whether the instance tree and the child links follow the children's names as well as children arriving and leaving, so that a rename is noticed when it happens. A rename is rare, and following names costs connections on the children. Only matters while the tree is watched, so never under streamingMode Disabled. Default: false.",
+					"default": false
+				}
+			}
+		},
+		"scopes": {
+			"type": "object",
+			"additionalProperties": false,
+			"description": "Build scopes: which scoped modules, registrations, providers and components are active in this build. Usually driven by the environment, as \"active\": \"${FLAMEWORK_SCOPES:-}\".",
+			"properties": {
+				"active": {
+					"type": "array",
+					"items": { "type": "string" },
+					"description": "The active scopes. A string from the environment is split on commas; \"*\" activates every scope and an empty list activates none. Default: [], no scope.",
+					"default": []
+				}
+			}
+		},
+		"testing": {
+			"type": "object",
+			"additionalProperties": false,
+			"description": "Options for @flamework-experimental/testing. Tests are on when the \"testing\" scope is active (scopes.active, usually FLAMEWORK_SCOPES in .env), so a release build carries none; \"activeIn\" renames that scope and \"enabled\" overrides it.",
+			"properties": {
+				"enabled": {
+					"type": "boolean",
+					"description": "Whether the plugin attaches the host at all: Workspace.FlameworkTests (a BindableFunction) and Workspace.FlameworkTestsServer (a RemoteFunction). This is an override for either direction. Default: unset, so it follows activeIn and inactiveIn."
+				},
+				"activeIn": {
+					"type": "array",
+					"items": { "type": "string" },
+					"description": "Scopes under which tests are on: the host attaches when at least one is active, the way activeIn works everywhere else (an empty list is no constraint). A string from the environment is split on commas. Default: [\"testing\"].",
+					"default": ["testing"]
+				},
+				"inactiveIn": {
+					"type": "array",
+					"items": { "type": "string" },
+					"description": "Scopes under which tests stay off, whatever else is active. A string from the environment is split on commas. Default: [], none.",
+					"default": []
+				},
+				"autoRun": {
+					"type": "boolean",
+					"description": "Runs every test right after the module ignites, printing the results. Otherwise tests only run when the bindable or remote is invoked. Default: false.",
+					"default": false
+				},
+				"timeout": {
+					"type": "number",
+					"minimum": 0,
+					"description": "Seconds a single test may take before it is cancelled and counted as failed. A whole run's limit is flamework-test's --run-timeout, not this. Default: 30.",
+					"default": 30
+				},
+				"concurrency": {
+					"type": "integer",
+					"minimum": 1,
+					"description": "The most concurrent tests that run at once: tests registered with test.concurrent, or in a section defined with { concurrent: true }, run alongside the concurrent tests next to them, up to this many; a plain test always runs alone. 1 runs every test alone, one after another. A run's concurrency option overrides it (RunOptions.concurrency, flamework-test --concurrency). Compiled into the place. Default: 4.",
+					"default": 4
+				},
+				"entry": {
+					"type": "string",
+					"description": "Cloud runs only. The source path of a ModuleScript exporting `ignite()`, for example \"src/server/main\": an Open Cloud Luau execution task runs none of the place's Scripts, so the runner requires this module and ignites the game itself before invoking the bindable. Studio runs need none, the place runs itself. Compiled into the artifact as a tree path. Default: none, and a cloud run refuses to start without it."
+				}
+			}
+		},
+		"flameworkTest": {
+			"type": "object",
+			"additionalProperties": false,
+			"description": "Settings of the flamework-test CLI (@flamework-experimental/testing): how it runs the tests in Roblox Studio on this machine, and the testing place it publishes to and runs in for a cloud run. Read by that CLI only; never compiled into the place. Each key has a flag of the same name (lockHold, --lock-hold) and an environment variable FLAMEWORK_TEST_ and the name in capitals (FLAMEWORK_TEST_LOCK_HOLD); the flag comes first, then the variable, then this key. The API key's variable is ROBLOX_API_KEY. Keep the key in the environment: \"apiKey\": \"${ROBLOX_API_KEY:-}\".",
+			"properties": {
+				"failOnSkip": {
+					"type": "boolean",
+					"default": false,
+					"description": "A skipped test fails the run, for CI that must run everything. --fail-on-skip and FLAMEWORK_TEST_FAIL_ON_SKIP come first. Default: false."
+				},
+				"keepAwake": {
+					"type": "boolean",
+					"default": false,
+					"description": "A Studio run (test, studio run) asks Windows to keep the display on while it lasts; RenderStepped stops while the display sleeps, which fails onRender tests in unattended runs. --keep-awake and FLAMEWORK_TEST_KEEP_AWAKE come first. Not for cloud runs. Default: false."
+				},
+				"lockTimeout": {
+					"type": "number",
+					"minimum": 0,
+					"default": 300,
+					"description": "Seconds a command that opens a Studio window (test, studio open) waits for the Studio lock while another project's flamework-test run or window holds it; 0 does not wait. One flamework-test command uses Studio at a time on the machine. --lock-timeout and FLAMEWORK_TEST_LOCK_TIMEOUT come first. Default: 300."
+				},
+				"lockHold": {
+					"type": "number",
+					"minimum": 1,
+					"default": 15,
+					"description": "Minutes a Studio window flamework-test opened may sit unused before another project's command may close it and take the Studio lock; one at least. Every flamework-test command that uses the window renews it. --lock-hold (studio open, test --keep) and FLAMEWORK_TEST_LOCK_HOLD come first. Default: 15."
+				},
+				"parallel": {
+					"type": "integer",
+					"minimum": 1,
+					"default": 1,
+					"description": "How many projects' Studio windows a test of several Rojo projects (--project, FLAMEWORK_TEST_PROJECT) runs side by side, each project's lines still printed together in project order; 1 runs them one after another. At most 4 at once, and no more than there are projects: each window takes about 3 GB with its play session. Not for cloud runs. --parallel and FLAMEWORK_TEST_PARALLEL come first. Default: 1."
+				},
+				"showWindows": {
+					"type": "boolean",
+					"default": false,
+					"description": "A Studio test opens its windows on the user's desktop, where they can be seen, instead of on a hidden desktop of their own, where a run never shows a window or takes the focus (Windows; elsewhere nothing is hidden). studio open always shows its window. --show-windows and FLAMEWORK_TEST_SHOW_WINDOWS come first. Not for cloud runs. Default: false."
+				},
+				"universeId": {
+					"type": "string",
+					"description": "The testing experience's universe id, from the Creator Dashboard URL (game.GameId in Studio). Never the original game's. --universe-id and FLAMEWORK_TEST_UNIVERSE_ID come first. Default: none."
+				},
+				"placeId": {
+					"type": "string",
+					"description": "The testing place: the place a cloud run publishes to and runs in, and studio open opens. Never the original place. --place-id and FLAMEWORK_TEST_PLACE_ID come first. Default: none."
+				},
+				"apiKey": {
+					"type": "string",
+					"description": "An Open Cloud API key with universe-places:write and universe.place.luau-execution-session:read and :write for the testing experience. Reference the environment, \"${ROBLOX_API_KEY:-}\", so the key is never in the file. --api-key and ROBLOX_API_KEY come first. Default: none."
+				},
+				"originalPlace": {
+					"type": "string",
+					"description": "A copy of the original place (File > Save to File in Studio), relative to this file. When set, the CLI lays the Rojo build over a copy of it before a run or a publish, following the project file, so the tests see assets that exist only in the original. Needs lune. --original-place and FLAMEWORK_TEST_ORIGINAL_PLACE come first. Default: none."
+				}
+			}
+		}
+	}
+}

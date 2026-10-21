@@ -1,0 +1,17 @@
+{
+	"version": 1,
+	"flameworkVersion": "2.0.0-alpha.8",
+	"identifiers": {
+		"@flamework-experimental/core:out/module/module@Module": "$:module/module@Module",
+		"@flamework-experimental/core:out/lifecycle/lifecyclePlugin@LifecycleProvider": "$:lifecycle/lifecyclePlugin@LifecycleProvider",
+		"@flamework-experimental/core:out/lifecycle/lifecyclePlugin@LifecyclePluginOptions": "$:lifecycle/lifecyclePlugin@LifecyclePluginOptions",
+		"@flamework-experimental/core:out/lifecycle/lifecycleInterfaces@OnTick": "$:lifecycle/lifecycleInterfaces@OnTick",
+		"@flamework-experimental/core:out/lifecycle/lifecycleInterfaces@OnRender": "$:lifecycle/lifecycleInterfaces@OnRender",
+		"@flamework-experimental/core:out/lifecycle/lifecycleInterfaces@OnPhysics": "$:lifecycle/lifecycleInterfaces@OnPhysics",
+		"@flamework-experimental/core:out/lifecycle/lifecycleInterfaces@OnInit": "$:lifecycle/lifecycleInterfaces@OnInit",
+		"@flamework-experimental/core:out/lifecycle/lifecycleInterfaces@OnStart": "$:lifecycle/lifecycleInterfaces@OnStart",
+		"@flamework-experimental/core:out/lifecycle/lifecycleInterfaces@OnExtinguished": "$:lifecycle/lifecycleInterfaces@OnExtinguished"
+	},
+	"idGenerationMode": "full",
+	"identifierPrefix": "$"
+}

@@ -1,0 +1,13 @@
+[package]
+name = "flamework_rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Flamework's transformer as a compiled-in rbxts-rs plugin. F0: the parts that need no compiler."
+
+# F0 depends on nothing in tsrs and on no other rbxts crate. Every byte-exact library it needs (hashids, uuid v5,
+# sha1/sha256, JSON with JavaScript's property order, minimatch-style globs) is ported in `src/`, with parity
+# tables generated from the node libraries in `tests/data`.
+[dependencies]
+dragonbox_ecma.workspace = true

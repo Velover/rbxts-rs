@@ -1,0 +1,228 @@
+{
+	"inserts": [
+		{
+			"text": "{\n\t\"core\": { \"profiling\": true }\n}\n",
+			"result": "{\n\t\"$schema\": \"./s.json\",\n\t\"core\": { \"profiling\": true }\n}\n"
+		},
+		{
+			"text": "{\r\n  \"core\": {},\r\n  \"networking\": {}\r\n}\r\n",
+			"result": "{\r\n  \"$schema\": \"./s.json\",\r\n  \"core\": {},\r\n  \"networking\": {}\r\n}\r\n"
+		},
+		{
+			"text": "{\n\t// the transformer\n\t\"transformer\": { \"obfuscation\": true, },\n}",
+			"result": "{\n\t\"$schema\": \"./s.json\",\n\t// the transformer\n\t\"transformer\": { \"obfuscation\": true, },\n}"
+		},
+		{
+			"text": "{ // settings\n\t\"core\": {}\n}",
+			"result": "{ // settings\n\t\"$schema\": \"./s.json\",\n\t\"core\": {}\n}"
+		},
+		{
+			"text": "{\n\n    \"core\": {}\n}",
+			"result": "{\n\n    \"$schema\": \"./s.json\",\n    \"core\": {}\n}"
+		},
+		{
+			"text": "﻿{\n\t\"core\": {}\n}",
+			"result": "﻿{\n\t\"$schema\": \"./s.json\",\n\t\"core\": {}\n}"
+		},
+		{
+			"text": "{ \"core\": {} }",
+			"result": "{ \"$schema\": \"./s.json\", \"core\": {} }"
+		},
+		{
+			"text": "{}",
+			"result": "{ \"$schema\": \"./s.json\" }"
+		},
+		{
+			"text": "{ }\n",
+			"result": "{ \"$schema\": \"./s.json\" }\n"
+		},
+		{
+			"text": "{\r\n}\r\n",
+			"result": "{\r\n\t\"$schema\": \"./s.json\"\r\n}\r\n"
+		},
+		{
+			"text": "{ \"$schema\": \"https://example.com/other.json\" }",
+			"result": null
+		},
+		{
+			"text": "{\n\t\"core\": {},\n\t\"$schema\": \"../x.json\"\n}",
+			"result": null
+		},
+		{
+			"text": "{ \"core\": ",
+			"result": null
+		},
+		{
+			"text": "[]",
+			"result": null
+		},
+		{
+			"text": "{ /* never\nclosed \"core\": {} }",
+			"result": null
+		},
+		{
+			"text": "  {\n\t\t\"core\": {}\n}",
+			"result": "  {\n\t\t\"$schema\": \"./s.json\",\n\t\t\"core\": {}\n}"
+		},
+		{
+			"text": "{\n  \n\t\n  \"a\": 1\n}",
+			"result": "{\n  \n\t\n  \"$schema\": \"./s.json\",\n  \"a\": 1\n}"
+		},
+		{
+			"text": "{\n}",
+			"result": "{\n\t\"$schema\": \"./s.json\"\n}"
+		},
+		{
+			"text": "{\n\n}",
+			"result": "{\n\n\t\"$schema\": \"./s.json\"\n}"
+		},
+		{
+			"text": "// lead\n{ \"a\": 1 }",
+			"result": "// lead\n{ \"$schema\": \"./s.json\", \"a\": 1 }"
+		},
+		{
+			"text": "{\"a\":1}",
+			"result": "{ \"$schema\": \"./s.json\",\"a\":1}"
+		},
+		{
+			"text": "{\t\"a\": 1,\n\t\"b\": 2 }",
+			"result": "{ \"$schema\": \"./s.json\",\t\"a\": 1,\n\t\"b\": 2 }"
+		},
+		{
+			"text": "{ 'a': 1 }",
+			"result": "{ \"$schema\": \"./s.json\", 'a': 1 }"
+		},
+		{
+			"text": "{ \"a\": 1 } // tail",
+			"result": "{ \"$schema\": \"./s.json\", \"a\": 1 } // tail"
+		},
+		{
+			"text": "\"\"",
+			"result": null
+		},
+		{
+			"text": "",
+			"result": null
+		}
+	],
+	"refs": [
+		{
+			"config": "C:\\p\\flamework.config.json",
+			"schema": "C:\\p\\node_modules\\@flamework-experimental\\transformer\\flamework.config.schema.json",
+			"result": "./node_modules/@flamework-experimental/transformer/flamework.config.schema.json"
+		},
+		{
+			"config": "C:\\p\\places\\a\\config\\fw.json",
+			"schema": "C:\\p\\node_modules\\@flamework-experimental\\transformer\\flamework.config.schema.json",
+			"result": "../../../node_modules/@flamework-experimental/transformer/flamework.config.schema.json"
+		},
+		{
+			"config": "C:\\p\\flamework.config.json",
+			"schema": "D:\\x\\flamework.config.schema.json",
+			"result": "file:///D:/x/flamework.config.schema.json"
+		},
+		{
+			"config": "C:\\p\\flamework.config.json",
+			"schema": "c:\\P\\s.json",
+			"result": "./s.json"
+		},
+		{
+			"config": "C:\\p\\flamework.config.json",
+			"schema": "C:\\p\\s.json",
+			"result": "./s.json"
+		},
+		{
+			"config": "C:\\p\\a\\flamework.config.json",
+			"schema": "C:\\p\\a b\\ü s.json",
+			"result": "../a b/ü s.json"
+		},
+		{
+			"config": "C:\\p\\flamework.config.json",
+			"schema": "C:\\p\\..x\\s.json",
+			"result": "./..x/s.json"
+		},
+		{
+			"config": "C:\\p\\flamework.config.json",
+			"schema": "D:\\x y\\ü#?%.json",
+			"result": "file:///D:/x%20y/%C3%BC%23%3F%25.json"
+		}
+	],
+	"moved": [
+		{
+			"config": "{}",
+			"lines": []
+		},
+		{
+			"config": "{\"testing\":{\"timeout\":1,\"parallel\":2,\"failOnSkip\":1}}",
+			"lines": [
+				"move 'testing.failOnSkip' to 'flameworkTest.failOnSkip'",
+				"move 'testing.parallel' to 'flameworkTest.parallel'"
+			]
+		},
+		{
+			"config": "{\"cloud\":{\"testingPlaceId\":\"1\",\"other\":1}}",
+			"lines": [
+				"move 'cloud.testingPlaceId' to 'flameworkTest.placeId'",
+				"remove 'cloud': its keys are in 'flameworkTest' now"
+			]
+		},
+		{
+			"config": "{\"cloud\":null}",
+			"lines": [
+				"remove 'cloud': its keys are in 'flameworkTest' now"
+			]
+		},
+		{
+			"config": "{\"cloud\":[]}",
+			"lines": [
+				"remove 'cloud': its keys are in 'flameworkTest' now"
+			]
+		},
+		{
+			"config": "{\"cloud\":\"x\",\"testing\":[]}",
+			"lines": [
+				"remove 'cloud': its keys are in 'flameworkTest' now"
+			]
+		},
+		{
+			"config": "{\"testing\":{\"showWindows\":1,\"keepAwake\":1,\"lockTimeout\":1,\"lockHold\":1,\"parallel\":1}}",
+			"lines": [
+				"move 'testing.keepAwake' to 'flameworkTest.keepAwake'",
+				"move 'testing.lockTimeout' to 'flameworkTest.lockTimeout'",
+				"move 'testing.lockHold' to 'flameworkTest.lockHold'",
+				"move 'testing.parallel' to 'flameworkTest.parallel'",
+				"move 'testing.showWindows' to 'flameworkTest.showWindows'"
+			]
+		},
+		{
+			"config": "[]",
+			"lines": []
+		},
+		{
+			"config": "null",
+			"lines": []
+		}
+	],
+	"runtime": [
+		{
+			"project": "{\"transformer\":{\"hashPrefix\":\"$x\"},\"serialization\":{\"checks\":{\"category\":\"all\"}},\"core\":{\"profiling\":false},\"networking\":{\"serialization\":true},\"scopes\":{\"active\":[\"a\"]}}",
+			"runtime": "{\"core\":{\"profiling\":false},\"networking\":{\"serialization\":true},\"scopes\":{\"active\":[\"a\"]}}"
+		},
+		{
+			"project": "{\"transformer\":{\"obfuscation\":true}}",
+			"runtime": "null"
+		},
+		{
+			"project": "{\"testing\":{\"timeout\":5,\"concurrency\":2},\"flameworkTest\":{\"keepAwake\":true}}",
+			"runtime": "{\"testing\":{\"timeout\":5,\"concurrency\":2}}"
+		},
+		{
+			"project": "{\"scopes\":{\"active\":[]},\"components\":{\"warningTimeout\":2},\"core\":{}}",
+			"runtime": "{\"core\":{},\"components\":{\"warningTimeout\":2},\"scopes\":{\"active\":[]}}"
+		},
+		{
+			"project": "{}",
+			"runtime": "null"
+		}
+	]
+}

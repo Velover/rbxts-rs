@@ -1,0 +1,168 @@
+{
+	"version": 1,
+	"flameworkVersion": "2.0.0-alpha.8",
+	"identifiers": {
+		"transformer-fixture:out/components@HandlerComponent": "fw:components@HandlerComponent",
+		"transformer-fixture:out/components@RigComponent": "fw:components@RigComponent",
+		"transformer-fixture:out/components@LinkedComponent": "fw:components@LinkedComponent",
+		"transformer-fixture:out/components@CounterComponent": "fw:components@CounterComponent",
+		"transformer-fixture:out/components@DeepComponent": "fw:components@DeepComponent",
+		"transformer-fixture:out/components@EitherComponent": "fw:components@EitherComponent",
+		"transformer-fixture:out/components@CustomGuardComponent": "fw:components@CustomGuardComponent",
+		"transformer-fixture:out/components@RigOwnerComponent": "fw:components@RigOwnerComponent",
+		"transformer-fixture:out/recursiveGuards@RecursiveLink": "fw:recursiveGuards@RecursiveLink",
+		"transformer-fixture:out/discovery@FixtureHiddenProvider": "fw:discovery@FixtureHiddenProvider",
+		"transformer-fixture:out/discovery@FixtureExportedProvider": "fw:discovery@FixtureExportedProvider",
+		"transformer-fixture:out/discovery@FixtureSpace.FixtureNamespacedProvider": "fw:discovery@FixtureSpace.FixtureNamespacedProvider",
+		"transformer-fixture:out/discovery@fixtureFactory.FixtureLocalProvider": "fw:discovery@fixtureFactory.FixtureLocalProvider",
+		"transformer-fixture:out/inherited@Dep": "fw:inherited@Dep",
+		"transformer-fixture:out/inherited@GenericBase": "fw:inherited@GenericBase",
+		"transformer-fixture:out/inherited@Derived": "fw:inherited@Derived",
+		"transformer-fixture:out/nested@Target": "fw:nested@Target",
+		"transformer-fixture:out/nestedMacros@Economy": "fw:nestedMacros@Economy",
+		"transformer-fixture:out/requireModules@RequiresOnStart": "fw:requireModules@RequiresOnStart",
+		"transformer-fixture:out/glob/target@GlobTarget": "fw:glob/target@GlobTarget"
+	},
+	"idGenerationMode": "full",
+	"identifierPrefix": "fw",
+	"metadata": {
+		"paths": {
+			"uses": {
+				"src/pathWarnings.ts": [
+					{
+						"path": "src/glob",
+						"macro": "registerProviders",
+						"line": 11,
+						"column": 3
+					},
+					{
+						"path": "src/typesOnly",
+						"macro": "registerProviders",
+						"line": 10,
+						"column": 3
+					},
+					{
+						"path": "src/Glob",
+						"macro": "registerProviders",
+						"line": 9,
+						"column": 3
+					},
+					{
+						"path": "src/missing",
+						"macro": "registerProviders",
+						"line": 8,
+						"column": 3
+					},
+					{
+						"path": "src/missing/components",
+						"macro": "ComponentPlugin.fromPath",
+						"line": 12,
+						"column": 33
+					},
+					{
+						"path": "src/glob/Target",
+						"macro": "requireModules",
+						"line": 16,
+						"column": 9,
+						"raises": true
+					},
+					{
+						"path": "src/jsonOnly",
+						"macro": "requireModules",
+						"line": 21,
+						"column": 9,
+						"raises": true
+					}
+				],
+				"src/globs.ts": [
+					{
+						"path": "src/glob",
+						"macro": "target.registerProviders",
+						"line": 9,
+						"column": 9
+					}
+				],
+				"src/requireModules.ts": [
+					{
+						"path": "src/glob",
+						"macro": "requireModules",
+						"line": 4,
+						"column": 31,
+						"raises": true
+					},
+					{
+						"path": "src/glob/target",
+						"macro": "requireModules",
+						"line": 9,
+						"column": 3,
+						"raises": true
+					}
+				]
+			}
+		},
+		"globs": {
+			"paths": {
+				"src/glob/*.ts": [
+					"out/glob/target.lua"
+				],
+				"src/missing/*.ts": [],
+				"src/missing/**/*.ts": [],
+				"src/glob/**/*.ts": [
+					"out/glob/target.lua"
+				]
+			},
+			"origins": {
+				"src/globWarnings.ts": [
+					"src/glob/*.ts",
+					"src/missing/*.ts",
+					"src/missing/**/*.ts"
+				],
+				"src/globs.ts": [
+					"src/glob/**/*.ts",
+					"src/glob/**/*.ts"
+				]
+			},
+			"uses": {
+				"src/globWarnings.ts": [
+					{
+						"glob": "src/glob/*.ts",
+						"text": "./glob/*.ts",
+						"macro": "registerProvidersGlob",
+						"line": 8,
+						"column": 3
+					},
+					{
+						"glob": "src/missing/*.ts",
+						"text": "./missing/*.ts",
+						"macro": "registerProvidersGlob",
+						"line": 7,
+						"column": 3
+					},
+					{
+						"glob": "src/missing/**/*.ts",
+						"text": "src/missing/**/*.ts",
+						"macro": "registerProvidersGlob",
+						"line": 6,
+						"column": 3
+					}
+				],
+				"src/globs.ts": [
+					{
+						"glob": "src/glob/**/*.ts",
+						"text": "src/glob/**/*.ts",
+						"macro": "registerProvidersGlob",
+						"line": 4,
+						"column": 52
+					},
+					{
+						"glob": "src/glob/**/*.ts",
+						"text": "src/glob/**/*.ts",
+						"macro": "registerProvidersGlob",
+						"line": 8,
+						"column": 9
+					}
+				]
+			}
+		}
+	}
+}

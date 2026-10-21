@@ -29,6 +29,8 @@ tsrs_module = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crate
 rbxts_transform = { path = "crates/rbxts_transform" }
 # The versions in tsrs's lock file.
 rustc-hash = "2"
+# flamework_rs: JavaScript number formatting (Number#toString), already in the lock through tsrs_core.
+dragonbox_ecma = "0.1.12"
 
 # A debug checker is unusably slow, so even dev builds are optimised (as in tsrs).
 [profile.dev]

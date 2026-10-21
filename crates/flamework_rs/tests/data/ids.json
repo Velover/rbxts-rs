@@ -1,0 +1,2766 @@
+{
+	"formats": [
+		{
+			"internalId": "pkg:out/a@A",
+			"prefix": null,
+			"result": "a@A"
+		},
+		{
+			"internalId": "pkg:out/a@A",
+			"prefix": "",
+			"result": "a@A"
+		},
+		{
+			"internalId": "pkg:out/a@A",
+			"prefix": "fw",
+			"result": "fw:a@A"
+		},
+		{
+			"internalId": "pkg:out/a@A",
+			"prefix": "@s/p",
+			"result": "@s/p:a@A"
+		},
+		{
+			"internalId": "pkg:out/a@A",
+			"prefix": "$c",
+			"result": "$c:a@A"
+		},
+		{
+			"internalId": "pkg:out/dir/sub/a@A.B",
+			"prefix": null,
+			"result": "dir/sub/a@A.B"
+		},
+		{
+			"internalId": "pkg:out/dir/sub/a@A.B",
+			"prefix": "",
+			"result": "dir/sub/a@A.B"
+		},
+		{
+			"internalId": "pkg:out/dir/sub/a@A.B",
+			"prefix": "fw",
+			"result": "fw:dir/sub/a@A.B"
+		},
+		{
+			"internalId": "pkg:out/dir/sub/a@A.B",
+			"prefix": "@s/p",
+			"result": "@s/p:dir/sub/a@A.B"
+		},
+		{
+			"internalId": "pkg:out/dir/sub/a@A.B",
+			"prefix": "$c",
+			"result": "$c:dir/sub/a@A.B"
+		},
+		{
+			"internalId": "pkg:a@A",
+			"prefix": null,
+			"result": "a@A"
+		},
+		{
+			"internalId": "pkg:a@A",
+			"prefix": "",
+			"result": "a@A"
+		},
+		{
+			"internalId": "pkg:a@A",
+			"prefix": "fw",
+			"result": "fw:a@A"
+		},
+		{
+			"internalId": "pkg:a@A",
+			"prefix": "@s/p",
+			"result": "@s/p:a@A"
+		},
+		{
+			"internalId": "pkg:a@A",
+			"prefix": "$c",
+			"result": "$c:a@A"
+		},
+		{
+			"internalId": "pkg:@A",
+			"prefix": null,
+			"result": "@A"
+		},
+		{
+			"internalId": "pkg:@A",
+			"prefix": "",
+			"result": "@A"
+		},
+		{
+			"internalId": "pkg:@A",
+			"prefix": "fw",
+			"result": "fw:@A"
+		},
+		{
+			"internalId": "pkg:@A",
+			"prefix": "@s/p",
+			"result": "@s/p:@A"
+		},
+		{
+			"internalId": "pkg:@A",
+			"prefix": "$c",
+			"result": "$c:@A"
+		},
+		{
+			"internalId": "pkg:out/a@",
+			"prefix": null,
+			"result": "pkg:out/a@"
+		},
+		{
+			"internalId": "pkg:out/a@",
+			"prefix": "",
+			"result": "pkg:out/a@"
+		},
+		{
+			"internalId": "pkg:out/a@",
+			"prefix": "fw",
+			"result": "pkg:out/a@"
+		},
+		{
+			"internalId": "pkg:out/a@",
+			"prefix": "@s/p",
+			"result": "pkg:out/a@"
+		},
+		{
+			"internalId": "pkg:out/a@",
+			"prefix": "$c",
+			"result": "pkg:out/a@"
+		},
+		{
+			"internalId": "pkg:out/a@@",
+			"prefix": null,
+			"result": "a@@"
+		},
+		{
+			"internalId": "pkg:out/a@@",
+			"prefix": "",
+			"result": "a@@"
+		},
+		{
+			"internalId": "pkg:out/a@@",
+			"prefix": "fw",
+			"result": "fw:a@@"
+		},
+		{
+			"internalId": "pkg:out/a@@",
+			"prefix": "@s/p",
+			"result": "@s/p:a@@"
+		},
+		{
+			"internalId": "pkg:out/a@@",
+			"prefix": "$c",
+			"result": "$c:a@@"
+		},
+		{
+			"internalId": "pkg:out/a@b@C",
+			"prefix": null,
+			"result": "a@b@C"
+		},
+		{
+			"internalId": "pkg:out/a@b@C",
+			"prefix": "",
+			"result": "a@b@C"
+		},
+		{
+			"internalId": "pkg:out/a@b@C",
+			"prefix": "fw",
+			"result": "fw:a@b@C"
+		},
+		{
+			"internalId": "pkg:out/a@b@C",
+			"prefix": "@s/p",
+			"result": "@s/p:a@b@C"
+		},
+		{
+			"internalId": "pkg:out/a@b@C",
+			"prefix": "$c",
+			"result": "$c:a@b@C"
+		},
+		{
+			"internalId": "@scope/pkg:out/a@A",
+			"prefix": null,
+			"result": "a@A"
+		},
+		{
+			"internalId": "@scope/pkg:out/a@A",
+			"prefix": "",
+			"result": "a@A"
+		},
+		{
+			"internalId": "@scope/pkg:out/a@A",
+			"prefix": "fw",
+			"result": "fw:a@A"
+		},
+		{
+			"internalId": "@scope/pkg:out/a@A",
+			"prefix": "@s/p",
+			"result": "@s/p:a@A"
+		},
+		{
+			"internalId": "@scope/pkg:out/a@A",
+			"prefix": "$c",
+			"result": "$c:a@A"
+		},
+		{
+			"internalId": "a:b:c/d@E",
+			"prefix": null,
+			"result": "d@E"
+		},
+		{
+			"internalId": "a:b:c/d@E",
+			"prefix": "",
+			"result": "d@E"
+		},
+		{
+			"internalId": "a:b:c/d@E",
+			"prefix": "fw",
+			"result": "fw:d@E"
+		},
+		{
+			"internalId": "a:b:c/d@E",
+			"prefix": "@s/p",
+			"result": "@s/p:d@E"
+		},
+		{
+			"internalId": "a:b:c/d@E",
+			"prefix": "$c",
+			"result": "$c:d@E"
+		},
+		{
+			"internalId": "pkg:out\\win\\a@A",
+			"prefix": null,
+			"result": "win\\a@A"
+		},
+		{
+			"internalId": "pkg:out\\win\\a@A",
+			"prefix": "",
+			"result": "win\\a@A"
+		},
+		{
+			"internalId": "pkg:out\\win\\a@A",
+			"prefix": "fw",
+			"result": "fw:win\\a@A"
+		},
+		{
+			"internalId": "pkg:out\\win\\a@A",
+			"prefix": "@s/p",
+			"result": "@s/p:win\\a@A"
+		},
+		{
+			"internalId": "pkg:out\\win\\a@A",
+			"prefix": "$c",
+			"result": "$c:win\\a@A"
+		},
+		{
+			"internalId": "no-colon@A",
+			"prefix": null,
+			"result": "no-colon@A"
+		},
+		{
+			"internalId": "no-colon@A",
+			"prefix": "",
+			"result": "no-colon@A"
+		},
+		{
+			"internalId": "no-colon@A",
+			"prefix": "fw",
+			"result": "no-colon@A"
+		},
+		{
+			"internalId": "no-colon@A",
+			"prefix": "@s/p",
+			"result": "no-colon@A"
+		},
+		{
+			"internalId": "no-colon@A",
+			"prefix": "$c",
+			"result": "no-colon@A"
+		},
+		{
+			"internalId": "pkg:no-at",
+			"prefix": null,
+			"result": "pkg:no-at"
+		},
+		{
+			"internalId": "pkg:no-at",
+			"prefix": "",
+			"result": "pkg:no-at"
+		},
+		{
+			"internalId": "pkg:no-at",
+			"prefix": "fw",
+			"result": "pkg:no-at"
+		},
+		{
+			"internalId": "pkg:no-at",
+			"prefix": "@s/p",
+			"result": "pkg:no-at"
+		},
+		{
+			"internalId": "pkg:no-at",
+			"prefix": "$c",
+			"result": "pkg:no-at"
+		},
+		{
+			"internalId": "",
+			"prefix": null,
+			"result": ""
+		},
+		{
+			"internalId": "",
+			"prefix": "",
+			"result": ""
+		},
+		{
+			"internalId": "",
+			"prefix": "fw",
+			"result": ""
+		},
+		{
+			"internalId": "",
+			"prefix": "@s/p",
+			"result": ""
+		},
+		{
+			"internalId": "",
+			"prefix": "$c",
+			"result": ""
+		},
+		{
+			"internalId": "pkg:out/ü/😀@Ä",
+			"prefix": null,
+			"result": "ü/😀@Ä"
+		},
+		{
+			"internalId": "pkg:out/ü/😀@Ä",
+			"prefix": "",
+			"result": "ü/😀@Ä"
+		},
+		{
+			"internalId": "pkg:out/ü/😀@Ä",
+			"prefix": "fw",
+			"result": "fw:ü/😀@Ä"
+		},
+		{
+			"internalId": "pkg:out/ü/😀@Ä",
+			"prefix": "@s/p",
+			"result": "@s/p:ü/😀@Ä"
+		},
+		{
+			"internalId": "pkg:out/ü/😀@Ä",
+			"prefix": "$c",
+			"result": "$c:ü/😀@Ä"
+		},
+		{
+			"internalId": "pkg:out/a@A\nB",
+			"prefix": null,
+			"result": "pkg:out/a@A\nB"
+		},
+		{
+			"internalId": "pkg:out/a@A\nB",
+			"prefix": "",
+			"result": "pkg:out/a@A\nB"
+		},
+		{
+			"internalId": "pkg:out/a@A\nB",
+			"prefix": "fw",
+			"result": "pkg:out/a@A\nB"
+		},
+		{
+			"internalId": "pkg:out/a@A\nB",
+			"prefix": "@s/p",
+			"result": "pkg:out/a@A\nB"
+		},
+		{
+			"internalId": "pkg:out/a@A\nB",
+			"prefix": "$c",
+			"result": "pkg:out/a@A\nB"
+		},
+		{
+			"internalId": "pkg:out/a\n@A",
+			"prefix": null,
+			"result": "pkg:out/a\n@A"
+		},
+		{
+			"internalId": "pkg:out/a\n@A",
+			"prefix": "",
+			"result": "pkg:out/a\n@A"
+		},
+		{
+			"internalId": "pkg:out/a\n@A",
+			"prefix": "fw",
+			"result": "pkg:out/a\n@A"
+		},
+		{
+			"internalId": "pkg:out/a\n@A",
+			"prefix": "@s/p",
+			"result": "pkg:out/a\n@A"
+		},
+		{
+			"internalId": "pkg:out/a\n@A",
+			"prefix": "$c",
+			"result": "pkg:out/a\n@A"
+		},
+		{
+			"internalId": "pk\ng:out/a@A",
+			"prefix": null,
+			"result": "pk\ng:out/a@A"
+		},
+		{
+			"internalId": "pk\ng:out/a@A",
+			"prefix": "",
+			"result": "pk\ng:out/a@A"
+		},
+		{
+			"internalId": "pk\ng:out/a@A",
+			"prefix": "fw",
+			"result": "pk\ng:out/a@A"
+		},
+		{
+			"internalId": "pk\ng:out/a@A",
+			"prefix": "@s/p",
+			"result": "pk\ng:out/a@A"
+		},
+		{
+			"internalId": "pk\ng:out/a@A",
+			"prefix": "$c",
+			"result": "pk\ng:out/a@A"
+		},
+		{
+			"internalId": "pkg:out/a@A:B",
+			"prefix": null,
+			"result": "a@A:B"
+		},
+		{
+			"internalId": "pkg:out/a@A:B",
+			"prefix": "",
+			"result": "a@A:B"
+		},
+		{
+			"internalId": "pkg:out/a@A:B",
+			"prefix": "fw",
+			"result": "fw:a@A:B"
+		},
+		{
+			"internalId": "pkg:out/a@A:B",
+			"prefix": "@s/p",
+			"result": "@s/p:a@A:B"
+		},
+		{
+			"internalId": "pkg:out/a@A:B",
+			"prefix": "$c",
+			"result": "$c:a@A:B"
+		},
+		{
+			"internalId": "pkg:out/a@$p:error",
+			"prefix": null,
+			"result": "a@$p:error"
+		},
+		{
+			"internalId": "pkg:out/a@$p:error",
+			"prefix": "",
+			"result": "a@$p:error"
+		},
+		{
+			"internalId": "pkg:out/a@$p:error",
+			"prefix": "fw",
+			"result": "fw:a@$p:error"
+		},
+		{
+			"internalId": "pkg:out/a@$p:error",
+			"prefix": "@s/p",
+			"result": "@s/p:a@$p:error"
+		},
+		{
+			"internalId": "pkg:out/a@$p:error",
+			"prefix": "$c",
+			"result": "$c:a@$p:error"
+		},
+		{
+			"internalId": ":@x",
+			"prefix": null,
+			"result": "@x"
+		},
+		{
+			"internalId": ":@x",
+			"prefix": "",
+			"result": "@x"
+		},
+		{
+			"internalId": ":@x",
+			"prefix": "fw",
+			"result": "fw:@x"
+		},
+		{
+			"internalId": ":@x",
+			"prefix": "@s/p",
+			"result": "@s/p:@x"
+		},
+		{
+			"internalId": ":@x",
+			"prefix": "$c",
+			"result": "$c:@x"
+		},
+		{
+			"internalId": "pkg:/lead@A",
+			"prefix": null,
+			"result": "lead@A"
+		},
+		{
+			"internalId": "pkg:/lead@A",
+			"prefix": "",
+			"result": "lead@A"
+		},
+		{
+			"internalId": "pkg:/lead@A",
+			"prefix": "fw",
+			"result": "fw:lead@A"
+		},
+		{
+			"internalId": "pkg:/lead@A",
+			"prefix": "@s/p",
+			"result": "@s/p:lead@A"
+		},
+		{
+			"internalId": "pkg:/lead@A",
+			"prefix": "$c",
+			"result": "$c:lead@A"
+		}
+	],
+	"declarations": [
+		{
+			"internalId": "game:out/server/a@A",
+			"fullName": "A",
+			"fileName": "C:\\p\\src\\server\\a.ts"
+		},
+		{
+			"internalId": "game:out/server/a@NS.B",
+			"fullName": "NS.B",
+			"fileName": "C:\\p\\src\\server\\a.ts"
+		},
+		{
+			"internalId": "game:out/shared/index@C",
+			"fullName": "C",
+			"fileName": "C:\\p\\src\\shared\\index.ts"
+		},
+		{
+			"internalId": "game:out/server/a@A",
+			"fullName": "A",
+			"fileName": "C:\\p\\src\\server\\a.ts"
+		},
+		{
+			"internalId": "game:out/types@D",
+			"fullName": "D",
+			"fileName": "C:\\p\\src\\types.d.ts"
+		},
+		{
+			"internalId": "@s/lib:out/x@P",
+			"fullName": "P",
+			"fileName": "C:\\p\\node_modules\\@s\\lib\\out\\x.d.ts",
+			"isPackage": true
+		},
+		{
+			"internalId": "@s/other:out/y@Q",
+			"fullName": "Q",
+			"fileName": "C:\\p\\node_modules\\@s\\other\\out\\y.d.ts",
+			"isPackage": true,
+			"packagePrefix": "@s/other"
+		},
+		{
+			"internalId": "game:out/ü@Ü",
+			"fullName": "Ü",
+			"fileName": "C:\\p\\src\\ü.ts"
+		}
+	],
+	"scenarios": [
+		{
+			"mode": "full",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": null,
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"server/a@A",
+				"server/a@NS.B",
+				"shared/index@C",
+				"server/a@A",
+				"types@D",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"ü@Ü"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"server/a@A"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"server/a@NS.B"
+				],
+				[
+					"game:out/shared/index@C",
+					"shared/index@C"
+				],
+				[
+					"game:out/types@D",
+					"types@D"
+				],
+				[
+					"game:out/ü@Ü",
+					"ü@Ü"
+				]
+			]
+		},
+		{
+			"mode": "full",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": null,
+			"salt": "",
+			"ids": [
+				"server/a@A",
+				"server/a@NS.B",
+				"shared/index@C",
+				"server/a@A",
+				"types@D",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"ü@Ü"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"server/a@A"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"server/a@NS.B"
+				],
+				[
+					"game:out/shared/index@C",
+					"shared/index@C"
+				],
+				[
+					"game:out/types@D",
+					"types@D"
+				],
+				[
+					"game:out/ü@Ü",
+					"ü@Ü"
+				]
+			]
+		},
+		{
+			"mode": "full",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": null,
+			"salt": "😀",
+			"ids": [
+				"server/a@A",
+				"server/a@NS.B",
+				"shared/index@C",
+				"server/a@A",
+				"types@D",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"ü@Ü"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"server/a@A"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"server/a@NS.B"
+				],
+				[
+					"game:out/shared/index@C",
+					"shared/index@C"
+				],
+				[
+					"game:out/types@D",
+					"types@D"
+				],
+				[
+					"game:out/ü@Ü",
+					"ü@Ü"
+				]
+			]
+		},
+		{
+			"mode": "full",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": "g",
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"g:server/a@A",
+				"g:server/a@NS.B",
+				"g:shared/index@C",
+				"g:server/a@A",
+				"g:types@D",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"g:ü@Ü"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"g:server/a@A"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"g:server/a@NS.B"
+				],
+				[
+					"game:out/shared/index@C",
+					"g:shared/index@C"
+				],
+				[
+					"game:out/types@D",
+					"g:types@D"
+				],
+				[
+					"game:out/ü@Ü",
+					"g:ü@Ü"
+				]
+			]
+		},
+		{
+			"mode": "full",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": "g",
+			"salt": "",
+			"ids": [
+				"g:server/a@A",
+				"g:server/a@NS.B",
+				"g:shared/index@C",
+				"g:server/a@A",
+				"g:types@D",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"g:ü@Ü"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"g:server/a@A"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"g:server/a@NS.B"
+				],
+				[
+					"game:out/shared/index@C",
+					"g:shared/index@C"
+				],
+				[
+					"game:out/types@D",
+					"g:types@D"
+				],
+				[
+					"game:out/ü@Ü",
+					"g:ü@Ü"
+				]
+			]
+		},
+		{
+			"mode": "full",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": "g",
+			"salt": "😀",
+			"ids": [
+				"g:server/a@A",
+				"g:server/a@NS.B",
+				"g:shared/index@C",
+				"g:server/a@A",
+				"g:types@D",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"g:ü@Ü"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"g:server/a@A"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"g:server/a@NS.B"
+				],
+				[
+					"game:out/shared/index@C",
+					"g:shared/index@C"
+				],
+				[
+					"game:out/types@D",
+					"g:types@D"
+				],
+				[
+					"game:out/ü@Ü",
+					"g:ü@Ü"
+				]
+			]
+		},
+		{
+			"mode": "full",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "@s/me",
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"@s/me:server/a@A",
+				"@s/me:server/a@NS.B",
+				"@s/me:shared/index@C",
+				"@s/me:server/a@A",
+				"@s/me:types@D",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"@s/me:ü@Ü"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"@s/me:server/a@A"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"@s/me:server/a@NS.B"
+				],
+				[
+					"game:out/shared/index@C",
+					"@s/me:shared/index@C"
+				],
+				[
+					"game:out/types@D",
+					"@s/me:types@D"
+				],
+				[
+					"game:out/ü@Ü",
+					"@s/me:ü@Ü"
+				]
+			]
+		},
+		{
+			"mode": "full",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "@s/me",
+			"salt": "",
+			"ids": [
+				"@s/me:server/a@A",
+				"@s/me:server/a@NS.B",
+				"@s/me:shared/index@C",
+				"@s/me:server/a@A",
+				"@s/me:types@D",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"@s/me:ü@Ü"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"@s/me:server/a@A"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"@s/me:server/a@NS.B"
+				],
+				[
+					"game:out/shared/index@C",
+					"@s/me:shared/index@C"
+				],
+				[
+					"game:out/types@D",
+					"@s/me:types@D"
+				],
+				[
+					"game:out/ü@Ü",
+					"@s/me:ü@Ü"
+				]
+			]
+		},
+		{
+			"mode": "full",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "@s/me",
+			"salt": "😀",
+			"ids": [
+				"@s/me:server/a@A",
+				"@s/me:server/a@NS.B",
+				"@s/me:shared/index@C",
+				"@s/me:server/a@A",
+				"@s/me:types@D",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"@s/me:ü@Ü"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"@s/me:server/a@A"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"@s/me:server/a@NS.B"
+				],
+				[
+					"game:out/shared/index@C",
+					"@s/me:shared/index@C"
+				],
+				[
+					"game:out/types@D",
+					"@s/me:types@D"
+				],
+				[
+					"game:out/ü@Ü",
+					"@s/me:ü@Ü"
+				]
+			]
+		},
+		{
+			"mode": "full",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "",
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"server/a@A",
+				"server/a@NS.B",
+				"shared/index@C",
+				"server/a@A",
+				"types@D",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"ü@Ü"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"server/a@A"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"server/a@NS.B"
+				],
+				[
+					"game:out/shared/index@C",
+					"shared/index@C"
+				],
+				[
+					"game:out/types@D",
+					"types@D"
+				],
+				[
+					"game:out/ü@Ü",
+					"ü@Ü"
+				]
+			]
+		},
+		{
+			"mode": "full",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "",
+			"salt": "",
+			"ids": [
+				"server/a@A",
+				"server/a@NS.B",
+				"shared/index@C",
+				"server/a@A",
+				"types@D",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"ü@Ü"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"server/a@A"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"server/a@NS.B"
+				],
+				[
+					"game:out/shared/index@C",
+					"shared/index@C"
+				],
+				[
+					"game:out/types@D",
+					"types@D"
+				],
+				[
+					"game:out/ü@Ü",
+					"ü@Ü"
+				]
+			]
+		},
+		{
+			"mode": "full",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "",
+			"salt": "😀",
+			"ids": [
+				"server/a@A",
+				"server/a@NS.B",
+				"shared/index@C",
+				"server/a@A",
+				"types@D",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"ü@Ü"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"server/a@A"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"server/a@NS.B"
+				],
+				[
+					"game:out/shared/index@C",
+					"shared/index@C"
+				],
+				[
+					"game:out/types@D",
+					"types@D"
+				],
+				[
+					"game:out/ü@Ü",
+					"ü@Ü"
+				]
+			]
+		},
+		{
+			"mode": "short",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": null,
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"a@A{BV}",
+				"a@NS.B{4K}",
+				"init@C{XG}",
+				"a@A{BV}",
+				"types.d@D{8x}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"ü@Ü{wm}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"a@A{BV}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"a@NS.B{4K}"
+				],
+				[
+					"game:out/shared/index@C",
+					"init@C{XG}"
+				],
+				[
+					"game:out/types@D",
+					"types.d@D{8x}"
+				],
+				[
+					"game:out/ü@Ü",
+					"ü@Ü{wm}"
+				]
+			]
+		},
+		{
+			"mode": "short",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": null,
+			"salt": "",
+			"ids": [
+				"a@A{jR}",
+				"a@NS.B{k5}",
+				"init@C{l5}",
+				"a@A{jR}",
+				"types.d@D{mO}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"ü@Ü{nR}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"a@A{jR}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"a@NS.B{k5}"
+				],
+				[
+					"game:out/shared/index@C",
+					"init@C{l5}"
+				],
+				[
+					"game:out/types@D",
+					"types.d@D{mO}"
+				],
+				[
+					"game:out/ü@Ü",
+					"ü@Ü{nR}"
+				]
+			]
+		},
+		{
+			"mode": "short",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": null,
+			"salt": "😀",
+			"ids": [
+				"a@A{eG}",
+				"a@NS.B{nv}",
+				"init@C{Go}",
+				"a@A{eG}",
+				"types.d@D{vk}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"ü@Ü{q8}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"a@A{eG}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"a@NS.B{nv}"
+				],
+				[
+					"game:out/shared/index@C",
+					"init@C{Go}"
+				],
+				[
+					"game:out/types@D",
+					"types.d@D{vk}"
+				],
+				[
+					"game:out/ü@Ü",
+					"ü@Ü{q8}"
+				]
+			]
+		},
+		{
+			"mode": "short",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": "g",
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"g:a@A{BV}",
+				"g:a@NS.B{4K}",
+				"g:init@C{XG}",
+				"g:a@A{BV}",
+				"g:types.d@D{8x}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"g:ü@Ü{wm}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"g:a@A{BV}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"g:a@NS.B{4K}"
+				],
+				[
+					"game:out/shared/index@C",
+					"g:init@C{XG}"
+				],
+				[
+					"game:out/types@D",
+					"g:types.d@D{8x}"
+				],
+				[
+					"game:out/ü@Ü",
+					"g:ü@Ü{wm}"
+				]
+			]
+		},
+		{
+			"mode": "short",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": "g",
+			"salt": "",
+			"ids": [
+				"g:a@A{jR}",
+				"g:a@NS.B{k5}",
+				"g:init@C{l5}",
+				"g:a@A{jR}",
+				"g:types.d@D{mO}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"g:ü@Ü{nR}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"g:a@A{jR}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"g:a@NS.B{k5}"
+				],
+				[
+					"game:out/shared/index@C",
+					"g:init@C{l5}"
+				],
+				[
+					"game:out/types@D",
+					"g:types.d@D{mO}"
+				],
+				[
+					"game:out/ü@Ü",
+					"g:ü@Ü{nR}"
+				]
+			]
+		},
+		{
+			"mode": "short",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": "g",
+			"salt": "😀",
+			"ids": [
+				"g:a@A{eG}",
+				"g:a@NS.B{nv}",
+				"g:init@C{Go}",
+				"g:a@A{eG}",
+				"g:types.d@D{vk}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"g:ü@Ü{q8}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"g:a@A{eG}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"g:a@NS.B{nv}"
+				],
+				[
+					"game:out/shared/index@C",
+					"g:init@C{Go}"
+				],
+				[
+					"game:out/types@D",
+					"g:types.d@D{vk}"
+				],
+				[
+					"game:out/ü@Ü",
+					"g:ü@Ü{q8}"
+				]
+			]
+		},
+		{
+			"mode": "short",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "@s/me",
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"@s/me:a@A{BV}",
+				"@s/me:a@NS.B{4K}",
+				"@s/me:init@C{XG}",
+				"@s/me:a@A{BV}",
+				"@s/me:types.d@D{8x}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"@s/me:ü@Ü{wm}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"@s/me:a@A{BV}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"@s/me:a@NS.B{4K}"
+				],
+				[
+					"game:out/shared/index@C",
+					"@s/me:init@C{XG}"
+				],
+				[
+					"game:out/types@D",
+					"@s/me:types.d@D{8x}"
+				],
+				[
+					"game:out/ü@Ü",
+					"@s/me:ü@Ü{wm}"
+				]
+			]
+		},
+		{
+			"mode": "short",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "@s/me",
+			"salt": "",
+			"ids": [
+				"@s/me:a@A{jR}",
+				"@s/me:a@NS.B{k5}",
+				"@s/me:init@C{l5}",
+				"@s/me:a@A{jR}",
+				"@s/me:types.d@D{mO}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"@s/me:ü@Ü{nR}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"@s/me:a@A{jR}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"@s/me:a@NS.B{k5}"
+				],
+				[
+					"game:out/shared/index@C",
+					"@s/me:init@C{l5}"
+				],
+				[
+					"game:out/types@D",
+					"@s/me:types.d@D{mO}"
+				],
+				[
+					"game:out/ü@Ü",
+					"@s/me:ü@Ü{nR}"
+				]
+			]
+		},
+		{
+			"mode": "short",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "@s/me",
+			"salt": "😀",
+			"ids": [
+				"@s/me:a@A{eG}",
+				"@s/me:a@NS.B{nv}",
+				"@s/me:init@C{Go}",
+				"@s/me:a@A{eG}",
+				"@s/me:types.d@D{vk}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"@s/me:ü@Ü{q8}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"@s/me:a@A{eG}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"@s/me:a@NS.B{nv}"
+				],
+				[
+					"game:out/shared/index@C",
+					"@s/me:init@C{Go}"
+				],
+				[
+					"game:out/types@D",
+					"@s/me:types.d@D{vk}"
+				],
+				[
+					"game:out/ü@Ü",
+					"@s/me:ü@Ü{q8}"
+				]
+			]
+		},
+		{
+			"mode": "short",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "",
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"a@A{BV}",
+				"a@NS.B{4K}",
+				"init@C{XG}",
+				"a@A{BV}",
+				"types.d@D{8x}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"ü@Ü{wm}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"a@A{BV}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"a@NS.B{4K}"
+				],
+				[
+					"game:out/shared/index@C",
+					"init@C{XG}"
+				],
+				[
+					"game:out/types@D",
+					"types.d@D{8x}"
+				],
+				[
+					"game:out/ü@Ü",
+					"ü@Ü{wm}"
+				]
+			]
+		},
+		{
+			"mode": "short",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "",
+			"salt": "",
+			"ids": [
+				"a@A{jR}",
+				"a@NS.B{k5}",
+				"init@C{l5}",
+				"a@A{jR}",
+				"types.d@D{mO}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"ü@Ü{nR}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"a@A{jR}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"a@NS.B{k5}"
+				],
+				[
+					"game:out/shared/index@C",
+					"init@C{l5}"
+				],
+				[
+					"game:out/types@D",
+					"types.d@D{mO}"
+				],
+				[
+					"game:out/ü@Ü",
+					"ü@Ü{nR}"
+				]
+			]
+		},
+		{
+			"mode": "short",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "",
+			"salt": "😀",
+			"ids": [
+				"a@A{eG}",
+				"a@NS.B{nv}",
+				"init@C{Go}",
+				"a@A{eG}",
+				"types.d@D{vk}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"ü@Ü{q8}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"a@A{eG}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"a@NS.B{nv}"
+				],
+				[
+					"game:out/shared/index@C",
+					"init@C{Go}"
+				],
+				[
+					"game:out/types@D",
+					"types.d@D{vk}"
+				],
+				[
+					"game:out/ü@Ü",
+					"ü@Ü{q8}"
+				]
+			]
+		},
+		{
+			"mode": "tiny",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": null,
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"A{BV}",
+				"NS.B{4K}",
+				"C{XG}",
+				"A{BV}",
+				"D{8x}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"Ü{wm}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"A{BV}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"NS.B{4K}"
+				],
+				[
+					"game:out/shared/index@C",
+					"C{XG}"
+				],
+				[
+					"game:out/types@D",
+					"D{8x}"
+				],
+				[
+					"game:out/ü@Ü",
+					"Ü{wm}"
+				]
+			]
+		},
+		{
+			"mode": "tiny",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": null,
+			"salt": "",
+			"ids": [
+				"A{jR}",
+				"NS.B{k5}",
+				"C{l5}",
+				"A{jR}",
+				"D{mO}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"Ü{nR}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"A{jR}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"NS.B{k5}"
+				],
+				[
+					"game:out/shared/index@C",
+					"C{l5}"
+				],
+				[
+					"game:out/types@D",
+					"D{mO}"
+				],
+				[
+					"game:out/ü@Ü",
+					"Ü{nR}"
+				]
+			]
+		},
+		{
+			"mode": "tiny",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": null,
+			"salt": "😀",
+			"ids": [
+				"A{eG}",
+				"NS.B{nv}",
+				"C{Go}",
+				"A{eG}",
+				"D{vk}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"Ü{q8}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"A{eG}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"NS.B{nv}"
+				],
+				[
+					"game:out/shared/index@C",
+					"C{Go}"
+				],
+				[
+					"game:out/types@D",
+					"D{vk}"
+				],
+				[
+					"game:out/ü@Ü",
+					"Ü{q8}"
+				]
+			]
+		},
+		{
+			"mode": "tiny",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": "g",
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"g:A{BV}",
+				"g:NS.B{4K}",
+				"g:C{XG}",
+				"g:A{BV}",
+				"g:D{8x}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"g:Ü{wm}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"g:A{BV}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"g:NS.B{4K}"
+				],
+				[
+					"game:out/shared/index@C",
+					"g:C{XG}"
+				],
+				[
+					"game:out/types@D",
+					"g:D{8x}"
+				],
+				[
+					"game:out/ü@Ü",
+					"g:Ü{wm}"
+				]
+			]
+		},
+		{
+			"mode": "tiny",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": "g",
+			"salt": "",
+			"ids": [
+				"g:A{jR}",
+				"g:NS.B{k5}",
+				"g:C{l5}",
+				"g:A{jR}",
+				"g:D{mO}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"g:Ü{nR}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"g:A{jR}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"g:NS.B{k5}"
+				],
+				[
+					"game:out/shared/index@C",
+					"g:C{l5}"
+				],
+				[
+					"game:out/types@D",
+					"g:D{mO}"
+				],
+				[
+					"game:out/ü@Ü",
+					"g:Ü{nR}"
+				]
+			]
+		},
+		{
+			"mode": "tiny",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": "g",
+			"salt": "😀",
+			"ids": [
+				"g:A{eG}",
+				"g:NS.B{nv}",
+				"g:C{Go}",
+				"g:A{eG}",
+				"g:D{vk}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"g:Ü{q8}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"g:A{eG}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"g:NS.B{nv}"
+				],
+				[
+					"game:out/shared/index@C",
+					"g:C{Go}"
+				],
+				[
+					"game:out/types@D",
+					"g:D{vk}"
+				],
+				[
+					"game:out/ü@Ü",
+					"g:Ü{q8}"
+				]
+			]
+		},
+		{
+			"mode": "tiny",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "@s/me",
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"@s/me:A{BV}",
+				"@s/me:NS.B{4K}",
+				"@s/me:C{XG}",
+				"@s/me:A{BV}",
+				"@s/me:D{8x}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"@s/me:Ü{wm}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"@s/me:A{BV}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"@s/me:NS.B{4K}"
+				],
+				[
+					"game:out/shared/index@C",
+					"@s/me:C{XG}"
+				],
+				[
+					"game:out/types@D",
+					"@s/me:D{8x}"
+				],
+				[
+					"game:out/ü@Ü",
+					"@s/me:Ü{wm}"
+				]
+			]
+		},
+		{
+			"mode": "tiny",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "@s/me",
+			"salt": "",
+			"ids": [
+				"@s/me:A{jR}",
+				"@s/me:NS.B{k5}",
+				"@s/me:C{l5}",
+				"@s/me:A{jR}",
+				"@s/me:D{mO}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"@s/me:Ü{nR}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"@s/me:A{jR}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"@s/me:NS.B{k5}"
+				],
+				[
+					"game:out/shared/index@C",
+					"@s/me:C{l5}"
+				],
+				[
+					"game:out/types@D",
+					"@s/me:D{mO}"
+				],
+				[
+					"game:out/ü@Ü",
+					"@s/me:Ü{nR}"
+				]
+			]
+		},
+		{
+			"mode": "tiny",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "@s/me",
+			"salt": "😀",
+			"ids": [
+				"@s/me:A{eG}",
+				"@s/me:NS.B{nv}",
+				"@s/me:C{Go}",
+				"@s/me:A{eG}",
+				"@s/me:D{vk}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"@s/me:Ü{q8}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"@s/me:A{eG}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"@s/me:NS.B{nv}"
+				],
+				[
+					"game:out/shared/index@C",
+					"@s/me:C{Go}"
+				],
+				[
+					"game:out/types@D",
+					"@s/me:D{vk}"
+				],
+				[
+					"game:out/ü@Ü",
+					"@s/me:Ü{q8}"
+				]
+			]
+		},
+		{
+			"mode": "tiny",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "",
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"A{BV}",
+				"NS.B{4K}",
+				"C{XG}",
+				"A{BV}",
+				"D{8x}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"Ü{wm}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"A{BV}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"NS.B{4K}"
+				],
+				[
+					"game:out/shared/index@C",
+					"C{XG}"
+				],
+				[
+					"game:out/types@D",
+					"D{8x}"
+				],
+				[
+					"game:out/ü@Ü",
+					"Ü{wm}"
+				]
+			]
+		},
+		{
+			"mode": "tiny",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "",
+			"salt": "",
+			"ids": [
+				"A{jR}",
+				"NS.B{k5}",
+				"C{l5}",
+				"A{jR}",
+				"D{mO}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"Ü{nR}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"A{jR}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"NS.B{k5}"
+				],
+				[
+					"game:out/shared/index@C",
+					"C{l5}"
+				],
+				[
+					"game:out/types@D",
+					"D{mO}"
+				],
+				[
+					"game:out/ü@Ü",
+					"Ü{nR}"
+				]
+			]
+		},
+		{
+			"mode": "tiny",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "",
+			"salt": "😀",
+			"ids": [
+				"A{eG}",
+				"NS.B{nv}",
+				"C{Go}",
+				"A{eG}",
+				"D{vk}",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"Ü{q8}"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"A{eG}"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"NS.B{nv}"
+				],
+				[
+					"game:out/shared/index@C",
+					"C{Go}"
+				],
+				[
+					"game:out/types@D",
+					"D{vk}"
+				],
+				[
+					"game:out/ü@Ü",
+					"Ü{q8}"
+				]
+			]
+		},
+		{
+			"mode": "obfuscated",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": null,
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"BV",
+				"4K",
+				"XG",
+				"BV",
+				"8x",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"wm"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"BV"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"4K"
+				],
+				[
+					"game:out/shared/index@C",
+					"XG"
+				],
+				[
+					"game:out/types@D",
+					"8x"
+				],
+				[
+					"game:out/ü@Ü",
+					"wm"
+				]
+			]
+		},
+		{
+			"mode": "obfuscated",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": null,
+			"salt": "",
+			"ids": [
+				"jR",
+				"k5",
+				"l5",
+				"jR",
+				"mO",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"nR"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"jR"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"k5"
+				],
+				[
+					"game:out/shared/index@C",
+					"l5"
+				],
+				[
+					"game:out/types@D",
+					"mO"
+				],
+				[
+					"game:out/ü@Ü",
+					"nR"
+				]
+			]
+		},
+		{
+			"mode": "obfuscated",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": null,
+			"salt": "😀",
+			"ids": [
+				"eG",
+				"nv",
+				"Go",
+				"eG",
+				"vk",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"q8"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"eG"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"nv"
+				],
+				[
+					"game:out/shared/index@C",
+					"Go"
+				],
+				[
+					"game:out/types@D",
+					"vk"
+				],
+				[
+					"game:out/ü@Ü",
+					"q8"
+				]
+			]
+		},
+		{
+			"mode": "obfuscated",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": "g",
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"g:BV",
+				"g:4K",
+				"g:XG",
+				"g:BV",
+				"g:8x",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"g:wm"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"g:BV"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"g:4K"
+				],
+				[
+					"game:out/shared/index@C",
+					"g:XG"
+				],
+				[
+					"game:out/types@D",
+					"g:8x"
+				],
+				[
+					"game:out/ü@Ü",
+					"g:wm"
+				]
+			]
+		},
+		{
+			"mode": "obfuscated",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": "g",
+			"salt": "",
+			"ids": [
+				"g:jR",
+				"g:k5",
+				"g:l5",
+				"g:jR",
+				"g:mO",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"g:nR"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"g:jR"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"g:k5"
+				],
+				[
+					"game:out/shared/index@C",
+					"g:l5"
+				],
+				[
+					"game:out/types@D",
+					"g:mO"
+				],
+				[
+					"game:out/ü@Ü",
+					"g:nR"
+				]
+			]
+		},
+		{
+			"mode": "obfuscated",
+			"isGame": true,
+			"packageName": "game",
+			"hashPrefix": "g",
+			"salt": "😀",
+			"ids": [
+				"g:eG",
+				"g:nv",
+				"g:Go",
+				"g:eG",
+				"g:vk",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"g:q8"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"g:eG"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"g:nv"
+				],
+				[
+					"game:out/shared/index@C",
+					"g:Go"
+				],
+				[
+					"game:out/types@D",
+					"g:vk"
+				],
+				[
+					"game:out/ü@Ü",
+					"g:q8"
+				]
+			]
+		},
+		{
+			"mode": "obfuscated",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "@s/me",
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				"@s/me:BV",
+				"@s/me:4K",
+				"@s/me:XG",
+				"@s/me:BV",
+				"@s/me:8x",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"@s/me:wm"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"@s/me:BV"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"@s/me:4K"
+				],
+				[
+					"game:out/shared/index@C",
+					"@s/me:XG"
+				],
+				[
+					"game:out/types@D",
+					"@s/me:8x"
+				],
+				[
+					"game:out/ü@Ü",
+					"@s/me:wm"
+				]
+			]
+		},
+		{
+			"mode": "obfuscated",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "@s/me",
+			"salt": "",
+			"ids": [
+				"@s/me:jR",
+				"@s/me:k5",
+				"@s/me:l5",
+				"@s/me:jR",
+				"@s/me:mO",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"@s/me:nR"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"@s/me:jR"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"@s/me:k5"
+				],
+				[
+					"game:out/shared/index@C",
+					"@s/me:l5"
+				],
+				[
+					"game:out/types@D",
+					"@s/me:mO"
+				],
+				[
+					"game:out/ü@Ü",
+					"@s/me:nR"
+				]
+			]
+		},
+		{
+			"mode": "obfuscated",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "@s/me",
+			"salt": "😀",
+			"ids": [
+				"@s/me:eG",
+				"@s/me:nv",
+				"@s/me:Go",
+				"@s/me:eG",
+				"@s/me:vk",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				"@s/me:q8"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					"@s/me:eG"
+				],
+				[
+					"game:out/server/a@NS.B",
+					"@s/me:nv"
+				],
+				[
+					"game:out/shared/index@C",
+					"@s/me:Go"
+				],
+				[
+					"game:out/types@D",
+					"@s/me:vk"
+				],
+				[
+					"game:out/ü@Ü",
+					"@s/me:q8"
+				]
+			]
+		},
+		{
+			"mode": "obfuscated",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "",
+			"salt": "e7ddca7fe4b98f1ac06d647504f55a261b4a630f840a786e05ca35057f3d049839ef7b1ecc6b0100c129736fb7cc44db8aea28c7c5a1f62fc2cc1c0423301b6c",
+			"ids": [
+				":BV",
+				":4K",
+				":XG",
+				":BV",
+				":8x",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				":wm"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					":BV"
+				],
+				[
+					"game:out/server/a@NS.B",
+					":4K"
+				],
+				[
+					"game:out/shared/index@C",
+					":XG"
+				],
+				[
+					"game:out/types@D",
+					":8x"
+				],
+				[
+					"game:out/ü@Ü",
+					":wm"
+				]
+			]
+		},
+		{
+			"mode": "obfuscated",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "",
+			"salt": "",
+			"ids": [
+				":jR",
+				":k5",
+				":l5",
+				":jR",
+				":mO",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				":nR"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					":jR"
+				],
+				[
+					"game:out/server/a@NS.B",
+					":k5"
+				],
+				[
+					"game:out/shared/index@C",
+					":l5"
+				],
+				[
+					"game:out/types@D",
+					":mO"
+				],
+				[
+					"game:out/ü@Ü",
+					":nR"
+				]
+			]
+		},
+		{
+			"mode": "obfuscated",
+			"isGame": false,
+			"packageName": "@s/me",
+			"hashPrefix": "",
+			"salt": "😀",
+			"ids": [
+				":eG",
+				":nv",
+				":Go",
+				":eG",
+				":vk",
+				"@s/lib:out/x@P",
+				"@s/other:y@Q",
+				":q8"
+			],
+			"identifiers": [
+				[
+					"game:out/server/a@A",
+					":eG"
+				],
+				[
+					"game:out/server/a@NS.B",
+					":nv"
+				],
+				[
+					"game:out/shared/index@C",
+					":Go"
+				],
+				[
+					"game:out/types@D",
+					":vk"
+				],
+				[
+					"game:out/ü@Ü",
+					":q8"
+				]
+			]
+		}
+	],
+	"internals": [
+		{
+			"packageName": "game",
+			"packageDir": "C:\\p",
+			"filePath": "C:\\p\\src\\server\\a.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "C:\\p\\out\\server\\a.lua",
+			"fullName": "A",
+			"result": {
+				"isPackage": false,
+				"internalId": "game:out/server/a@A"
+			}
+		},
+		{
+			"packageName": "game",
+			"packageDir": "C:\\p",
+			"filePath": "C:\\p\\src\\index.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "C:\\p\\out\\init.lua",
+			"fullName": "A.B",
+			"result": {
+				"isPackage": false,
+				"internalId": "game:out/init@A.B"
+			}
+		},
+		{
+			"packageName": "game",
+			"packageDir": "C:\\p",
+			"filePath": "C:\\p\\src\\a.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "C:\\p\\out\\a.luau",
+			"fullName": "A",
+			"result": {
+				"isPackage": false,
+				"internalId": "game:out/a.luau@A"
+			}
+		},
+		{
+			"packageName": "game",
+			"packageDir": "C:\\p",
+			"filePath": "C:\\p\\src\\a.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p\\places\\x",
+			"outputPath": "C:\\p\\out\\a.lua",
+			"fullName": "A",
+			"result": {
+				"isPackage": false,
+				"internalId": "game:../../out/a@A"
+			}
+		},
+		{
+			"packageName": "game",
+			"packageDir": "C:\\p",
+			"filePath": "C:\\p\\shared\\a.ts",
+			"rootDirs": [
+				"C:\\p\\src",
+				"C:\\p\\shared"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "C:\\p\\out\\shared\\a.lua",
+			"fullName": "A",
+			"result": {
+				"isPackage": false,
+				"internalId": "game:out/shared/a@A"
+			}
+		},
+		{
+			"packageName": "game",
+			"packageDir": "C:\\p",
+			"filePath": "c:\\P\\SRC\\a.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "C:\\p\\out\\a.lua",
+			"fullName": "A",
+			"result": {
+				"isPackage": false,
+				"internalId": "game:out/a@A"
+			}
+		},
+		{
+			"packageName": "game",
+			"packageDir": "C:\\p",
+			"filePath": "C:\\p\\src\\a.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "D:\\out\\a.lua",
+			"fullName": "A",
+			"result": {
+				"isPackage": false,
+				"internalId": "game:D:/out/a@A"
+			}
+		},
+		{
+			"packageName": "@s/lib",
+			"packageDir": "C:\\p\\node_modules\\@s\\lib",
+			"filePath": "C:\\p\\node_modules\\@s\\lib\\out\\x.d.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "",
+			"fullName": "X",
+			"result": {
+				"isPackage": true,
+				"internalId": "@s/lib:out/x@X"
+			}
+		},
+		{
+			"packageName": "@s/lib",
+			"packageDir": "C:\\p\\node_modules\\@s\\lib",
+			"filePath": "C:\\p\\node_modules\\@s\\lib\\out\\index.d.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "",
+			"fullName": "X",
+			"result": {
+				"isPackage": true,
+				"internalId": "@s/lib:out/init@X"
+			}
+		},
+		{
+			"packageName": "@s/lib",
+			"packageDir": "C:\\p\\node_modules\\@s\\lib",
+			"filePath": "C:\\p\\node_modules\\@s\\lib\\out\\x.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "",
+			"fullName": "X",
+			"result": {
+				"isPackage": true,
+				"internalId": "@s/lib:out/x@X"
+			}
+		},
+		{
+			"packageName": "@s/lib",
+			"packageDir": "C:\\p\\node_modules\\@s\\lib",
+			"filePath": "C:\\p\\node_modules\\@s\\lib\\out\\sub\\index.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "",
+			"fullName": "X",
+			"result": {
+				"isPackage": true,
+				"internalId": "@s/lib:out/sub/init@X"
+			}
+		},
+		{
+			"packageName": "@s/lib",
+			"packageDir": "C:\\p\\node_modules\\@s\\lib",
+			"filePath": "C:\\p\\node_modules\\@s\\lib\\out\\myindex.d.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "",
+			"fullName": "X",
+			"result": {
+				"isPackage": true,
+				"internalId": "@s/lib:out/myinit@X"
+			}
+		},
+		{
+			"packageName": "@s/lib",
+			"packageDir": "C:\\p\\node_modules\\@s\\lib",
+			"filePath": "C:\\p\\node_modules\\@s\\lib\\out\\x.mts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "",
+			"fullName": "X",
+			"result": {
+				"isPackage": true,
+				"internalId": "@s/lib:out/x.@X"
+			}
+		},
+		{
+			"packageName": "@s/lib",
+			"packageDir": "C:\\p\\node_modules\\@s\\lib",
+			"filePath": "C:\\p\\node_modules\\@s\\lib\\out\\foots",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "",
+			"fullName": "X",
+			"result": {
+				"isPackage": true,
+				"internalId": "@s/lib:out/fo@X"
+			}
+		},
+		{
+			"packageName": "@s/lib",
+			"packageDir": "C:\\p\\node_modules\\@s\\lib",
+			"filePath": "C:\\p\\node_modules\\@s\\lib\\out\\ü.d.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "",
+			"fullName": "X",
+			"result": {
+				"isPackage": true,
+				"internalId": "@s/lib:out/ü@X"
+			}
+		},
+		{
+			"packageName": "@s/lib",
+			"packageDir": "C:\\p\\node_modules\\@s\\lib",
+			"filePath": "C:\\p\\node_modules\\@s\\lib\\src\\x.tsx",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "",
+			"fullName": "X",
+			"result": {
+				"isPackage": true,
+				"internalId": "@s/lib:src/x.tsx@X"
+			}
+		},
+		{
+			"packageName": "@s/lib",
+			"packageDir": "C:\\p\\node_modules\\@s\\lib",
+			"filePath": "C:\\p\\node_modules\\@s\\lib\\out\\x.d.d.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "",
+			"fullName": "X",
+			"result": {
+				"isPackage": true,
+				"internalId": "@s/lib:out/x.d@X"
+			}
+		},
+		{
+			"packageName": "@s/lib",
+			"packageDir": "C:\\real\\lib",
+			"filePath": "C:\\real\\lib\\out\\x.d.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "",
+			"fullName": "X",
+			"result": {
+				"isPackage": true,
+				"internalId": "@s/lib:out/x@X"
+			}
+		},
+		{
+			"packageName": "@s/lib",
+			"packageDir": "C:\\real\\lib",
+			"filePath": "C:\\elsewhere\\x.d.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "",
+			"fullName": "X",
+			"result": {
+				"isPackage": true,
+				"internalId": "@s/lib:../../elsewhere/x@X"
+			}
+		},
+		{
+			"packageName": "game",
+			"packageDir": "C:\\p",
+			"filePath": "C:\\p\\srcx\\a.ts",
+			"rootDirs": [
+				"C:\\p\\src"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "",
+			"fullName": "A",
+			"result": {
+				"isPackage": true,
+				"internalId": "game:srcx/a@A"
+			}
+		},
+		{
+			"packageName": "game",
+			"packageDir": "C:\\p",
+			"filePath": "C:\\p\\..src\\a.ts",
+			"rootDirs": [
+				"C:\\p"
+			],
+			"currentDirectory": "C:\\p",
+			"outputPath": "C:\\p\\..src\\a.lua",
+			"fullName": "A",
+			"result": {
+				"isPackage": true,
+				"internalId": "game:..src/a@A"
+			}
+		}
+	]
+}

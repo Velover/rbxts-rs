@@ -1,0 +1,440 @@
+{
+	"cases": [
+		{
+			"name": "in the tsconfig directory",
+			"files": [
+				[
+					"places/a/flamework.config.json",
+					"{}"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{}",
+			"env": [],
+			"result": {
+				"configPath": "<ROOT>\\places\\a\\flamework.config.json",
+				"config": "{}",
+				"project": "{}",
+				"env": []
+			}
+		},
+		{
+			"name": "walks up",
+			"files": [
+				[
+					"flamework.config.json",
+					"{ \"core\": {} }"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{}",
+			"env": [],
+			"result": {
+				"configPath": "<ROOT>\\flamework.config.json",
+				"config": "{}",
+				"project": "{\"core\":{}}",
+				"env": []
+			}
+		},
+		{
+			"name": "nearest wins",
+			"files": [
+				[
+					"flamework.config.json",
+					"{ \"core\": {} }"
+				],
+				[
+					"places/flamework.config.json",
+					"{ \"networking\": {} }"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{}",
+			"env": [],
+			"result": {
+				"configPath": "<ROOT>\\places\\flamework.config.json",
+				"config": "{}",
+				"project": "{\"networking\":{}}",
+				"env": []
+			}
+		},
+		{
+			"name": "none",
+			"files": [],
+			"projectDir": "place",
+			"entry": "{}",
+			"env": [],
+			"result": {
+				"configPath": null,
+				"config": "{}",
+				"project": "{}",
+				"env": []
+			}
+		},
+		{
+			"name": "not above the root",
+			"files": [
+				[
+					"../flamework.config.json",
+					"{}"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{}",
+			"env": [],
+			"result": {
+				"configPath": null,
+				"config": "{}",
+				"project": "{}",
+				"env": []
+			}
+		},
+		{
+			"name": "explicit configFile",
+			"files": [
+				[
+					"places/a/config/fw.json",
+					"{ \"transformer\": { \"hashPrefix\": \"$x\" } }"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{\"configFile\":\"config/fw.json\"}",
+			"env": [],
+			"result": {
+				"configPath": "<ROOT>\\places\\a\\config\\fw.json",
+				"config": "{\"hashPrefix\":\"$x\"}",
+				"project": "{\"transformer\":{\"hashPrefix\":\"$x\"}}",
+				"env": []
+			}
+		},
+		{
+			"name": "explicit missing",
+			"files": [],
+			"projectDir": "place",
+			"entry": "{\"configFile\":\"missing.json\"}",
+			"env": [],
+			"error": "The Flamework config file 'missing.json' does not exist (looked at '<ROOT>\\places\\a\\missing.json')."
+		},
+		{
+			"name": "explicit outside",
+			"files": [
+				[
+					"other.json",
+					"{ \"core\": {} }"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{\"configFile\":\"../../other.json\"}",
+			"env": [],
+			"result": {
+				"configPath": "<ROOT>\\other.json",
+				"config": "{}",
+				"project": "{\"core\":{}}",
+				"env": []
+			}
+		},
+		{
+			"name": "configFile not a path",
+			"files": [],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"configFile\":true}",
+			"env": [],
+			"error": "\"configFile\" on the tsconfig entry for @flamework-experimental/transformer must be a path, relative to the tsconfig's directory."
+		},
+		{
+			"name": "configFile null",
+			"files": [],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"configFile\":null}",
+			"env": [],
+			"error": "\"configFile\" on the tsconfig entry for @flamework-experimental/transformer must be a path, relative to the tsconfig's directory."
+		},
+		{
+			"name": "entry option plugins",
+			"files": [
+				[
+					"places/a/flamework.config.json",
+					"{ \"transformer\": { \"obfuscation\": false } }"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"plugins\":[\"./plugin.cjs\"]}",
+			"env": [],
+			"error": "The tsconfig entry for @flamework-experimental/transformer takes only \"transform\" and \"configFile\"; transformer options are read from flamework.config.json.\nMove 'plugins' to the \"transformer\" section of <ROOT>\\places\\a\\flamework.config.json."
+		},
+		{
+			"name": "entry option noSemanticDiagnostics",
+			"files": [
+				[
+					"places/a/flamework.config.json",
+					"{ \"transformer\": { \"obfuscation\": false } }"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"noSemanticDiagnostics\":true}",
+			"env": [],
+			"error": "The tsconfig entry for @flamework-experimental/transformer takes only \"transform\" and \"configFile\"; transformer options are read from flamework.config.json.\nMove 'noSemanticDiagnostics' to the \"transformer\" section of <ROOT>\\places\\a\\flamework.config.json."
+		},
+		{
+			"name": "entry option salt",
+			"files": [
+				[
+					"places/a/flamework.config.json",
+					"{ \"transformer\": { \"obfuscation\": false } }"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"salt\":\"s\"}",
+			"env": [],
+			"error": "The tsconfig entry for @flamework-experimental/transformer takes only \"transform\" and \"configFile\"; transformer options are read from flamework.config.json.\nMove 'salt' to the \"transformer\" section of <ROOT>\\places\\a\\flamework.config.json."
+		},
+		{
+			"name": "entry option hashPrefix",
+			"files": [
+				[
+					"places/a/flamework.config.json",
+					"{ \"transformer\": { \"obfuscation\": false } }"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"hashPrefix\":\"$g\"}",
+			"env": [],
+			"error": "The tsconfig entry for @flamework-experimental/transformer takes only \"transform\" and \"configFile\"; transformer options are read from flamework.config.json.\nMove 'hashPrefix' to the \"transformer\" section of <ROOT>\\places\\a\\flamework.config.json."
+		},
+		{
+			"name": "entry option obfuscation",
+			"files": [
+				[
+					"places/a/flamework.config.json",
+					"{ \"transformer\": { \"obfuscation\": false } }"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"obfuscation\":true}",
+			"env": [],
+			"error": "The tsconfig entry for @flamework-experimental/transformer takes only \"transform\" and \"configFile\"; transformer options are read from flamework.config.json.\nMove 'obfuscation' to the \"transformer\" section of <ROOT>\\places\\a\\flamework.config.json."
+		},
+		{
+			"name": "entry option idGenerationMode",
+			"files": [
+				[
+					"places/a/flamework.config.json",
+					"{ \"transformer\": { \"obfuscation\": false } }"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"idGenerationMode\":\"short\"}",
+			"env": [],
+			"error": "The tsconfig entry for @flamework-experimental/transformer takes only \"transform\" and \"configFile\"; transformer options are read from flamework.config.json.\nMove 'idGenerationMode' to the \"transformer\" section of <ROOT>\\places\\a\\flamework.config.json."
+		},
+		{
+			"name": "entry option optimizations",
+			"files": [
+				[
+					"places/a/flamework.config.json",
+					"{ \"transformer\": { \"obfuscation\": false } }"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"optimizations\":{\"guardGenerationDedupLimit\":3}}",
+			"env": [],
+			"error": "The tsconfig entry for @flamework-experimental/transformer takes only \"transform\" and \"configFile\"; transformer options are read from flamework.config.json.\nMove 'optimizations' to the \"transformer\" section of <ROOT>\\places\\a\\flamework.config.json."
+		},
+		{
+			"name": "entry option, new file",
+			"files": [],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"obfuscation\":true}",
+			"env": [],
+			"error": "The tsconfig entry for @flamework-experimental/transformer takes only \"transform\" and \"configFile\"; transformer options are read from flamework.config.json.\nMove 'obfuscation' to the \"transformer\" section of <ROOT>\\places\\a\\flamework.config.json, a new file."
+		},
+		{
+			"name": "entry option, configFile",
+			"files": [
+				[
+					"places/a/config/fw.json",
+					"{}"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"configFile\":\"config/fw.json\",\"hashPrefix\":\"$g\"}",
+			"env": [],
+			"error": "The tsconfig entry for @flamework-experimental/transformer takes only \"transform\" and \"configFile\"; transformer options are read from flamework.config.json.\nMove 'hashPrefix' to the \"transformer\" section of <ROOT>\\places\\a\\config\\fw.json."
+		},
+		{
+			"name": "entry unknown keys",
+			"files": [],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"$rbxpackmode$\":true,\"preloadIds\":true,\"hashPrefx\":\"$g\"}",
+			"env": [],
+			"error": "The tsconfig entry for @flamework-experimental/transformer takes only \"transform\" and \"configFile\"; transformer options are read from flamework.config.json.\nRemove '$rbxpackmode$', 'preloadIds', 'hashPrefx': not a transformer option."
+		},
+		{
+			"name": "entry both",
+			"files": [],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"obfuscation\":true,\"hashPrefix\":\"$g\",\"$rbxpackmode$\":true}",
+			"env": [],
+			"error": "The tsconfig entry for @flamework-experimental/transformer takes only \"transform\" and \"configFile\"; transformer options are read from flamework.config.json.\nMove 'obfuscation', 'hashPrefix' to the \"transformer\" section of <ROOT>\\places\\a\\flamework.config.json, a new file.\nRemove '$rbxpackmode$': not a transformer option."
+		},
+		{
+			"name": "entry undefined-valued key ignored",
+			"files": [],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\"}",
+			"env": [],
+			"result": {
+				"configPath": null,
+				"config": "{}",
+				"project": "{}",
+				"env": []
+			}
+		},
+		{
+			"name": "entry null-valued key",
+			"files": [],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"salt\":null}",
+			"env": [],
+			"error": "The tsconfig entry for @flamework-experimental/transformer takes only \"transform\" and \"configFile\"; transformer options are read from flamework.config.json.\nMove 'salt' to the \"transformer\" section of <ROOT>\\places\\a\\flamework.config.json, a new file."
+		},
+		{
+			"name": "loader keys",
+			"files": [
+				[
+					"places/a/flamework.config.json",
+					"{ \"transformer\": { \"hashPrefix\": \"$file\" } }"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"import\":\"default\",\"type\":\"program\",\"after\":false,\"afterDeclarations\":false,\"name\":\"flamework\",\"transformProgram\":false,\"isEsm\":false,\"tsConfig\":\"./tsconfig.json\",\"resolvePathAliases\":false}",
+			"env": [],
+			"result": {
+				"configPath": "<ROOT>\\places\\a\\flamework.config.json",
+				"config": "{\"hashPrefix\":\"$file\"}",
+				"project": "{\"transformer\":{\"hashPrefix\":\"$file\"}}",
+				"env": []
+			}
+		},
+		{
+			"name": "configFile with every option",
+			"files": [
+				[
+					"places/a/config/fw.json",
+					"{ \"transformer\": { \"hashPrefix\": \"$x\", \"obfuscation\": true, \"optimizations\": { \"guardGenerationDedupLimit\": 3 } } }"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{\"transform\":\"@flamework-experimental/transformer\",\"configFile\":\"config/fw.json\"}",
+			"env": [],
+			"result": {
+				"configPath": "<ROOT>\\places\\a\\config\\fw.json",
+				"config": "{\"hashPrefix\":\"$x\",\"obfuscation\":true,\"optimizations\":{\"guardGenerationDedupLimit\":3}}",
+				"project": "{\"transformer\":{\"hashPrefix\":\"$x\",\"obfuscation\":true,\"optimizations\":{\"guardGenerationDedupLimit\":3}}}",
+				"env": []
+			}
+		},
+		{
+			"name": "env files next to the config",
+			"files": [
+				[
+					"flamework.config.json",
+					"{ \"transformer\": { \"hashPrefix\": \"${FW_TEST_PREFIX}\", \"salt\": \"${FW_TEST_SALT}\" }, \"scopes\": { \"active\": \"${FW_TEST_SCOPES}\" } }"
+				],
+				[
+					".env",
+					"FW_TEST_PREFIX=$a\nFW_TEST_SALT=from-env\nFW_TEST_SCOPES=a\n"
+				],
+				[
+					".env.local",
+					"FW_TEST_SALT=from-local\nFW_TEST_SCOPES=b\n"
+				]
+			],
+			"projectDir": "root",
+			"entry": "{}",
+			"env": [
+				[
+					"FW_TEST_SCOPES",
+					"c"
+				]
+			],
+			"result": {
+				"configPath": "<ROOT>\\flamework.config.json",
+				"config": "{\"hashPrefix\":\"$a\",\"salt\":\"from-local\"}",
+				"project": "{\"transformer\":{\"hashPrefix\":\"$a\",\"salt\":\"from-local\"},\"scopes\":{\"active\":[\"c\"]}}",
+				"env": [
+					[
+						"FW_TEST_PREFIX",
+						"$a"
+					],
+					[
+						"FW_TEST_SALT",
+						"from-local"
+					],
+					[
+						"FW_TEST_SCOPES",
+						"c"
+					]
+				]
+			}
+		},
+		{
+			"name": "env next to the tsconfig without a config",
+			"files": [
+				[
+					"places/a/.env",
+					"FW_FP_LONE=yes\n"
+				],
+				[
+					".env",
+					"ROOT=1\n"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{}",
+			"env": [],
+			"result": {
+				"configPath": null,
+				"config": "{}",
+				"project": "{}",
+				"env": [
+					[
+						"FW_FP_LONE",
+						"yes"
+					]
+				]
+			}
+		},
+		{
+			"name": "env next to the config, not the tsconfig",
+			"files": [
+				[
+					"flamework.config.json",
+					"{}"
+				],
+				[
+					"places/a/.env",
+					"PLACE=1\n"
+				],
+				[
+					".env",
+					"ROOT=1\n"
+				]
+			],
+			"projectDir": "place",
+			"entry": "{}",
+			"env": [],
+			"result": {
+				"configPath": "<ROOT>\\flamework.config.json",
+				"config": "{}",
+				"project": "{}",
+				"env": [
+					[
+						"ROOT",
+						"1"
+					]
+				]
+			}
+		}
+	]
+}

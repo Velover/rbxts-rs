@@ -1,0 +1,781 @@
+{
+	"files": [
+		"src/Server/Services/DataService.ts",
+		"src/Server/Services/nested/Inner.ts",
+		"src/Server/Components/PlayerComponent.ts",
+		"src/Server/Components/sub/Deep.ts",
+		"src/Server/components.ts",
+		"src/Server/main.server.ts",
+		"src/Server/.hidden/Secret.ts",
+		"src/Shared/Components/SharedComp.ts",
+		"src/Shared/components2/x.ts",
+		"src/Shared/Network.ts",
+		"src/Client/Controllers/InputController.ts",
+		"src/Client/Components/UI/Button.tsx",
+		"src/Client/COMPONENTS.d.ts",
+		"src/ReplicatedStorage/Components/A.d.ts",
+		"src/Σigma/ς.ts",
+		"src/Straße/x.ts",
+		"src/ÄÖÜ/äöü.ts",
+		"external/Ext.ts",
+		"external/sub/DeepExt.ts",
+		"external/Components/LinkedComp.ts",
+		"externalTwo/Two.ts",
+		"externalTwo/inner/TwoDeep.ts"
+	],
+	"links": [
+		{
+			"target": "external",
+			"at": "src/Linked",
+			"type": "junction"
+		},
+		{
+			"target": "externalTwo",
+			"at": "external/LinkToTwo",
+			"type": "junction"
+		},
+		{
+			"target": "external",
+			"at": "src/Server/Services/ServicesLink",
+			"type": "junction"
+		},
+		{
+			"target": "external/Ext.ts",
+			"at": "src/Shared/FileLink.ts",
+			"type": "file"
+		},
+		{
+			"target": "external",
+			"at": "src/Shared/DirSymlink",
+			"type": "dir"
+		}
+	],
+	"rows": [
+		{
+			"pattern": "src/server/**/*",
+			"results": [
+				"src/Server/Components",
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Components/sub",
+				"src/Server/Components/sub/Deep.ts",
+				"src/Server/Services",
+				"src/Server/Services/DataService.ts",
+				"src/Server/Services/ServicesLink",
+				"src/Server/Services/ServicesLink/Components",
+				"src/Server/Services/ServicesLink/Ext.ts",
+				"src/Server/Services/ServicesLink/LinkToTwo",
+				"src/Server/Services/ServicesLink/sub",
+				"src/Server/Services/nested",
+				"src/Server/Services/nested/Inner.ts",
+				"src/Server/components.ts",
+				"src/Server/main.server.ts"
+			]
+		},
+		{
+			"pattern": "src/server/**/*.ts",
+			"results": [
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Components/sub/Deep.ts",
+				"src/Server/Services/DataService.ts",
+				"src/Server/Services/ServicesLink/Ext.ts",
+				"src/Server/Services/nested/Inner.ts",
+				"src/Server/components.ts",
+				"src/Server/main.server.ts"
+			]
+		},
+		{
+			"pattern": "src/**/components",
+			"results": [
+				"src/Client/Components",
+				"src/Linked/components",
+				"src/ReplicatedStorage/Components",
+				"src/Server/Components",
+				"src/Server/Services/ServicesLink/components",
+				"src/Shared/Components",
+				"src/Shared/DirSymlink/components"
+			]
+		},
+		{
+			"pattern": "src/**/Components",
+			"results": [
+				"src/Client/Components",
+				"src/Linked/Components",
+				"src/ReplicatedStorage/Components",
+				"src/Server/Components",
+				"src/Server/Services/ServicesLink/Components",
+				"src/Shared/Components",
+				"src/Shared/DirSymlink/Components"
+			]
+		},
+		{
+			"pattern": "src/**/components/",
+			"results": [
+				"src/Client/Components",
+				"src/Linked/Components",
+				"src/ReplicatedStorage/Components",
+				"src/Server/Components",
+				"src/Server/Services/ServicesLink/Components",
+				"src/Shared/Components",
+				"src/Shared/DirSymlink/Components"
+			]
+		},
+		{
+			"pattern": "src/**/components/**",
+			"results": [
+				"src/Client/Components",
+				"src/Client/Components/UI",
+				"src/Client/Components/UI/Button.tsx",
+				"src/Linked/Components",
+				"src/Linked/Components/LinkedComp.ts",
+				"src/ReplicatedStorage/Components",
+				"src/ReplicatedStorage/Components/A.d.ts",
+				"src/Server/Components",
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Components/sub",
+				"src/Server/Components/sub/Deep.ts",
+				"src/Server/Services/ServicesLink/Components",
+				"src/Server/Services/ServicesLink/Components/LinkedComp.ts",
+				"src/Shared/Components",
+				"src/Shared/Components/SharedComp.ts",
+				"src/Shared/DirSymlink/Components",
+				"src/Shared/DirSymlink/Components/LinkedComp.ts"
+			]
+		},
+		{
+			"pattern": "src/**/components/*.ts",
+			"results": [
+				"src/Linked/Components/LinkedComp.ts",
+				"src/ReplicatedStorage/Components/A.d.ts",
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Services/ServicesLink/Components/LinkedComp.ts",
+				"src/Shared/Components/SharedComp.ts",
+				"src/Shared/DirSymlink/Components/LinkedComp.ts"
+			]
+		},
+		{
+			"pattern": "src/**/components/**/*.ts",
+			"results": [
+				"src/Linked/Components/LinkedComp.ts",
+				"src/ReplicatedStorage/Components/A.d.ts",
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Components/sub/Deep.ts",
+				"src/Server/Services/ServicesLink/Components/LinkedComp.ts",
+				"src/Shared/Components/SharedComp.ts",
+				"src/Shared/DirSymlink/Components/LinkedComp.ts"
+			]
+		},
+		{
+			"pattern": "src/*/components/*",
+			"results": [
+				"src/Client/Components/UI",
+				"src/Linked/Components/LinkedComp.ts",
+				"src/ReplicatedStorage/Components/A.d.ts",
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Components/sub",
+				"src/Shared/Components/SharedComp.ts"
+			]
+		},
+		{
+			"pattern": "src/**/*",
+			"results": [
+				"src/Client",
+				"src/Client/COMPONENTS.d.ts",
+				"src/Client/Components",
+				"src/Client/Components/UI",
+				"src/Client/Components/UI/Button.tsx",
+				"src/Client/Controllers",
+				"src/Client/Controllers/InputController.ts",
+				"src/Linked",
+				"src/Linked/Components",
+				"src/Linked/Ext.ts",
+				"src/Linked/LinkToTwo",
+				"src/Linked/sub",
+				"src/ReplicatedStorage",
+				"src/ReplicatedStorage/Components",
+				"src/ReplicatedStorage/Components/A.d.ts",
+				"src/Server",
+				"src/Server/Components",
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Components/sub",
+				"src/Server/Components/sub/Deep.ts",
+				"src/Server/Services",
+				"src/Server/Services/DataService.ts",
+				"src/Server/Services/ServicesLink",
+				"src/Server/Services/ServicesLink/Components",
+				"src/Server/Services/ServicesLink/Ext.ts",
+				"src/Server/Services/ServicesLink/LinkToTwo",
+				"src/Server/Services/ServicesLink/sub",
+				"src/Server/Services/nested",
+				"src/Server/Services/nested/Inner.ts",
+				"src/Server/components.ts",
+				"src/Server/main.server.ts",
+				"src/Shared",
+				"src/Shared/Components",
+				"src/Shared/Components/SharedComp.ts",
+				"src/Shared/DirSymlink",
+				"src/Shared/DirSymlink/Components",
+				"src/Shared/DirSymlink/Ext.ts",
+				"src/Shared/DirSymlink/LinkToTwo",
+				"src/Shared/DirSymlink/sub",
+				"src/Shared/FileLink.ts",
+				"src/Shared/Network.ts",
+				"src/Shared/components2",
+				"src/Shared/components2/x.ts",
+				"src/Straße",
+				"src/Straße/x.ts",
+				"src/ÄÖÜ",
+				"src/ÄÖÜ/äöü.ts",
+				"src/Σigma",
+				"src/Σigma/ς.ts"
+			]
+		},
+		{
+			"pattern": "src/**",
+			"results": [
+				"src",
+				"src/Client",
+				"src/Client/COMPONENTS.d.ts",
+				"src/Client/Components",
+				"src/Client/Components/UI",
+				"src/Client/Components/UI/Button.tsx",
+				"src/Client/Controllers",
+				"src/Client/Controllers/InputController.ts",
+				"src/Linked",
+				"src/ReplicatedStorage",
+				"src/ReplicatedStorage/Components",
+				"src/ReplicatedStorage/Components/A.d.ts",
+				"src/Server",
+				"src/Server/Components",
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Components/sub",
+				"src/Server/Components/sub/Deep.ts",
+				"src/Server/Services",
+				"src/Server/Services/DataService.ts",
+				"src/Server/Services/ServicesLink",
+				"src/Server/Services/nested",
+				"src/Server/Services/nested/Inner.ts",
+				"src/Server/components.ts",
+				"src/Server/main.server.ts",
+				"src/Shared",
+				"src/Shared/Components",
+				"src/Shared/Components/SharedComp.ts",
+				"src/Shared/DirSymlink",
+				"src/Shared/FileLink.ts",
+				"src/Shared/Network.ts",
+				"src/Shared/components2",
+				"src/Shared/components2/x.ts",
+				"src/Straße",
+				"src/Straße/x.ts",
+				"src/ÄÖÜ",
+				"src/ÄÖÜ/äöü.ts",
+				"src/Σigma",
+				"src/Σigma/ς.ts"
+			]
+		},
+		{
+			"pattern": "src/**/*.tsx",
+			"results": [
+				"src/Client/Components/UI/Button.tsx"
+			]
+		},
+		{
+			"pattern": "src/**/*.d.ts",
+			"results": [
+				"src/Client/COMPONENTS.d.ts",
+				"src/ReplicatedStorage/Components/A.d.ts"
+			]
+		},
+		{
+			"pattern": "SRC/SERVER/**/*",
+			"results": [
+				"src/Server/Components",
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Components/sub",
+				"src/Server/Components/sub/Deep.ts",
+				"src/Server/Services",
+				"src/Server/Services/DataService.ts",
+				"src/Server/Services/ServicesLink",
+				"src/Server/Services/ServicesLink/Components",
+				"src/Server/Services/ServicesLink/Ext.ts",
+				"src/Server/Services/ServicesLink/LinkToTwo",
+				"src/Server/Services/ServicesLink/sub",
+				"src/Server/Services/nested",
+				"src/Server/Services/nested/Inner.ts",
+				"src/Server/components.ts",
+				"src/Server/main.server.ts"
+			]
+		},
+		{
+			"pattern": "SRC/SERVER/SERVICES/*",
+			"results": [
+				"src/Server/Services/DataService.ts",
+				"src/Server/Services/ServicesLink",
+				"src/Server/Services/nested"
+			]
+		},
+		{
+			"pattern": "src/server/services/DATASERVICE.TS",
+			"results": [
+				"src/Server/Services/DATASERVICE.TS"
+			]
+		},
+		{
+			"pattern": "src/server/services/dataservice.ts",
+			"results": [
+				"src/Server/Services/dataservice.ts"
+			]
+		},
+		{
+			"pattern": "src/SERVER/Services/Nested/inner.TS",
+			"results": [
+				"src/Server/Services/nested/inner.TS"
+			]
+		},
+		{
+			"pattern": "src/server/components",
+			"results": [
+				"src/Server/components"
+			]
+		},
+		{
+			"pattern": "src/server/COMPONENTS.TS",
+			"results": [
+				"src/Server/COMPONENTS.TS"
+			]
+		},
+		{
+			"pattern": "src/client/components*",
+			"results": [
+				"src/Client/COMPONENTS.d.ts",
+				"src/Client/Components"
+			]
+		},
+		{
+			"pattern": "src/client/components.d.ts",
+			"results": [
+				"src/Client/components.d.ts"
+			]
+		},
+		{
+			"pattern": "src/**/component*",
+			"results": [
+				"src/Client/COMPONENTS.d.ts",
+				"src/Client/Components",
+				"src/Linked/Components",
+				"src/ReplicatedStorage/Components",
+				"src/Server/Components",
+				"src/Server/Services/ServicesLink/Components",
+				"src/Server/components.ts",
+				"src/Shared/Components",
+				"src/Shared/DirSymlink/Components",
+				"src/Shared/components2"
+			]
+		},
+		{
+			"pattern": "src/linked/**",
+			"results": [
+				"src/Linked",
+				"src/Linked/Components",
+				"src/Linked/Components/LinkedComp.ts",
+				"src/Linked/Ext.ts",
+				"src/Linked/LinkToTwo",
+				"src/Linked/sub",
+				"src/Linked/sub/DeepExt.ts"
+			]
+		},
+		{
+			"pattern": "src/linked/*",
+			"results": [
+				"src/Linked/Components",
+				"src/Linked/Ext.ts",
+				"src/Linked/LinkToTwo",
+				"src/Linked/sub"
+			]
+		},
+		{
+			"pattern": "src/linked/**/*.ts",
+			"results": [
+				"src/Linked/Components/LinkedComp.ts",
+				"src/Linked/Ext.ts",
+				"src/Linked/LinkToTwo/Two.ts",
+				"src/Linked/sub/DeepExt.ts"
+			]
+		},
+		{
+			"pattern": "src/Linked/sub/*",
+			"results": [
+				"src/Linked/sub/DeepExt.ts"
+			]
+		},
+		{
+			"pattern": "src/**/ext.ts",
+			"results": [
+				"src/Linked/ext.ts",
+				"src/Server/Services/ServicesLink/ext.ts",
+				"src/Shared/DirSymlink/ext.ts"
+			]
+		},
+		{
+			"pattern": "src/**/deepext.ts",
+			"results": []
+		},
+		{
+			"pattern": "src/**/two.ts",
+			"results": []
+		},
+		{
+			"pattern": "src/**/twodeep.ts",
+			"results": []
+		},
+		{
+			"pattern": "src/**/linkedcomp.ts",
+			"results": []
+		},
+		{
+			"pattern": "src/server/services/serviceslink/**",
+			"results": [
+				"src/Server/Services/ServicesLink",
+				"src/Server/Services/ServicesLink/Components",
+				"src/Server/Services/ServicesLink/Components/LinkedComp.ts",
+				"src/Server/Services/ServicesLink/Ext.ts",
+				"src/Server/Services/ServicesLink/LinkToTwo",
+				"src/Server/Services/ServicesLink/sub",
+				"src/Server/Services/ServicesLink/sub/DeepExt.ts"
+			]
+		},
+		{
+			"pattern": "src/shared/*",
+			"results": [
+				"src/Shared/Components",
+				"src/Shared/DirSymlink",
+				"src/Shared/FileLink.ts",
+				"src/Shared/Network.ts",
+				"src/Shared/components2"
+			]
+		},
+		{
+			"pattern": "src/shared/**",
+			"results": [
+				"src/Shared",
+				"src/Shared/Components",
+				"src/Shared/Components/SharedComp.ts",
+				"src/Shared/DirSymlink",
+				"src/Shared/FileLink.ts",
+				"src/Shared/Network.ts",
+				"src/Shared/components2",
+				"src/Shared/components2/x.ts"
+			]
+		},
+		{
+			"pattern": "src/shared/filelink.ts",
+			"results": [
+				"src/Shared/filelink.ts"
+			]
+		},
+		{
+			"pattern": "src/shared/dirsymlink/**",
+			"results": [
+				"src/Shared/DirSymlink",
+				"src/Shared/DirSymlink/Components",
+				"src/Shared/DirSymlink/Components/LinkedComp.ts",
+				"src/Shared/DirSymlink/Ext.ts",
+				"src/Shared/DirSymlink/LinkToTwo",
+				"src/Shared/DirSymlink/sub",
+				"src/Shared/DirSymlink/sub/DeepExt.ts"
+			]
+		},
+		{
+			"pattern": "./src/server/**/*",
+			"results": [
+				"src/Server/Components",
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Components/sub",
+				"src/Server/Components/sub/Deep.ts",
+				"src/Server/Services",
+				"src/Server/Services/DataService.ts",
+				"src/Server/Services/ServicesLink",
+				"src/Server/Services/ServicesLink/Components",
+				"src/Server/Services/ServicesLink/Ext.ts",
+				"src/Server/Services/ServicesLink/LinkToTwo",
+				"src/Server/Services/ServicesLink/sub",
+				"src/Server/Services/nested",
+				"src/Server/Services/nested/Inner.ts",
+				"src/Server/components.ts",
+				"src/Server/main.server.ts"
+			]
+		},
+		{
+			"pattern": "src/server/**/*.server.ts",
+			"results": [
+				"src/Server/main.server.ts"
+			]
+		},
+		{
+			"pattern": "src/σigma/*",
+			"results": [
+				"src/Σigma/ς.ts"
+			]
+		},
+		{
+			"pattern": "src/ΣIGMA/Σ.ts",
+			"results": []
+		},
+		{
+			"pattern": "src/σigma/σ.ts",
+			"results": []
+		},
+		{
+			"pattern": "src/STRASSE/*",
+			"results": []
+		},
+		{
+			"pattern": "src/straße/X.TS",
+			"results": [
+				"src/Straße/X.TS"
+			]
+		},
+		{
+			"pattern": "src/äöü/*",
+			"results": [
+				"src/ÄÖÜ/äöü.ts"
+			]
+		},
+		{
+			"pattern": "src/ÄÖÜ/ÄÖÜ.TS",
+			"results": [
+				"src/ÄÖÜ/ÄÖÜ.TS"
+			]
+		},
+		{
+			"pattern": "src/*/",
+			"results": [
+				"src/Client",
+				"src/Linked",
+				"src/ReplicatedStorage",
+				"src/Server",
+				"src/Shared",
+				"src/Straße",
+				"src/ÄÖÜ",
+				"src/Σigma"
+			]
+		},
+		{
+			"pattern": "**/components",
+			"results": [
+				"external/Components",
+				"src/Client/Components",
+				"src/ReplicatedStorage/Components",
+				"src/Server/Components",
+				"src/Shared/Components"
+			]
+		},
+		{
+			"pattern": "src/{server,shared}/**/*",
+			"results": [
+				"src/Server/Components",
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Components/sub",
+				"src/Server/Components/sub/Deep.ts",
+				"src/Server/Services",
+				"src/Server/Services/DataService.ts",
+				"src/Server/Services/ServicesLink",
+				"src/Server/Services/ServicesLink/Components",
+				"src/Server/Services/ServicesLink/Ext.ts",
+				"src/Server/Services/ServicesLink/LinkToTwo",
+				"src/Server/Services/ServicesLink/sub",
+				"src/Server/Services/nested",
+				"src/Server/Services/nested/Inner.ts",
+				"src/Server/components.ts",
+				"src/Server/main.server.ts",
+				"src/Shared/Components",
+				"src/Shared/Components/SharedComp.ts",
+				"src/Shared/DirSymlink",
+				"src/Shared/DirSymlink/Components",
+				"src/Shared/DirSymlink/Ext.ts",
+				"src/Shared/DirSymlink/LinkToTwo",
+				"src/Shared/DirSymlink/sub",
+				"src/Shared/FileLink.ts",
+				"src/Shared/Network.ts",
+				"src/Shared/components2",
+				"src/Shared/components2/x.ts"
+			]
+		},
+		{
+			"pattern": "src/{Server,client}/components/**/*.{ts,tsx}",
+			"results": [
+				"src/Client/Components/UI/Button.tsx",
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Components/sub/Deep.ts"
+			]
+		},
+		{
+			"pattern": "src/*/**",
+			"results": [
+				"src/Client",
+				"src/Client/COMPONENTS.d.ts",
+				"src/Client/Components",
+				"src/Client/Components/UI",
+				"src/Client/Components/UI/Button.tsx",
+				"src/Client/Controllers",
+				"src/Client/Controllers/InputController.ts",
+				"src/Linked",
+				"src/ReplicatedStorage",
+				"src/ReplicatedStorage/Components",
+				"src/ReplicatedStorage/Components/A.d.ts",
+				"src/Server",
+				"src/Server/Components",
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Components/sub",
+				"src/Server/Components/sub/Deep.ts",
+				"src/Server/Services",
+				"src/Server/Services/DataService.ts",
+				"src/Server/Services/ServicesLink",
+				"src/Server/Services/nested",
+				"src/Server/Services/nested/Inner.ts",
+				"src/Server/components.ts",
+				"src/Server/main.server.ts",
+				"src/Shared",
+				"src/Shared/Components",
+				"src/Shared/Components/SharedComp.ts",
+				"src/Shared/DirSymlink",
+				"src/Shared/FileLink.ts",
+				"src/Shared/Network.ts",
+				"src/Shared/components2",
+				"src/Shared/components2/x.ts",
+				"src/Straße",
+				"src/Straße/x.ts",
+				"src/ÄÖÜ",
+				"src/ÄÖÜ/äöü.ts",
+				"src/Σigma",
+				"src/Σigma/ς.ts"
+			]
+		},
+		{
+			"pattern": "src/*/**/*.ts",
+			"results": [
+				"src/Client/COMPONENTS.d.ts",
+				"src/Client/Controllers/InputController.ts",
+				"src/Linked/Components/LinkedComp.ts",
+				"src/Linked/Ext.ts",
+				"src/Linked/LinkToTwo/Two.ts",
+				"src/Linked/sub/DeepExt.ts",
+				"src/ReplicatedStorage/Components/A.d.ts",
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Components/sub/Deep.ts",
+				"src/Server/Services/DataService.ts",
+				"src/Server/Services/ServicesLink/Ext.ts",
+				"src/Server/Services/nested/Inner.ts",
+				"src/Server/components.ts",
+				"src/Server/main.server.ts",
+				"src/Shared/Components/SharedComp.ts",
+				"src/Shared/DirSymlink/Ext.ts",
+				"src/Shared/FileLink.ts",
+				"src/Shared/Network.ts",
+				"src/Shared/components2/x.ts",
+				"src/Straße/x.ts",
+				"src/ÄÖÜ/äöü.ts",
+				"src/Σigma/ς.ts"
+			]
+		},
+		{
+			"pattern": "src/Server/Services/ServicesLink/**/*.ts",
+			"results": [
+				"src/Server/Services/ServicesLink/Components/LinkedComp.ts",
+				"src/Server/Services/ServicesLink/Ext.ts",
+				"src/Server/Services/ServicesLink/LinkToTwo/Two.ts",
+				"src/Server/Services/ServicesLink/sub/DeepExt.ts"
+			]
+		},
+		{
+			"pattern": "src/**/LinkToTwo/*",
+			"results": [
+				"src/Linked/LinkToTwo/Two.ts",
+				"src/Linked/LinkToTwo/inner",
+				"src/Server/Services/ServicesLink/LinkToTwo/Two.ts",
+				"src/Server/Services/ServicesLink/LinkToTwo/inner",
+				"src/Shared/DirSymlink/LinkToTwo/Two.ts",
+				"src/Shared/DirSymlink/LinkToTwo/inner"
+			]
+		},
+		{
+			"pattern": "**/*.ts",
+			"results": [
+				"external/Components/LinkedComp.ts",
+				"external/Ext.ts",
+				"external/sub/DeepExt.ts",
+				"externalTwo/Two.ts",
+				"externalTwo/inner/TwoDeep.ts",
+				"src/Client/COMPONENTS.d.ts",
+				"src/Client/Controllers/InputController.ts",
+				"src/ReplicatedStorage/Components/A.d.ts",
+				"src/Server/Components/PlayerComponent.ts",
+				"src/Server/Components/sub/Deep.ts",
+				"src/Server/Services/DataService.ts",
+				"src/Server/Services/nested/Inner.ts",
+				"src/Server/components.ts",
+				"src/Server/main.server.ts",
+				"src/Shared/Components/SharedComp.ts",
+				"src/Shared/FileLink.ts",
+				"src/Shared/Network.ts",
+				"src/Shared/components2/x.ts",
+				"src/Straße/x.ts",
+				"src/ÄÖÜ/äöü.ts",
+				"src/Σigma/ς.ts"
+			]
+		},
+		{
+			"pattern": "src/**/",
+			"results": [
+				"src",
+				"src/Client",
+				"src/Client/Components",
+				"src/Client/Components/UI",
+				"src/Client/Controllers",
+				"src/Linked",
+				"src/ReplicatedStorage",
+				"src/ReplicatedStorage/Components",
+				"src/Server",
+				"src/Server/Components",
+				"src/Server/Components/sub",
+				"src/Server/Services",
+				"src/Server/Services/ServicesLink",
+				"src/Server/Services/nested",
+				"src/Shared",
+				"src/Shared/Components",
+				"src/Shared/DirSymlink",
+				"src/Shared/FileLink.ts",
+				"src/Shared/components2",
+				"src/Straße",
+				"src/ÄÖÜ",
+				"src/Σigma"
+			]
+		},
+		{
+			"pattern": "src/shared/*/",
+			"results": [
+				"src/Shared/Components",
+				"src/Shared/DirSymlink",
+				"src/Shared/FileLink.ts",
+				"src/Shared/components2"
+			]
+		},
+		{
+			"pattern": "src/linked/linktotwo/**",
+			"results": [
+				"src/Linked/LinkToTwo",
+				"src/Linked/LinkToTwo/Two.ts",
+				"src/Linked/LinkToTwo/inner",
+				"src/Linked/LinkToTwo/inner/TwoDeep.ts"
+			]
+		},
+		{
+			"pattern": "src/**/sub/*.ts",
+			"results": [
+				"src/Linked/sub/DeepExt.ts",
+				"src/Server/Components/sub/Deep.ts",
+				"src/Server/Services/ServicesLink/sub/DeepExt.ts",
+				"src/Shared/DirSymlink/sub/DeepExt.ts"
+			]
+		}
+	]
+}

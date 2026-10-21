@@ -1,0 +1,1003 @@
+{
+	"tree": [
+		"src/glob/a.ts",
+		"src/glob/b.ts",
+		"src/glob/c.d.ts",
+		"src/glob/readme.md",
+		"src/glob/nested/deep.ts",
+		"src/glob/nested/more/deeper.ts",
+		"src/glob/.hidden.ts",
+		"src/glob/.dotdir/x.ts",
+		"src/glob/{a}.ts",
+		"src/glob/a b.ts",
+		"src/glob/x1.ts",
+		"src/glob/x2.ts",
+		"src/glob/x10.ts",
+		"src/Mixed/File.TS",
+		"src/Mixed/lower.ts",
+		"src/server/Tests/one.ts",
+		"src/server/Tests/sub/two.ts",
+		"src/client/Tests/three.ts",
+		"src/client/NotTests/four.ts",
+		"src/server/Discovery/hidden.ts",
+		"src/server/Discovery/hidA.ts",
+		"src/server/Discovery/shown.ts",
+		"src/server/Discovery/nested/deep.ts",
+		"src/ünï/ä.ts",
+		"src/ünï/😀.ts",
+		"src/.config/c.ts",
+		".root/r.ts",
+		"top.ts",
+		"src/x.ts",
+		"src/typesOnly/t.d.ts"
+	],
+	"emptyDirs": [
+		"src/empty",
+		"src/glob/emptyDir",
+		"src/server/Tests/emptyTests"
+	],
+	"rows": [
+		{
+			"pattern": "src/glob/**/*.ts",
+			"results": [
+				"src/glob/a b.ts",
+				"src/glob/a.ts",
+				"src/glob/b.ts",
+				"src/glob/c.d.ts",
+				"src/glob/nested/deep.ts",
+				"src/glob/nested/more/deeper.ts",
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts",
+				"src/glob/{a}.ts"
+			]
+		},
+		{
+			"pattern": "src/missing/**/*.ts",
+			"results": []
+		},
+		{
+			"pattern": "src/*/Tests/**",
+			"results": [
+				"src/client/Tests",
+				"src/client/Tests/three.ts",
+				"src/server/Tests",
+				"src/server/Tests/emptyTests",
+				"src/server/Tests/one.ts",
+				"src/server/Tests/sub",
+				"src/server/Tests/sub/two.ts"
+			]
+		},
+		{
+			"pattern": "src/server/Discovery/hid*.ts",
+			"results": [
+				"src/server/Discovery/hidA.ts",
+				"src/server/Discovery/hidden.ts"
+			]
+		},
+		{
+			"pattern": "src/server/Discovery/**/*.ts",
+			"results": [
+				"src/server/Discovery/hidA.ts",
+				"src/server/Discovery/hidden.ts",
+				"src/server/Discovery/nested/deep.ts",
+				"src/server/Discovery/shown.ts"
+			]
+		},
+		{
+			"pattern": "src/server/Discovery/*.ts",
+			"results": [
+				"src/server/Discovery/hidA.ts",
+				"src/server/Discovery/hidden.ts",
+				"src/server/Discovery/shown.ts"
+			]
+		},
+		{
+			"pattern": "src/server/NoSuchTests/**",
+			"results": []
+		},
+		{
+			"pattern": "src/glob/*.ts",
+			"results": [
+				"src/glob/a b.ts",
+				"src/glob/a.ts",
+				"src/glob/b.ts",
+				"src/glob/c.d.ts",
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts",
+				"src/glob/{a}.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/**",
+			"results": [
+				"src/glob",
+				"src/glob/a b.ts",
+				"src/glob/a.ts",
+				"src/glob/b.ts",
+				"src/glob/c.d.ts",
+				"src/glob/emptyDir",
+				"src/glob/nested",
+				"src/glob/nested/deep.ts",
+				"src/glob/nested/more",
+				"src/glob/nested/more/deeper.ts",
+				"src/glob/readme.md",
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts",
+				"src/glob/{a}.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/**/",
+			"results": [
+				"src/glob",
+				"src/glob/emptyDir",
+				"src/glob/nested",
+				"src/glob/nested/more"
+			]
+		},
+		{
+			"pattern": "src/glob/",
+			"results": [
+				"src/glob"
+			]
+		},
+		{
+			"pattern": "src/glob",
+			"results": [
+				"src/glob"
+			]
+		},
+		{
+			"pattern": "src/**",
+			"results": [
+				"src",
+				"src/Mixed",
+				"src/Mixed/File.TS",
+				"src/Mixed/lower.ts",
+				"src/client",
+				"src/client/NotTests",
+				"src/client/NotTests/four.ts",
+				"src/client/Tests",
+				"src/client/Tests/three.ts",
+				"src/empty",
+				"src/glob",
+				"src/glob/a b.ts",
+				"src/glob/a.ts",
+				"src/glob/b.ts",
+				"src/glob/c.d.ts",
+				"src/glob/emptyDir",
+				"src/glob/nested",
+				"src/glob/nested/deep.ts",
+				"src/glob/nested/more",
+				"src/glob/nested/more/deeper.ts",
+				"src/glob/readme.md",
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts",
+				"src/glob/{a}.ts",
+				"src/server",
+				"src/server/Discovery",
+				"src/server/Discovery/hidA.ts",
+				"src/server/Discovery/hidden.ts",
+				"src/server/Discovery/nested",
+				"src/server/Discovery/nested/deep.ts",
+				"src/server/Discovery/shown.ts",
+				"src/server/Tests",
+				"src/server/Tests/emptyTests",
+				"src/server/Tests/one.ts",
+				"src/server/Tests/sub",
+				"src/server/Tests/sub/two.ts",
+				"src/typesOnly",
+				"src/typesOnly/t.d.ts",
+				"src/x.ts",
+				"src/ünï",
+				"src/ünï/ä.ts",
+				"src/ünï/😀.ts"
+			]
+		},
+		{
+			"pattern": "**",
+			"results": [
+				"",
+				"src",
+				"src/Mixed",
+				"src/Mixed/File.TS",
+				"src/Mixed/lower.ts",
+				"src/client",
+				"src/client/NotTests",
+				"src/client/NotTests/four.ts",
+				"src/client/Tests",
+				"src/client/Tests/three.ts",
+				"src/empty",
+				"src/glob",
+				"src/glob/a b.ts",
+				"src/glob/a.ts",
+				"src/glob/b.ts",
+				"src/glob/c.d.ts",
+				"src/glob/emptyDir",
+				"src/glob/nested",
+				"src/glob/nested/deep.ts",
+				"src/glob/nested/more",
+				"src/glob/nested/more/deeper.ts",
+				"src/glob/readme.md",
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts",
+				"src/glob/{a}.ts",
+				"src/server",
+				"src/server/Discovery",
+				"src/server/Discovery/hidA.ts",
+				"src/server/Discovery/hidden.ts",
+				"src/server/Discovery/nested",
+				"src/server/Discovery/nested/deep.ts",
+				"src/server/Discovery/shown.ts",
+				"src/server/Tests",
+				"src/server/Tests/emptyTests",
+				"src/server/Tests/one.ts",
+				"src/server/Tests/sub",
+				"src/server/Tests/sub/two.ts",
+				"src/typesOnly",
+				"src/typesOnly/t.d.ts",
+				"src/x.ts",
+				"src/ünï",
+				"src/ünï/ä.ts",
+				"src/ünï/😀.ts",
+				"top.ts"
+			]
+		},
+		{
+			"pattern": "**/*.ts",
+			"results": [
+				"src/Mixed/File.TS",
+				"src/Mixed/lower.ts",
+				"src/client/NotTests/four.ts",
+				"src/client/Tests/three.ts",
+				"src/glob/a b.ts",
+				"src/glob/a.ts",
+				"src/glob/b.ts",
+				"src/glob/c.d.ts",
+				"src/glob/nested/deep.ts",
+				"src/glob/nested/more/deeper.ts",
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts",
+				"src/glob/{a}.ts",
+				"src/server/Discovery/hidA.ts",
+				"src/server/Discovery/hidden.ts",
+				"src/server/Discovery/nested/deep.ts",
+				"src/server/Discovery/shown.ts",
+				"src/server/Tests/one.ts",
+				"src/server/Tests/sub/two.ts",
+				"src/typesOnly/t.d.ts",
+				"src/x.ts",
+				"src/ünï/ä.ts",
+				"src/ünï/😀.ts",
+				"top.ts"
+			]
+		},
+		{
+			"pattern": "*",
+			"results": [
+				"src",
+				"top.ts"
+			]
+		},
+		{
+			"pattern": "*.ts",
+			"results": [
+				"top.ts"
+			]
+		},
+		{
+			"pattern": "src/*",
+			"results": [
+				"src/Mixed",
+				"src/client",
+				"src/empty",
+				"src/glob",
+				"src/server",
+				"src/typesOnly",
+				"src/x.ts",
+				"src/ünï"
+			]
+		},
+		{
+			"pattern": "src/**/*.d.ts",
+			"results": [
+				"src/glob/c.d.ts",
+				"src/typesOnly/t.d.ts"
+			]
+		},
+		{
+			"pattern": "src/**/.*",
+			"results": [
+				"src/.config",
+				"src/glob/.dotdir",
+				"src/glob/.hidden.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/.*",
+			"results": [
+				"src/glob/.dotdir",
+				"src/glob/.hidden.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/.hidden.ts",
+			"results": [
+				"src/glob/.hidden.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/.dotdir/*",
+			"results": [
+				"src/glob/.dotdir/x.ts"
+			]
+		},
+		{
+			"pattern": "src/**/.dotdir/**",
+			"results": [
+				"src/glob/.dotdir",
+				"src/glob/.dotdir/x.ts"
+			]
+		},
+		{
+			"pattern": ".root/**",
+			"results": [
+				".root",
+				".root/r.ts"
+			]
+		},
+		{
+			"pattern": "**/r.ts",
+			"results": []
+		},
+		{
+			"pattern": "src/{glob,server}/**/*.ts",
+			"results": [
+				"src/glob/a b.ts",
+				"src/glob/a.ts",
+				"src/glob/b.ts",
+				"src/glob/c.d.ts",
+				"src/glob/nested/deep.ts",
+				"src/glob/nested/more/deeper.ts",
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts",
+				"src/glob/{a}.ts",
+				"src/server/Discovery/hidA.ts",
+				"src/server/Discovery/hidden.ts",
+				"src/server/Discovery/nested/deep.ts",
+				"src/server/Discovery/shown.ts",
+				"src/server/Tests/one.ts",
+				"src/server/Tests/sub/two.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/{a,b}.ts",
+			"results": [
+				"src/glob/a.ts",
+				"src/glob/b.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/{a,b,zz}.ts",
+			"results": [
+				"src/glob/a.ts",
+				"src/glob/b.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/x{1..3}.ts",
+			"results": [
+				"src/glob/x1.ts",
+				"src/glob/x2.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/x{1..10}.ts",
+			"results": [
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/{a}.ts",
+			"results": [
+				"src/glob/{a}.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/\\{a\\}.ts",
+			"results": [
+				"src/glob/{a}.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/[ab].ts",
+			"results": [
+				"src/glob/a.ts",
+				"src/glob/b.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/[!a].ts",
+			"results": [
+				"src/glob/b.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/[^a].ts",
+			"results": [
+				"src/glob/b.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/[a-c].ts",
+			"results": [
+				"src/glob/a.ts",
+				"src/glob/b.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/?.ts",
+			"results": [
+				"src/glob/a.ts",
+				"src/glob/b.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/??.ts",
+			"results": [
+				"src/glob/x1.ts",
+				"src/glob/x2.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/a b.ts",
+			"results": [
+				"src/glob/a b.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/a*",
+			"results": [
+				"src/glob/a b.ts",
+				"src/glob/a.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/*b*",
+			"results": [
+				"src/glob/a b.ts",
+				"src/glob/b.ts"
+			]
+		},
+		{
+			"pattern": "src/GLOB/**/*.TS",
+			"results": [
+				"src/glob/a b.ts",
+				"src/glob/a.ts",
+				"src/glob/b.ts",
+				"src/glob/c.d.ts",
+				"src/glob/nested/deep.ts",
+				"src/glob/nested/more/deeper.ts",
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts",
+				"src/glob/{a}.ts"
+			]
+		},
+		{
+			"pattern": "src/mixed/*",
+			"results": [
+				"src/Mixed/File.TS",
+				"src/Mixed/lower.ts"
+			]
+		},
+		{
+			"pattern": "src/Mixed/file.ts",
+			"results": [
+				"src/Mixed/file.ts"
+			]
+		},
+		{
+			"pattern": "SRC/MIXED/FILE.TS",
+			"results": [
+				"src/Mixed/FILE.TS"
+			]
+		},
+		{
+			"pattern": "src/**/nested",
+			"results": [
+				"src/glob/nested",
+				"src/server/Discovery/nested"
+			]
+		},
+		{
+			"pattern": "src/**/nested/**",
+			"results": [
+				"src/glob/nested",
+				"src/glob/nested/deep.ts",
+				"src/glob/nested/more",
+				"src/glob/nested/more/deeper.ts",
+				"src/server/Discovery/nested",
+				"src/server/Discovery/nested/deep.ts"
+			]
+		},
+		{
+			"pattern": "src/ünï/*.ts",
+			"results": [
+				"src/ünï/ä.ts",
+				"src/ünï/😀.ts"
+			]
+		},
+		{
+			"pattern": "src/ÜNÏ/*.ts",
+			"results": [
+				"src/ünï/ä.ts",
+				"src/ünï/😀.ts"
+			]
+		},
+		{
+			"pattern": "src/ünï/😀.ts",
+			"results": [
+				"src/ünï/😀.ts"
+			]
+		},
+		{
+			"pattern": "./src/glob/*.ts",
+			"results": [
+				"src/glob/a b.ts",
+				"src/glob/a.ts",
+				"src/glob/b.ts",
+				"src/glob/c.d.ts",
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts",
+				"src/glob/{a}.ts"
+			]
+		},
+		{
+			"pattern": "src/../src/glob/*.ts",
+			"results": [
+				"src/glob/a b.ts",
+				"src/glob/a.ts",
+				"src/glob/b.ts",
+				"src/glob/c.d.ts",
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts",
+				"src/glob/{a}.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/./a.ts",
+			"results": [
+				"src/glob/a.ts"
+			]
+		},
+		{
+			"pattern": "/src/glob/*.ts",
+			"results": [
+				"<ROOT>/src/glob/a b.ts",
+				"<ROOT>/src/glob/a.ts",
+				"<ROOT>/src/glob/b.ts",
+				"<ROOT>/src/glob/c.d.ts",
+				"<ROOT>/src/glob/x1.ts",
+				"<ROOT>/src/glob/x10.ts",
+				"<ROOT>/src/glob/x2.ts",
+				"<ROOT>/src/glob/{a}.ts"
+			]
+		},
+		{
+			"pattern": "src/**/**/deep.ts",
+			"results": [
+				"src/glob/nested/deep.ts",
+				"src/server/Discovery/nested/deep.ts"
+			]
+		},
+		{
+			"pattern": "src/*/*/*.ts",
+			"results": [
+				"src/client/NotTests/four.ts",
+				"src/client/Tests/three.ts",
+				"src/glob/nested/deep.ts",
+				"src/server/Discovery/hidA.ts",
+				"src/server/Discovery/hidden.ts",
+				"src/server/Discovery/shown.ts",
+				"src/server/Tests/one.ts"
+			]
+		},
+		{
+			"pattern": "src/**/empty*",
+			"results": [
+				"src/empty",
+				"src/glob/emptyDir",
+				"src/server/Tests/emptyTests"
+			]
+		},
+		{
+			"pattern": "src/empty/**",
+			"results": [
+				"src/empty"
+			]
+		},
+		{
+			"pattern": "src/glob/emptyDir/**",
+			"results": [
+				"src/glob/emptyDir"
+			]
+		},
+		{
+			"pattern": "top.ts",
+			"results": [
+				"top.ts"
+			]
+		},
+		{
+			"pattern": "nope.ts",
+			"results": []
+		},
+		{
+			"pattern": "src/x.ts/**",
+			"results": []
+		},
+		{
+			"pattern": "src/glob/a.ts/",
+			"results": []
+		},
+		{
+			"pattern": "src//glob//a.ts",
+			"results": [
+				"src/glob/a.ts"
+			]
+		},
+		{
+			"pattern": "src/typesOnly/**/*.ts",
+			"results": [
+				"src/typesOnly/t.d.ts"
+			]
+		},
+		{
+			"pattern": "src/*/Tests/*",
+			"results": [
+				"src/client/Tests/three.ts",
+				"src/server/Tests/emptyTests",
+				"src/server/Tests/one.ts",
+				"src/server/Tests/sub"
+			]
+		},
+		{
+			"pattern": "src/{server,client}/*Tests/**/*.ts",
+			"results": [
+				"src/client/NotTests/four.ts",
+				"src/client/Tests/three.ts",
+				"src/server/Tests/one.ts",
+				"src/server/Tests/sub/two.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/x[0-9].ts",
+			"results": [
+				"src/glob/x1.ts",
+				"src/glob/x2.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/x*[0-9].ts",
+			"results": [
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts"
+			]
+		},
+		{
+			"pattern": "",
+			"results": []
+		},
+		{
+			"pattern": "SRC/Mixed/File.TS",
+			"results": [
+				"src/Mixed/File.TS"
+			]
+		},
+		{
+			"pattern": "SRC/MIXED",
+			"results": [
+				"src/MIXED"
+			]
+		},
+		{
+			"pattern": "SRC",
+			"results": [
+				"SRC"
+			]
+		},
+		{
+			"pattern": "SRC/MIXED/",
+			"results": [
+				"src/Mixed"
+			]
+		},
+		{
+			"pattern": "src/MIXED/*",
+			"results": [
+				"src/Mixed/File.TS",
+				"src/Mixed/lower.ts"
+			]
+		},
+		{
+			"pattern": "SRC/**/FILE.TS",
+			"results": [
+				"src/Mixed/File.TS"
+			]
+		},
+		{
+			"pattern": "TOP.TS",
+			"results": [
+				"TOP.TS"
+			]
+		},
+		{
+			"pattern": "src/GLOB/A.TS",
+			"results": [
+				"src/glob/A.TS"
+			]
+		},
+		{
+			"pattern": "src/glob/NESTED/deep.ts",
+			"results": [
+				"src/glob/nested/deep.ts"
+			]
+		},
+		{
+			"pattern": "SRC/GLOB/NESTED",
+			"results": [
+				"src/glob/NESTED"
+			]
+		},
+		{
+			"pattern": "src/glob/nest*/DEEP.TS",
+			"results": [
+				"src/glob/nested/DEEP.TS"
+			]
+		},
+		{
+			"pattern": "src/glob/*/DEEP.TS",
+			"results": [
+				"src/glob/nested/DEEP.TS"
+			]
+		},
+		{
+			"pattern": "src/[g]LOB/A.TS",
+			"results": [
+				"src/glob/A.TS"
+			]
+		},
+		{
+			"pattern": "src/GLOB/a.ts/../A.TS",
+			"results": [
+				"src/glob/A.TS"
+			]
+		},
+		{
+			"pattern": "src/./GLOB/A.TS",
+			"results": [
+				"src/glob/A.TS"
+			]
+		},
+		{
+			"pattern": "./TOP.TS",
+			"results": [
+				"TOP.TS"
+			]
+		},
+		{
+			"pattern": "src/glob/../GLOB/A.TS",
+			"results": [
+				"src/glob/A.TS"
+			]
+		},
+		{
+			"pattern": "src/nope/../glob/a.ts",
+			"results": [
+				"src/glob/a.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/nested/..",
+			"results": [
+				"src/glob"
+			]
+		},
+		{
+			"pattern": "src/glob/..",
+			"results": [
+				"src"
+			]
+		},
+		{
+			"pattern": "src/*/..",
+			"results": [
+				"src"
+			]
+		},
+		{
+			"pattern": "src/glob/a.ts/.",
+			"results": []
+		},
+		{
+			"pattern": "src/**/../a.ts",
+			"results": [
+				"src/glob/a.ts"
+			]
+		},
+		{
+			"pattern": "src/*/NESTED/DEEP.TS",
+			"results": [
+				"src/glob/nested/DEEP.TS"
+			]
+		},
+		{
+			"pattern": "src/GLOB/**/DEEP.TS",
+			"results": [
+				"src/glob/nested/deep.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/@(a|b).ts",
+			"results": [
+				"src/glob/a.ts",
+				"src/glob/b.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/+(x|1|0).ts",
+			"results": [
+				"src/glob/x1.ts",
+				"src/glob/x10.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/x*(1|0).ts",
+			"results": [
+				"src/glob/x1.ts",
+				"src/glob/x10.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/?(x)1.ts",
+			"results": [
+				"src/glob/x1.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/!(a).ts",
+			"results": [
+				"src/glob/a b.ts",
+				"src/glob/b.ts",
+				"src/glob/c.d.ts",
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts",
+				"src/glob/{a}.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/[[:alpha:]].ts",
+			"results": [
+				"src/glob/a.ts",
+				"src/glob/b.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/[[:digit:]x]*.ts",
+			"results": [
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/[A-C].TS",
+			"results": [
+				"src/glob/a.ts",
+				"src/glob/b.ts"
+			]
+		},
+		{
+			"pattern": "#comment",
+			"results": []
+		},
+		{
+			"pattern": "!src/glob/a.ts",
+			"results": []
+		},
+		{
+			"pattern": ".",
+			"results": [
+				""
+			]
+		},
+		{
+			"pattern": "./",
+			"results": [
+				""
+			]
+		},
+		{
+			"pattern": "./*",
+			"results": [
+				"src",
+				"top.ts"
+			]
+		},
+		{
+			"pattern": "src/**/*.{ts,md}",
+			"results": [
+				"src/Mixed/File.TS",
+				"src/Mixed/lower.ts",
+				"src/client/NotTests/four.ts",
+				"src/client/Tests/three.ts",
+				"src/glob/a b.ts",
+				"src/glob/a.ts",
+				"src/glob/b.ts",
+				"src/glob/c.d.ts",
+				"src/glob/nested/deep.ts",
+				"src/glob/nested/more/deeper.ts",
+				"src/glob/readme.md",
+				"src/glob/x1.ts",
+				"src/glob/x10.ts",
+				"src/glob/x2.ts",
+				"src/glob/{a}.ts",
+				"src/server/Discovery/hidA.ts",
+				"src/server/Discovery/hidden.ts",
+				"src/server/Discovery/nested/deep.ts",
+				"src/server/Discovery/shown.ts",
+				"src/server/Tests/one.ts",
+				"src/server/Tests/sub/two.ts",
+				"src/typesOnly/t.d.ts",
+				"src/x.ts",
+				"src/ünï/ä.ts",
+				"src/ünï/😀.ts"
+			]
+		},
+		{
+			"pattern": "src/{,glob/}a.ts",
+			"results": [
+				"src/glob/a.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/{a,{b,c}}.ts",
+			"results": [
+				"src/glob/a.ts",
+				"src/glob/b.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/x{2..1}.ts",
+			"results": [
+				"src/glob/x1.ts",
+				"src/glob/x2.ts"
+			]
+		},
+		{
+			"pattern": "src/glob/x{01..2}.ts",
+			"results": []
+		},
+		{
+			"pattern": "src/glob/{a..c}.ts",
+			"results": [
+				"src/glob/a.ts",
+				"src/glob/b.ts"
+			]
+		}
+	]
+}
