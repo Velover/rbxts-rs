@@ -16,18 +16,7 @@ use crate::util::types::get_first_defined_symbol;
 pub fn is_unsupported_statement_kind(kind: Kind) -> bool {
     matches!(
         kind,
-        Kind::BreakStatement
-            | Kind::ClassDeclaration
-            | Kind::ContinueStatement
-            | Kind::DoStatement
-            | Kind::EnumDeclaration
-            | Kind::ForOfStatement
-            | Kind::ForStatement
-            | Kind::ModuleDeclaration
-            | Kind::SwitchStatement
-            | Kind::ThrowStatement
-            | Kind::TryStatement
-            | Kind::WhileStatement
+        Kind::ClassDeclaration | Kind::DoStatement | Kind::ForOfStatement | Kind::ForStatement | Kind::WhileStatement
     )
 }
 

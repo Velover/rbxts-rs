@@ -1,5 +1,6 @@
 //! roblox-ts's `nodes`: the transforms of TypeScript nodes into Luau.
 
+pub mod binding;
 pub mod expressions;
 pub mod statements;
 pub mod transform_entity_name;

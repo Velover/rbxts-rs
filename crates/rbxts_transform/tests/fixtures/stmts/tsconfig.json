@@ -1,0 +1,29 @@
+// The stmts area's fixture: enums, namespaces, switch, try / throw, break / continue (T2).
+//
+// - Run: link `node_modules` to roblox-ts's `tests/node_modules` (types, compiler-types, testez), then
+//   `rbxts-bench build --optimizedLoops --allowCommentDirectives --out-dir <dir> --write-partial --parity expected`.
+// - `expected/`: roblox-ts master with the tsrs checker (`probe/rbxts-driver.cjs --backend tsrs`), TypeScript 7
+//   semantics, which rbxts-rs matches except `enumNonFinite.luau` (rbxts-rs writes `math.huge` where roblox-ts writes
+//   `Infinity`, an accepted deviation).
+// - `expected-ts5/`: stock roblox-ts (TypeScript 5.9) where it differs: only the order of the export tables, which
+//   TypeScript 7 gives in declaration order.
+{
+	"include": ["src", "node_modules/@rbxts/testez/globals.d.ts"],
+	"compilerOptions": {
+		"allowSyntheticDefaultImports": true,
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"noLib": true,
+		"resolveJsonModule": true,
+		"forceConsistentCasingInFileNames": true,
+		"moduleDetection": "force",
+		"strict": true,
+		"target": "ESNext",
+		"typeRoots": ["node_modules/@rbxts"],
+		"types": ["types", "compiler-types"],
+		"experimentalDecorators": true,
+		"rootDir": "src",
+		"outDir": "out",
+		"paths": { "*": ["./src/*"] }
+	}
+}
