@@ -145,3 +145,20 @@ declare const probeVoidInOrder: number;
 declare function probeLateDecline(): string;
 /** @probe markdecline */
 declare function probeMarkDecline(a: unknown): unknown;
+
+/** An expression-kind hook (probe-exprcall) wraps these calls; the probe's call hook still claims them inside. */
+/** @probe self */
+declare function probeExprSelf(a: number): number;
+/** @probe inorderself */
+declare function probeExprInOrder(a: number): number;
+/** @probe new */
+declare class ProbeExprWidget {
+	constructor(size: number);
+}
+
+/** The claimed call compiled twice (tests only). */
+/** @probe twice */
+declare function probeTwice(a: number): number;
+
+/** `probeStmtSelf;`: a statement hook compiles its own statement (tests only). */
+declare const probeStmtSelf: number;

@@ -98,6 +98,8 @@ pub struct HookFrame {
     /// The hook called a primitive that changes compiler state (any lowering, placement, import, late string,
     /// temporary, name approval or diagnostic), not only a query. `RBXTS_PLUGIN_CLAIMS=all` relies on it.
     pub touched: bool,
+    /// The hook compiled its own node: a second time is an internal error (it would be lowered twice).
+    pub self_compiled: bool,
 }
 
 /// The per-file plugin state.
@@ -132,9 +134,15 @@ pub struct PluginFileState {
     pub import_overrides: Option<ImportOverrides>,
     /// Calls already offered to the plugins (a chain call asked before its callee was compiled).
     pub offered: FxHashSet<P<Node>>,
-    /// Nodes being offered right now: a dispatch of one of them while its offer runs (a hook compiling its own
-    /// node, or an ancestor of it) lowers it as roblox-ts does, without asking the plugins again.
+    /// Nodes being offered right now, one set per offer kind: a dispatch of one of them while its offer runs (a
+    /// hook compiling its own node, or an ancestor of it) is not offered to that kind again. The kinds are
+    /// separate, so an expression hook compiling its own call still lets the call plugins claim that call.
+    /// Calls, `new` and decorators:
     pub in_offer: FxHashSet<P<Node>>,
+    /// The expression and statement fallbacks:
+    pub in_fallback_offer: FxHashSet<P<Node>>,
+    /// The class hook:
+    pub in_class_offer: FxHashSet<P<Node>>,
     /// `local` names declared at the top level of the main chunk so far (statements done, root insertions,
     /// imports, header).
     pub main_chunk_locals: u32,
@@ -238,6 +246,11 @@ impl PluginFileState {
                         .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
             })
         })
+    }
+
+    /// The number of names approved so far (an approval changes later naming, so it counts as touching state).
+    pub fn approved_count(&self) -> usize {
+        self.approved_names.borrow().len()
     }
 
     /// `name` is used by the file's source, a plugin import, an approved name or a seam temporary.

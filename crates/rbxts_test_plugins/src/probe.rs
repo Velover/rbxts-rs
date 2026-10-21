@@ -24,6 +24,7 @@
 //! - `inorderself`: `wrap(compile_in_order([call.node]))`, the claimed node through `compile_in_order`;
 //! - `latedecline` / `markdecline`: a late string, or `mark_import_used` of the argument's import, then declined
 //!   (each an internal error);
+//! - `twice`: `compile_expr(call.node)` twice (the second is an internal error);
 //! - `facts`: a string of source facts: the call's UTF-16 line and character, its width, the callee's declaring
 //!   package, where `./runtime` resolves, the `{@link}` in the tag and what it resolves to, the file's checker
 //!   diagnostics;
@@ -80,6 +81,10 @@ pub enum Mode {
     S2Interest,
     /// Only calls by symbol; every call hook takes a temporary id, then declines (for `RBXTS_PLUGIN_CLAIMS=all`).
     DeclineTouched,
+    /// Only an expression-kind interest in calls and `new` (`probeExpr…` / `ProbeExpr…` callees): the hook wraps
+    /// `compile_expr` of its own node, so the call plugins still claim the call inside; and a statement hook on
+    /// `probeStmtSelf;` that compiles its own statement (an internal error).
+    ExprCall,
 }
 
 /// The probe factory. Two probes with different names can be registered together (claim order tests).
@@ -123,11 +128,14 @@ const OPS: &[&str] = &[
     "inorderself",
     "latedecline",
     "markdecline",
+    "twice",
 ];
 const RECEIVER: Tag = Tag(100);
 const CALLEE: Tag = Tag(101);
 const VOID: Tag = Tag(102);
 const DEBUGGER: Tag = Tag(103);
+const EXPRCALL: Tag = Tag(105);
+const STMTSELF: Tag = Tag(106);
 
 fn op(tag: Tag) -> &'static str {
     OPS.get(tag.0 as usize).copied().unwrap_or("?")
@@ -366,6 +374,12 @@ impl ProbeInstance {
                 cx.late_string("declined");
                 Ok(Claim::Decline)
             }
+            "twice" => {
+                // the claimed call compiled twice: the second is an internal error
+                let first = cx.compile_expr(call.node)?;
+                let second = cx.compile_expr(call.node)?;
+                self.claimed(create::call(create::id("pair"), vec![first, second]))
+            }
             "markdecline" => {
                 if let Some(alias) = arg(0).and_then(|a| Self::alias_of(cx, a)) {
                     cx.mark_import_used(alias);
@@ -407,6 +421,12 @@ impl PluginInstance for ProbeInstance {
     type FilePart = ProbePart;
 
     fn interest(&self, interest: &mut Interest) {
+        if self.mode == Mode::ExprCall {
+            interest.expressions(Kind::CallExpression, EXPRCALL);
+            interest.expressions(Kind::NewExpression, EXPRCALL);
+            interest.statements(Kind::ExpressionStatement, STMTSELF);
+            return;
+        }
         interest.calls_by_symbol();
         if self.mode == Mode::DeclineTouched {
             return;
@@ -446,7 +466,8 @@ impl PluginInstance for ProbeInstance {
 
     fn call(&self, cx: &mut Cx<'_>, call: &CallSite, tag: Tag) -> PResult<Claim<LuauExpr>> {
         if self.mode == Mode::DeclineTouched {
-            cx.temp_id("touched");
+            // a query that records a name: it changes later naming, so it touches compiler state
+            cx.is_usable_local_name("touchedName");
             return Ok(Claim::Decline);
         }
         match tag {
@@ -474,6 +495,13 @@ impl PluginInstance for ProbeInstance {
     }
 
     fn expression(&self, cx: &mut Cx<'_>, node: P<Node>, tag: Tag) -> PResult<Claim<LuauExpr>> {
+        if tag == EXPRCALL
+            && let Some(callee) = node.expression()
+            && (cx.source_text(callee).starts_with("probeExpr") || cx.source_text(callee).starts_with("ProbeExpr"))
+        {
+            let value = cx.compile_expr(node)?;
+            return self.claimed(create::call(create::id("exprWrap"), vec![value]));
+        }
         if tag == VOID
             && let Some(operand) = node.expression()
         {
@@ -498,7 +526,11 @@ impl PluginInstance for ProbeInstance {
         Ok(Claim::Decline)
     }
 
-    fn statement(&self, _cx: &mut Cx<'_>, _node: P<Node>, tag: Tag) -> PResult<Claim<Vec<LuauStmt>>> {
+    fn statement(&self, cx: &mut Cx<'_>, node: P<Node>, tag: Tag) -> PResult<Claim<Vec<LuauStmt>>> {
+        if tag == STMTSELF && cx.source_text(node).starts_with("probeStmtSelf") {
+            cx.compile_expr(node)?;
+            return Ok(Claim::Decline);
+        }
         if tag != DEBUGGER {
             return Ok(Claim::Decline);
         }

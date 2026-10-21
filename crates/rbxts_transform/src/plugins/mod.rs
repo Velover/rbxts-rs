@@ -14,22 +14,29 @@
 //!
 //! **Claim points.** Plugins are asked before roblox-ts's own macros, in registration order, and the first `Take`
 //! wins (`RBXTS_PLUGIN_CLAIMS=all` / [`PluginOptions::claims_all`] asks every matching plugin and reports a double
-//! claim). A call is offered once:
+//! claim). Calls are offered:
 //! - a call in a property/element/call chain whose callee is reached through plain accesses only (`f()`,
 //!   `ns.f()`, `a.b.m()`) is offered before anything of the chain is compiled, so a plugin that takes it leaves the
 //!   callee uncompiled (no diagnostics from it, no use of its import);
-//! - any other chain call (after a `?.` link or another call) is offered with its receiver already compiled (and
-//!   nil-checked when it is inside an optional chain): `compile_receiver` returns that value. That includes
-//!   `f?.()`, offered as `CallKind::Call` with `receiver: None` once the chain lowering has nil-checked `f`;
+//! - any other chain call (after a `?.` link or another call) is offered with its receiver or callee already
+//!   compiled (and nil-checked when it is inside an optional chain); `compile_receiver` returns a receiver. That
+//!   includes `f?.()`, offered as `CallKind::Call` with `receiver: None` once the chain lowering has nil-checked
+//!   `f` (`compile_receiver` on it is an internal error: it has no receiver);
 //! - `new` expressions before constructor macros; decorators (`@D`, `@D(…)`) before the decorator expression is
 //!   compiled.
 //!
 //! `compile_expr(call.node)` inside the call's own hook lowers the call as roblox-ts does (its macros included),
-//! without asking the plugins again, and on the base already compiled, so a receiver is never evaluated twice.
+//! without asking the plugins again, and on the base already compiled, so a receiver is evaluated once. A second
+//! compile of the hook's own node is an internal error (it would be lowered twice); a statement hook cannot compile
+//! its own statement.
 //!
-//! **Offered once.** A node is marked while its offer runs: a hook compiling its own node (`compile_expr`,
-//! `compile_in_order`, an `Arg::Original` slot) or an ancestor of it lowers it as roblox-ts does, without asking
-//! the plugins again (a call through `compile_claimed_call`, on the base already compiled).
+//! **Offered once per offer kind.** The kinds are calls (with `new` and decorators), the expression and statement
+//! fallbacks, and the class hook. A node is marked for its kind while its offer runs: compiling it then (a hook's
+//! own node through `compile_expr`, `compile_in_order` or an `Arg::Original` slot) does not offer it to that kind
+//! again (a call goes through `compile_claimed_call`, on the base already compiled). Other kinds still see it: an
+//! expression-kind hook that compiles its own call lets the call plugins claim that call, and a call one expression
+//! hook declined cleanly is then offered to the call plugins. Compiling an ancestor of the hook's own node offers
+//! and lowers every other node inside it again: don't.
 //!
 //! **Declining.** Offer state lives in a stack of hook frames ([`file_state::HookFrame`]), one per running hook,
 //! so a hook nested in another (through its `compile_*` calls) never resets the outer one's. A claim hook cannot
@@ -44,8 +51,10 @@
 //! interest in a node nested in A's (even one B declines cleanly) makes A's compile-then-decline an error, so a
 //! plugin must decide from the AST and types before compiling anything.
 //!
-//! `RBXTS_PLUGIN_CLAIMS=all` asks the other matching plugins too, in a scratch scope; a build where one of them
-//! changed compiler state before declining fails rather than change its output.
+//! `RBXTS_PLUGIN_CLAIMS=all` asks the other matching plugins of call, `new` and decorator offers too (not expression
+//! or statement hooks), in a scratch scope. A build with it either writes the same output as without it or fails:
+//! one where such a plugin changed compiler state before declining (an approval by `is_usable_local_name`
+//! included) fails.
 //!
 //! **Names.** Temporary identifiers plugins ask for (`temp_id`, `hoist`, `hoist_spillable`, `push_to_var`, the
 //! `import_named` fallback) are named so that no identifier of the file, no name `is_usable_local_name` approved,

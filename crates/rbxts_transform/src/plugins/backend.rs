@@ -164,6 +164,7 @@ pub(crate) fn run_hook_framed<R>(
         parent.nested_hooks += 1;
     }
     state.plugin_file.frames.push(HookFrame::default());
+    let approved_before = state.plugin_file.approved_count();
     host.enter(Some(plugin), hook);
     let result = {
         let mut backend = HookBackend {
@@ -181,7 +182,9 @@ pub(crate) fn run_hook_framed<R>(
         f(&*host.plugins[plugin].instance, &mut cx)
     };
     host.exit();
-    let frame = state.plugin_file.frames.pop().expect("this hook's frame");
+    let mut frame = state.plugin_file.frames.pop().expect("this hook's frame");
+    // an approval (`is_usable_local_name`, a `&self` query) changes later naming: it touches state
+    frame.touched |= state.plugin_file.approved_count() != approved_before;
     let result = match result {
         Ok(value) => Ok(value),
         Err(_) => {
@@ -254,12 +257,33 @@ impl HookBackend<'_, '_> {
         }
     }
 
-    /// An expression hook compiling its own node lowers it: it cannot be declined any more. (A call hook's own
-    /// node goes through `compile_claimed_call`, which notes it.)
-    fn note_self_compile(&mut self, nodes: &[P<Node>]) {
-        if self.hook == HookKind::Expression && nodes.contains(&self.anchor) {
-            self.note_effect("lowering it with compile_expr");
+    /// A hook compiling its own node: an expression hook's node is lowered (it cannot be declined any more; a call
+    /// hook's goes through `compile_claimed_call`, which notes it), a second time is an internal error (it would be
+    /// lowered twice), and a statement cannot be compiled as an expression.
+    fn check_self_compile(&mut self, nodes: &[P<Node>]) -> Result<(), Aborted> {
+        let own = nodes.iter().filter(|&&n| n == self.anchor).count();
+        if own == 0 {
+            return Ok(());
         }
+        if self.hook == HookKind::Statement {
+            return Err(self.misuse(
+                "a statement hook cannot compile its own statement (compile_* takes expressions; lower the statement's \
+                 parts)",
+            ));
+        }
+        if self.hook == HookKind::Expression {
+            let twice = own > 1 || self.state.plugin_file.frames.last().is_some_and(|f| f.self_compiled);
+            if twice {
+                return Err(self.misuse("compiled its own node a second time (it would be lowered twice)"));
+            }
+            if let Some(frame) = self.state.plugin_file.frames.last_mut() {
+                frame.self_compiled = true;
+            }
+            self.note_effect("lowering it with compile_expr");
+        } else if own > 1 {
+            return Err(self.misuse("compiled its own node a second time (it would be lowered twice)"));
+        }
+        Ok(())
     }
 
     /// A temporary identifier no user local of the file can capture ([`PluginFileState::seam_hint`]).
@@ -306,20 +330,8 @@ impl HookBackend<'_, '_> {
         }
     }
 
-    /// Runs compiler code for the plugin: refused outside claim hooks, timed as the compiler's, and `Err` when it
-    /// reported an error.
-    fn lower<T>(
-        &mut self,
-        what: &str,
-        f: impl FnOnce(&mut TransformState<'_>, &mut Prereqs, Option<&mut CallContext>) -> Result<T, String>,
-    ) -> Result<T, Aborted> {
-        if self.refused(what, Row::Lowering) {
-            return Err(Aborted);
-        }
-        self.lower_unchecked(f)
-    }
-
-    /// [`HookBackend::lower`] after the phase check.
+    /// Runs compiler code for the plugin, after the caller's phase check (`refused`): timed as the compiler's, and
+    /// `Err` when it reported an error.
     fn lower_unchecked<T>(
         &mut self,
         f: impl FnOnce(&mut TransformState<'_>, &mut Prereqs, Option<&mut CallContext>) -> Result<T, String>,
@@ -381,13 +393,19 @@ impl CxBackend for HookBackend<'_, '_> {
     // --- lowering ---
 
     fn compile_expr(&mut self, node: P<Node>) -> Result<Expr, Aborted> {
-        self.note_self_compile(&[node]);
-        self.lower("compile_expr", |state, prereqs, context| compile_node(state, prereqs, context, node))
+        if self.refused("compile_expr", Row::Lowering) {
+            return Err(Aborted);
+        }
+        self.check_self_compile(&[node])?;
+        self.lower_unchecked(|state, prereqs, context| compile_node(state, prereqs, context, node))
     }
 
     fn compile_in_order(&mut self, nodes: &[P<Node>]) -> Result<Vec<Expr>, Aborted> {
-        self.note_self_compile(nodes);
-        self.lower("compile_in_order", |state, prereqs, mut context| {
+        if self.refused("compile_in_order", Row::Lowering) {
+            return Err(Aborted);
+        }
+        self.check_self_compile(nodes)?;
+        self.lower_unchecked(|state, prereqs, mut context| {
             let mut error = None;
             let values =
                 ensure_transform_order_with(state, prereqs, nodes, &mut |state, prereqs, node| match compile_node(
@@ -704,6 +722,9 @@ fn compile_node(
 ) -> Result<Expr, String> {
     match context {
         Some(context) if context.site.node == node => compile_claimed_call(state, prereqs, context),
+        _ if tsrs_ast::is_statement(node) => {
+            Err(format!("compile_* takes expressions, not a statement ({:?})", node.kind()))
+        }
         _ => Ok(transform_expression(state, prereqs, node)),
     }
 }
@@ -718,6 +739,12 @@ fn compile_claimed_call(
 ) -> Result<Expr, String> {
     if state.plugin_file.frames.last().is_some_and(|f| f.called) {
         return Err("compile_expr of the claimed call after compile_call lowered it".to_owned());
+    }
+    if state.plugin_file.frames.last().is_some_and(|f| f.self_compiled) {
+        return Err("compiled its own call a second time (it would be lowered twice)".to_owned());
+    }
+    if let Some(frame) = state.plugin_file.frames.last_mut() {
+        frame.self_compiled = true;
     }
     note_effect(state, "lowering it with compile_expr");
     let node = context.site.node;
@@ -787,11 +814,7 @@ type Slots = (Vec<Expr>, Vec<Option<P<Node>>>, Prereqs);
 /// The argument slots, compiled in evaluation order: each `Original` node with its own prereqs, then the values
 /// bound to locals where a later slot's prereqs could change them (`ensureTransformOrder` over every slot, ready
 /// Luau values included). Returns the values, the slot nodes (`None` for Luau and `nil` slots) and the prereqs.
-fn compile_slots(
-    state: &mut TransformState<'_>,
-    context: &mut CallContext,
-    args: Vec<Arg>,
-) -> Result<Slots, String> {
+fn compile_slots(state: &mut TransformState<'_>, context: &mut CallContext, args: Vec<Arg>) -> Result<Slots, String> {
     let mut infos: Vec<(Expr, Vec<Stmt>, Option<P<Node>>)> = Vec::with_capacity(args.len());
     for arg in args {
         match arg {

@@ -608,11 +608,11 @@ pub fn claim_expression(state: &mut TransformState<'_>, prereqs: &mut Prereqs, n
 fn claim_expression_slow(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Option<Expr> {
     let host = state.plugins?;
     let list = host.expressions.get(&node.kind())?;
-    if !state.plugin_file.in_offer.insert(node) {
+    if !state.plugin_file.in_fallback_offer.insert(node) {
         return None;
     }
     let value = claim_expression_offer(state, host, prereqs, node, list);
-    state.plugin_file.in_offer.remove(&node);
+    state.plugin_file.in_fallback_offer.remove(&node);
     value
 }
 
@@ -660,11 +660,11 @@ pub fn claim_statement(state: &mut TransformState<'_>, node: P<Node>) -> Option<
 fn claim_statement_slow(state: &mut TransformState<'_>, node: P<Node>) -> Option<Vec<Stmt>> {
     let host = state.plugins?;
     let list = host.statements.get(&node.kind())?;
-    if !state.plugin_file.in_offer.insert(node) {
+    if !state.plugin_file.in_fallback_offer.insert(node) {
         return None;
     }
     let value = claim_statement_offer(state, host, node, list);
-    state.plugin_file.in_offer.remove(&node);
+    state.plugin_file.in_fallback_offer.remove(&node);
     value
 }
 
@@ -733,7 +733,7 @@ fn class_statements_slow(state: &mut TransformState<'_>, node: P<Node>, luau_nam
     if !host.any_classes {
         return Vec::new();
     }
-    if !state.plugin_file.in_offer.insert(node) {
+    if !state.plugin_file.in_class_offer.insert(node) {
         return Vec::new();
     }
     let decorated = is_decorated(node);
@@ -758,7 +758,7 @@ fn class_statements_slow(state: &mut TransformState<'_>, node: P<Node>, luau_nam
             out.extend(statements);
         }
     }
-    state.plugin_file.in_offer.remove(&node);
+    state.plugin_file.in_class_offer.remove(&node);
     out
 }
 

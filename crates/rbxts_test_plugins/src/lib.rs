@@ -35,6 +35,7 @@ pub const NAMES: &[&str] = &[
     "probe-finish-panic",
     "probe-s2-interest",
     "probe-touched",
+    "probe-exprcall",
     "identity-expr",
     "identity-call",
 ];
@@ -57,6 +58,7 @@ pub fn by_name(name: &str) -> Option<Box<dyn DynPlugin>> {
         "probe-finish-panic" => erase(Probe::new("probe", Mode::FinishPanic)),
         "probe-s2-interest" => erase(Probe::new("probe", Mode::S2Interest)),
         "probe-touched" => erase(Probe::new("probe-touched", Mode::DeclineTouched)),
+        "probe-exprcall" => erase(Probe::new("probe-exprcall", Mode::ExprCall)),
         "identity-expr" => erase(identity::Identity(identity::IdentityMode::Expr)),
         "identity-call" => erase(identity::Identity(identity::IdentityMode::Call)),
         _ => return None,

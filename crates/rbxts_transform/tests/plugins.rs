@@ -195,10 +195,11 @@ fn assert_expected_except(report: &CompileReport, except: &[&str]) {
 #[test]
 fn probe_and_stamp_match_the_expected_luau() {
     let Some(project) = Project::new("expected") else { return };
-    let report = project.build(&["stamp", "probe"], |_| {});
+    // probe-exprcall: an expression-kind hook on `probeExpr…` calls, which the call hooks still claim inside
+    let report = project.build(&["stamp", "probe", "probe-exprcall"], |_| {});
     assert!(report.fatal.is_empty(), "{:?}", report.fatal);
     assert_eq!(errors(&report), Vec::<String>::new());
-    assert_eq!(report.plugins, vec!["stamp", "probe"]);
+    assert_eq!(report.plugins, vec!["stamp", "probe", "probe-exprcall"]);
     // the unknown @stamp mode is a warning from the hook, per call
     assert_eq!(
         diagnostics(&report),
@@ -216,14 +217,15 @@ fn probe_and_stamp_match_the_expected_luau() {
          {\"file\":\"src/shared/calls.ts\",\"claims\":10},{\"file\":\"src/shared/capture.ts\",\"claims\":2},\
          {\"file\":\"src/shared/classes.ts\",\"claims\":2},{\"file\":\"src/shared/decorators.ts\",\"claims\":2},\
          {\"file\":\"src/shared/elide.ts\",\"claims\":3},{\"file\":\"src/shared/elideAll.ts\",\"claims\":1},\
-         {\"file\":\"src/shared/elideKept.ts\",\"claims\":1},{\"file\":\"src/shared/facts.ts\",\"claims\":1},\
+         {\"file\":\"src/shared/elideKept.ts\",\"claims\":1},{\"file\":\"src/shared/exprcall.ts\",\"claims\":3},{\"file\":\"src/shared/facts.ts\",\"claims\":1},\
          {\"file\":\"src/shared/fallbacks.ts\",\"claims\":2},{\"file\":\"src/shared/inorder.ts\",\"claims\":5},{\"file\":\"src/shared/receivers.ts\",\"claims\":3},\
          {\"file\":\"src/shared/reuse.ts\",\"claims\":1},{\"file\":\"src/shared/selfcalls.ts\",\"claims\":5},\
          {\"file\":\"src/shared/shadow.ts\",\"claims\":3}]\n"
     );
-    assert_eq!(report.artifacts_written.len(), 3, "{:?}", report.artifacts_written);
+    assert_eq!(read("probe-exprcall-report.json"), "[{\"file\":\"src/shared/exprcall.ts\",\"claims\":3}]\n");
+    assert_eq!(report.artifacts_written.len(), 4, "{:?}", report.artifacts_written);
     // a second build changes no Luau and no artifact (write if changed); the stamp state counts the clean build anew
-    let again = project.build(&["stamp", "probe"], |_| {});
+    let again = project.build(&["stamp", "probe", "probe-exprcall"], |_| {});
     assert!(again.files.iter().all(|f| !f.written));
     assert!(again.artifacts_written.is_empty(), "{:?}", again.artifacts_written);
     // setup's env read is a build input
@@ -245,7 +247,7 @@ fn the_first_plugin_to_take_a_call_wins_and_double_claims_are_reported_on_reques
     let report = project.build(&["stamp", "probe", "probe-b"], |_| {});
     assert_eq!(errors(&report), Vec::<String>::new());
     // `probe` takes every node it is asked about first; `probe-b` gets only what `probe` declined (nothing here)
-    assert_expected_except(&report, &["shared/classes.luau", "shared/decorators.luau"]);
+    assert_expected_except(&report, &["shared/classes.luau", "shared/decorators.luau", "shared/exprcall.luau"]);
     let read = |name: &str| std::fs::read_to_string(project.root.join(name)).unwrap();
     assert_eq!(
         read("probe-b-report.json"),
@@ -347,9 +349,9 @@ fn declining_after_lowering_is_an_error_and_a_call_is_offered_once() {
          export const f = probeArgDecline(probeSelf(1));\n\
          export const g = capMap[probePrereq(tostring(sideEffect()))].cr(1);\n\
          export const h = void void probeVoidSelf;\nexport const i = probeLateDecline();\n\
-         export const j = probeMarkDecline(helper);\n",
+         export const j = probeMarkDecline(helper);\nexport const k = probeTwice(1);\nprobeStmtSelf;\n",
     );
-    let report = project.build(&["stamp", "probe"], |_| {});
+    let report = project.build(&["stamp", "probe", "probe-exprcall"], |_| {});
     let all = diagnostics(&report);
     let declines: Vec<&String> = all.iter().filter(|d| d.starts_with("error declines.ts")).collect();
     assert_eq!(
@@ -373,6 +375,10 @@ fn declining_after_lowering_is_an_error_and_a_call_is_offered_once() {
              compile_expr",
             "error declines.ts: rbxts-rs internal error: plugin `probe` declined a call after calling late_string",
             "error declines.ts: rbxts-rs internal error: plugin `probe` declined a call after calling mark_import_used",
+            "error declines.ts: rbxts-rs internal error: plugin `probe`: compiled its own call a second time (it would be \
+             lowered twice)",
+            "error declines.ts: rbxts-rs internal error: plugin `probe-exprcall`: a statement hook cannot compile its own \
+             statement (compile_* takes expressions; lower the statement's parts)",
         ]
     );
     // the hook that compiled the call itself and declined ran once: the call is not offered again
@@ -402,7 +408,7 @@ fn claims_all_never_changes_the_output() {
     // without the switch: probe-touched is only asked where probe declined, and changes nothing
     let report = project.build(&["stamp", "probe", "probe-touched"], |_| {});
     assert_eq!(errors(&report), Vec::<String>::new());
-    assert_expected(&report);
+    assert_expected_except(&report, &["shared/exprcall.luau"]);
     // with it: probe-touched is asked about calls probe took, and its hook changes compiler state before declining,
     // so the build fails instead of writing different output
     std::fs::remove_dir_all(project.root.join("out")).unwrap();
