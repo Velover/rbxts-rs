@@ -155,6 +155,8 @@ struct Watched {
     flat: BTreeSet<String>,
     /// Path keys of the directories whose events are dropped (output roots, include folder).
     ignored_roots: Vec<String>,
+    /// Path keys of the `node_modules` directories watched for plugin module resolutions (their events count).
+    package_dirs: FxHashSet<String>,
 }
 
 fn key(path: &str) -> String {
@@ -186,6 +188,27 @@ fn watched_set(session: &BuildSession<'_>) -> Watched {
     for input in session.config_inputs() {
         watched.flat.insert(nodepath::dirname(&input).to_owned());
     }
+    // plugin module resolutions are build inputs: watch the package directories they go through (not recursive:
+    // a package added, removed or reinstalled, its package.json, its types entry), so a change rebuilds
+    let node_modules = services.data.node_modules_path.clone();
+    for (specifier, _from, resolved) in session.plugin_resolutions() {
+        let mut dirs = Vec::new();
+        if let Some(resolved) = &resolved {
+            dirs.push(nodepath::dirname(resolved).to_owned());
+        }
+        if !specifier.starts_with('.') && !nodepath::is_absolute(&specifier) {
+            dirs.push(node_modules.clone());
+            let mut package = node_modules.clone();
+            for part in specifier.split('/').take(if specifier.starts_with('@') { 2 } else { 1 }) {
+                package = nodepath::join(&[&package, part]);
+                dirs.push(package.clone());
+            }
+        }
+        for dir in dirs {
+            watched.package_dirs.insert(key(&dir));
+            watched.flat.insert(dir);
+        }
+    }
     for file in program_files {
         let k = key(&file);
         if k.contains("/node_modules/") || file.starts_with("bundled:") {
@@ -205,7 +228,13 @@ fn relevant(path: &str, watched: &Watched, own: &FxHashMap<String, Version>) -> 
     if watched.ignored_roots.iter().any(|root| is_under(&k, root)) {
         return false;
     }
-    if k.split('/').any(|c| c == "node_modules" || c == ".git") {
+    let in_package_dir = watched.package_dirs.contains(nodepath::dirname(&k)) || watched.package_dirs.contains(&k);
+    if !in_package_dir && k.split('/').any(|c| c == "node_modules" || c == ".git") {
+        return false;
+    }
+    // a directory's own events (created, its entries changed) say nothing its files' events do not, except a
+    // directory that is gone (its files went with it) or a watched package directory
+    if !in_package_dir && std::fs::metadata(path).is_ok_and(|m| m.is_dir()) {
         return false;
     }
     let name = nodepath::basename(&k);
@@ -291,7 +320,7 @@ fn watch(
         let mut paths: Vec<String> = paths.into_iter().filter(|p| p == RESCAN || relevant(p, &watched, &own)).collect();
         // a directory as a touched path makes the session load the project again, with every file's facts
         if let Some(rescan) = paths.iter_mut().find(|p| *p == RESCAN) {
-            *rescan = session.options.cwd.clone(); // any directory: not a file
+            *rescan = session.options.tsconfig.clone(); // a config input: a rebuild with every file looked at
         }
         if paths.is_empty() {
             continue;
