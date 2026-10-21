@@ -141,18 +141,21 @@ file nothing imports; the hub is imported by 76 files, and its closure (the reve
 
 | build | wall | program | setup | invalidate | check | transform | render | write | working set |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| watch: initial (clean) build | 3229 | 488 | 108 | 14 | 883 | 684 | 28 | 1003 | 179 MiB |
-| watch: leaf edit (median of 41) | 66 | 0 | 0 | 25 | 1 | 0 | 0 | 25 | +1 MiB each |
-| watch: hub edit (median of 11) | 874 | 21 | 0 | 23 | 419 | 304 | 15 | 40 | +48 MiB each |
-| `rbxtsc build`, incremental, nothing changed (new process) | 278-294 | | | | | | | | |
-| `rbxtsc build`, incremental, leaf edit | 259-261 | | | | | | | | |
-| `rbxtsc build`, incremental, hub edit | 969-1004 | | | | | | | | |
-| `rbxtsc build`, clean (no incremental state) | 1428-2143 | | | | | | | | |
+| watch: initial (clean) build | 2408 | 296 | 90 | 13 | 601 | 540 | 26 | 830 | 181 MiB |
+| watch: leaf edit (median of 41) | 167 | 63 | 47 | 24 | 1 | 0 | 0 | 25 | +4 MiB each |
+| watch: hub edit (median of 11) | 974 | 73 | 46 | 24 | 433 | 448 | 15 | 52 | +55 MiB each |
+| `rbxtsc build`, incremental, nothing changed (new process) | 264-388 | | | | | | | | |
+| `rbxtsc build`, incremental, leaf edit | 255-358 | | | | | | | | |
+| `rbxtsc build`, incremental, hub edit | 958-1042 | | | | | | | | |
+| `rbxtsc build`, clean (no incremental state) | 1511-2142 | | | | | | | | |
 
-- A watch rebuild of edited files updates the program in place (tsrs `reuse_program`) and keeps the project setup;
+- Every build loads the program again over the source cache (only edited files are parsed) and redoes the project
+  setup, as roblox-ts does: module resolution, the Rojo resolvers and the package mapping must see a package
+  installed or upgraded under `node_modules`, which no watcher watches. (Updating the program in place with tsrs
+  `reuse_program` and keeping the setup took a leaf rebuild to about 66 ms, but kept stale module resolutions.)
   "invalidate" is the file facts of all 886 program files, the closure and the listing of the output directory;
   "write" is the Luau, the asset sync and the clean of stale outputs.
-- Programs are never freed (tsrs's `free_program` is `unsafe`), so the watcher's working set grows by the checker
-  of each rebuild: about 1 MiB per leaf edit and 48 MiB per hub edit here. `rbxtsc -w` restarts its process past
+- Programs are never freed (tsrs's `free_program` is `unsafe`), so the watcher's working set grows by the program
+  and checker of each rebuild: about 4 MiB per leaf edit and 55 MiB per hub edit here. `rbxtsc -w` restarts its process past
   `RBXTS_WATCH_MEMORY_LIMIT_MB` (default 2048).
 - Stock roblox-ts takes about 29 s (quiet machine) for any build of this project.
