@@ -1,12 +1,14 @@
 //! What one file's transform records for its plugins (in `TransformState::plugin_file`). Empty, and never touched,
 //! when the build has no plugins.
 
+use std::cell::OnceCell;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use rbxts_luau::{Expr, Stmt};
 use rbxts_plugin::FileInfo;
 use rbxts_plugin::erased::ErasedPart;
-use tsrs_ast::Node;
+use tsrs_ast::{Kind, Node, SourceFile};
 use tsrs_core::P;
 
 /// A top-level statement of the file and where its output sits in the file's statement list.
@@ -57,7 +59,7 @@ pub struct PluginFileState {
     /// `import_named` imports, in request order.
     pub imports: Vec<PluginImport>,
     pub(crate) import_names: FxHashSet<String>,
-    pub(crate) identifier_names: Option<FxHashSet<&'static str>>,
+    identifier_names: OnceCell<FxHashSet<&'static str>>,
     pub(crate) import_cache: FxHashMap<(String, String), Expr>,
     /// Statements for before the current top-level statement (`insert_before_root_statement`, `hoist`).
     pub root_inserts: Vec<Stmt>,
@@ -89,6 +91,25 @@ impl PluginFileState {
             parts: (0..plugins).map(|_| None).collect(),
             ..PluginFileState::default()
         }
+    }
+
+    /// Every identifier text in the file (made on first use): a name none of them has cannot shadow, or be
+    /// shadowed by, anything the file declares or refers to.
+    pub fn identifier_names(&self, file: P<SourceFile>) -> &FxHashSet<&'static str> {
+        self.identifier_names.get_or_init(|| {
+            fn walk(node: P<Node>, out: &mut FxHashSet<&'static str>) {
+                if node.kind() == Kind::Identifier {
+                    out.insert(node.text());
+                }
+                node.for_each_child(&mut |child| {
+                    walk(child, out);
+                    false
+                });
+            }
+            let mut out = FxHashSet::default();
+            walk(file.as_node(), &mut out);
+            out
+        })
     }
 
     /// Records a late key the file's Luau uses.

@@ -14,6 +14,9 @@
 //! - `keep`: like `elide`, and `mark_import_used` keeps the import anyway;
 //! - `new` (on a class): `new C(args)` → `compile_call(Original, [Luau("probed"), Original(args)…])`;
 //! - `decorator`: `@d()` → `compile_call(Original, [Luau("probed")])`;
+//! - `self`: `wrap(compile_expr(call.node))`: the claimed call lowered as roblox-ts lowers it;
+//! - `declineafter` / `hoistdecline` / `prereqdecline`: declined after `compile_expr` of the call, a hoist, or a
+//!   prereq (each an internal error);
 //! - `facts`: a string of source facts: the call's UTF-16 line and character, its width, the callee's declaring
 //!   package, where `./runtime` resolves, the `{@link}` in the tag and what it resolves to, the file's checker
 //!   diagnostics;
@@ -60,6 +63,14 @@ pub enum Mode {
     ErrWithoutError,
     /// `finish` writes an artifact outside the project.
     ArtifactOutside,
+    /// `finish` writes an artifact through a `link` junction and one with a trailing `.` on a Luau output.
+    ArtifactSneaky,
+    /// `setup` panics.
+    SetupPanic,
+    /// `finish` panics.
+    FinishPanic,
+    /// Registers `accesses_by_marker`, which S1 does not dispatch.
+    S2Interest,
 }
 
 /// The probe factory. Two probes with different names can be registered together (claim order tests).
@@ -91,6 +102,10 @@ const OPS: &[&str] = &[
     "fail",
     "err",
     "facts",
+    "self",
+    "declineafter",
+    "hoistdecline",
+    "prereqdecline",
 ];
 const RECEIVER: Tag = Tag(100);
 const CALLEE: Tag = Tag(101);
@@ -134,6 +149,9 @@ impl Plugin for Probe {
     }
 
     fn setup(&self, cx: &mut SetupCx<'_>, _: &mut ()) -> Result<Arc<ProbeShared>, Fatal> {
+        if self.mode == Mode::SetupPanic {
+            panic!("probe: setup panic");
+        }
         cx.info("probe set up");
         Ok(Arc::new(ProbeShared { name: self.name, mode: self.mode }))
     }
@@ -170,8 +188,14 @@ impl Plugin for Probe {
             .map(|(_, part)| format!("{{\"file\":\"{}\",\"claims\":{}}}", part.file, part.claims))
             .collect();
         cx.write_artifact(format!("{}-report.json", shared.name), format!("[{}]\n", files.join(",")).into_bytes());
-        if shared.mode == Mode::ArtifactOutside {
-            cx.write_artifact("../outside-the-project.txt", b"no".to_vec());
+        match shared.mode {
+            Mode::ArtifactOutside => cx.write_artifact("../outside-the-project.txt", b"no".to_vec()),
+            Mode::ArtifactSneaky => {
+                cx.write_artifact("out/shared/calls.luau.", b"-- not a second spelling of calls.luau\n".to_vec());
+                cx.write_artifact("link/through-the-junction.txt", b"no".to_vec());
+            }
+            Mode::FinishPanic => panic!("probe: finish panic"),
+            _ => {}
         }
         Ok(())
     }
@@ -289,6 +313,23 @@ impl ProbeInstance {
                 );
                 self.claimed(text_literal(&text))
             }
+            "self" => {
+                let value = cx.compile_expr(call.node)?;
+                self.claimed(create::call(create::id("wrap"), vec![value]))
+            }
+            "declineafter" => {
+                cx.warning(call.node, "probe: declineafter was offered");
+                cx.compile_expr(call.node)?;
+                Ok(Claim::Decline)
+            }
+            "hoistdecline" => {
+                cx.hoist(create::nil(), "declined");
+                Ok(Claim::Decline)
+            }
+            "prereqdecline" => {
+                cx.prereq(create::comment(" probe: left behind"));
+                Ok(Claim::Decline)
+            }
             "boom" if self.mode == Mode::Panic => panic!("probe: boom"),
             "fail" if self.mode == Mode::Fail => Err(cx.error(call.node, "probe: fail was called")),
             "err" if self.mode == Mode::ErrWithoutError => {
@@ -317,8 +358,10 @@ impl PluginInstance for ProbeInstance {
         interest.classes(ClassFilter::Decorated);
         interest.expressions(Kind::VoidExpression, VOID);
         interest.statements(Kind::DebuggerStatement, DEBUGGER);
-        // accepted, not dispatched in S1
-        interest.accesses_by_marker("__probeKey", Tag(104));
+        if self.mode == Mode::S2Interest {
+            // not dispatched in S1: the build fails
+            interest.accesses_by_marker("__probeKey", Tag(104));
+        }
     }
 
     fn classify_symbol(&self, cx: &mut Cx<'_>, symbol: P<Symbol>, role: SymbolRole) -> Option<Tag> {

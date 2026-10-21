@@ -5,7 +5,7 @@ use rustc_hash::FxHashSet;
 
 use rbxts_luau::{AnyIdentifier, Expr, Stmt, create};
 use rbxts_plugin::{CallKind, CallSite, Claim, ClassFilter, ClassSite, SymbolRole, Tag};
-use tsrs_ast::{Kind, Node, SourceFile, Symbol, SymbolFlags};
+use tsrs_ast::{Kind, ModifierFlags, Node, SourceFile, Symbol, SymbolFlags};
 use tsrs_core::P;
 
 use super::HookKind;
@@ -19,7 +19,7 @@ use crate::nodes::statements::transform_import_equals_declaration::transform_imp
 use crate::nodes::transform_optional_chain::{ChainItem, ChainItemKind, transform_chain_item};
 use crate::util::create_import_expression::{create_import_expression_of_file, get_source_file_from_module_specifier};
 use crate::util::symbols::is_used_as_statement;
-use crate::util::traversal::skip_downwards;
+use crate::util::traversal::{has_syntactic_modifier, skip_downwards};
 
 // --- imports seen by the compiler ---
 
@@ -160,7 +160,7 @@ fn offer_call(
                 }
                 return Some(value);
             }
-            Ok(Claim::Decline) => check_decline(state, host, prereqs, context, plugin, start),
+            Ok(Claim::Decline) => check_decline(state, host, prereqs, &mut *context, plugin, start),
             Err(()) => return Some(create::nil()),
         }
     }
@@ -172,15 +172,19 @@ fn check_decline(
     state: &mut TransformState<'_>,
     host: &PluginHost,
     prereqs: &Prereqs,
-    context: &CallContext,
+    context: &mut CallContext,
     plugin: usize,
     start: usize,
 ) {
-    let allowed = context.base_prereqs_end.unwrap_or(start).max(start);
-    let problem = if context.lowered {
-        Some("declined a call after lowering it with compile_call")
+    // a receiver compiled first (compile_receiver) stays for the next plugin, or roblox-ts, to reuse
+    let allowed = match (context.base_prereqs_start, context.base_prereqs_end) {
+        (Some(base_start), Some(base_end)) if base_start == start => base_end,
+        _ => start,
+    };
+    let problem = if let Some(what) = context.lowered {
+        Some(format!("declined a call after {what}"))
     } else if prereqs.statements.len() > allowed {
-        Some("declined a call after emitting prerequisites (they would run twice)")
+        Some("declined a call after emitting prerequisites (they would run twice)".to_owned())
     } else {
         None
     };
@@ -188,6 +192,7 @@ fn check_decline(
         let message = format!("plugin `{}` {problem}", host.name(plugin));
         state.internal_error(context.site.node, &message);
     }
+    context.lowered = None;
 }
 
 /// `RBXTS_PLUGIN_CLAIMS=all`: asks the remaining candidates too, in a scratch scope, and reports each that also
@@ -206,7 +211,7 @@ fn report_double_claims(
         }
         let mut scratch = Prereqs::new();
         let mut copy = context.clone();
-        copy.lowered = false;
+        copy.lowered = None;
         let result =
             run_hook(state, Some(&mut scratch), Some(&mut copy), plugin, HookKind::Call, site.node, |instance, cx| {
                 instance.call(cx, &site, tag)
@@ -228,12 +233,14 @@ fn literal_key(argument: P<Node>) -> Option<&'static str> {
 }
 
 /// The call site of a chain call: the site (kind still `Call` for property calls), its shape, the method name for
-/// receiver interests. `None` for chain items that are not offered.
+/// receiver interests, and why it is not offered yet when it is one of the S2 shapes. `None` for links that are not
+/// calls, and for `import()`.
 fn chain_site(
     state: &mut TransformState<'_>,
     host: &PluginHost,
     item: &ChainItem,
-) -> Option<(CallContext, Option<&'static str>)> {
+) -> Option<(CallContext, Option<&'static str>, Option<&'static str>)> {
+    let mut unsupported = None;
     let node = item.node;
     let (shape, callee, symbol_node, receiver, method) = match item.kind {
         ChainItemKind::Call => {
@@ -246,17 +253,14 @@ fn chain_site(
             (shape, callee, Some(inner), None, None)
         }
         ChainItemKind::PropertyCall { expression: access, name, call_optional } => {
-            // rbxts-rs: S2 — optional calls (`o.m?.()`) and `super.m()` are not offered yet
-            if call_optional || tsrs_ast::is_super_property(access) {
-                return None;
-            }
+            // rbxts-rs: S2 — optional method calls (`o.m?.()`) and `super.m()` are not offered yet; a plugin
+            // whose interest matches one gets an internal error (`report_unoffered`)
+            unsupported = unoffered_reason(access, call_optional);
             let receiver = access.as_property_access_expression().expression;
             (CallShape::Property { access, name }, access, Some(access), Some(receiver), Some(name))
         }
         ChainItemKind::ElementCall { expression: access, argument_expression, call_optional } => {
-            if call_optional || tsrs_ast::is_super_property(access) {
-                return None;
-            }
+            unsupported = unoffered_reason(access, call_optional);
             let receiver = access.as_element_access_expression().expression;
             let key = literal_key(argument_expression);
             let shape = CallShape::Element { access, argument: argument_expression };
@@ -276,7 +280,63 @@ fn chain_site(
         in_optional_chain: tsrs_ast::is_optional_chain(node),
         value_used: !is_used_as_statement(node),
     };
-    Some((CallContext::new(site, shape, None), method))
+    let mut context = CallContext::new(site, shape, None);
+    context.item = Some(*item);
+    Some((context, method, unsupported))
+}
+
+/// Why a property or element call is not offered yet (S2).
+fn unoffered_reason(access: P<Node>, call_optional: bool) -> Option<&'static str> {
+    if tsrs_ast::is_super_property(access) {
+        Some("`super.m()` calls")
+    } else if call_optional {
+        Some("optional method calls (`o.m?.()`, `o[k]?.()`)")
+    } else {
+        None
+    }
+}
+
+/// A call of a shape S2 offers matched a plugin's interest: an internal error naming each such plugin, so the gap
+/// is never silent.
+fn report_unoffered(
+    state: &mut TransformState<'_>,
+    host: &PluginHost,
+    context: &CallContext,
+    method: Option<&str>,
+    reason: &str,
+) {
+    let candidates = call_candidates(state, host, &context.site, method);
+    let mut named = Vec::new();
+    for (plugin, _) in candidates {
+        if !named.contains(&plugin) {
+            named.push(plugin);
+            let message = format!(
+                "plugin `{}`: this call matches its interest, but {reason} are not offered to plugins until S2",
+                host.name(plugin)
+            );
+            state.internal_error(context.site.node, &message);
+        }
+    }
+}
+
+/// An optional method call (`o.m?.()`), which the chain lowering builds itself: not offered yet, so a plugin
+/// whose interest matches it gets an internal error.
+#[inline]
+pub fn check_unoffered_call(state: &mut TransformState<'_>, item: &ChainItem) {
+    if state.plugins.is_some() {
+        check_unoffered_call_slow(state, item);
+    }
+}
+
+#[inline(never)]
+fn check_unoffered_call_slow(state: &mut TransformState<'_>, item: &ChainItem) {
+    let Some(host) = state.plugins else { return };
+    if !host.any_calls {
+        return;
+    }
+    if let Some((context, method, Some(reason))) = chain_site(state, host, item) {
+        report_unoffered(state, host, &context, method, reason);
+    }
 }
 
 /// Fills in the method-call kind of a property or element call, once some plugin wants the call.
@@ -321,7 +381,11 @@ fn claim_chain_start_slow(
         // `compile_expr` of the claimed call itself: the item lowering skips it
         return None;
     }
-    let (mut context, method) = chain_site(state, host, item)?;
+    let (mut context, method, unsupported) = chain_site(state, host, item)?;
+    if unsupported.is_some() {
+        // the chain lowering reports it
+        return None;
+    }
     let candidates = call_candidates(state, host, &context.site, method);
     // asked now or never: the chain lowering does not ask again
     state.plugin_file.offered.insert(item.node);
@@ -333,6 +397,8 @@ fn claim_chain_start_slow(
         state.plugin_file.offered.remove(&item.node);
         return Some((k + 1, value));
     }
+    // declined: a `compile_expr` of the call in a hook consumed the mark, which keeps it from being offered again
+    state.plugin_file.offered.insert(item.node);
     let base = context.base.take()?;
     Some((k + 1, transform_chain_item(state, prereqs, base, item)))
 }
@@ -368,7 +434,11 @@ fn claim_chain_call_slow(
     if state.plugin_file.offered.remove(&item.node) {
         return Err(base);
     }
-    let Some((mut context, method)) = chain_site(state, host, item) else { return Err(base) };
+    let Some((mut context, method, unsupported)) = chain_site(state, host, item) else { return Err(base) };
+    if let Some(reason) = unsupported {
+        report_unoffered(state, host, &context, method, reason);
+        return Err(base);
+    }
     let candidates = call_candidates(state, host, &context.site, method);
     if candidates.is_empty() {
         return Err(base);
@@ -763,7 +833,8 @@ fn apply_import_decisions(state: &mut TransformState<'_>, statements: &mut Vec<S
     for i in (0..state.plugin_file.root_ranges.len()).rev() {
         let range = state.plugin_file.root_ranges[i];
         let aliases = alias_declarations(range.node);
-        if aliases.is_empty() {
+        // `export import X = …` re-exports X: never elided
+        if aliases.is_empty() || has_syntactic_modifier(range.node, ModifierFlags::Export) {
             continue;
         }
         let file = &state.plugin_file;
@@ -835,20 +906,24 @@ fn place_imports_and_header(state: &mut TransformState<'_>, statements: &mut Vec
     statements.splice(header_at..header_at, header);
 }
 
-/// Every identifier text in a file (for choosing an import's local name that nothing in the file can shadow).
-fn identifier_names(file: P<SourceFile>) -> FxHashSet<&'static str> {
-    fn walk(node: P<Node>, out: &mut FxHashSet<&'static str>) {
-        if node.kind() == Kind::Identifier {
-            out.insert(node.text());
+/// Whether the local name of an import alias could be shadowed where a plugin uses it: some identifier of the file
+/// with that text resolves to anything but the alias (a parameter, a local, a property), so the name does not mean
+/// the import everywhere. Conservative: a reused import must mean the import at every use.
+fn alias_shadowed(state: &mut TransformState<'_>, alias: P<Node>) -> bool {
+    let Some(alias_symbol) = alias.symbol() else { return true };
+    let Some(name) = alias_name(alias) else { return true };
+    fn walk(node: P<Node>, name: &str, out: &mut Vec<P<Node>>) {
+        if node.kind() == Kind::Identifier && node.text() == name {
+            out.push(node);
         }
         node.for_each_child(&mut |child| {
-            walk(child, out);
+            walk(child, name, out);
             false
         });
     }
-    let mut out = FxHashSet::default();
-    walk(file.as_node(), &mut out);
-    out
+    let mut identifiers = Vec::new();
+    walk(state.source_file.as_node(), name, &mut identifiers);
+    identifiers.into_iter().any(|id| state.checker.get_symbol_at_location_exported(id) != Some(alias_symbol))
 }
 
 /// A user import of `export` from `module_file` in this file: the alias declaration and the value to use.
@@ -916,14 +991,14 @@ pub(crate) fn import_named(
         format!("import_named: `{specifier}` resolves to {}, which is not in the program", resolved.file_name)
     })?;
 
-    let value = if let Some((alias, value)) = find_user_import(state, module_file, export) {
+    let reusable = find_user_import(state, module_file, export).filter(|&(alias, _)| !alias_shadowed(state, alias));
+    let value = if let Some((alias, value)) = reusable {
         state.plugin_file.forced_imports.insert(alias);
         value
     } else {
-        let names = state.plugin_file.identifier_names.get_or_insert_with(|| identifier_names(file));
         let usable = rbxts_luau::is_valid_identifier(export)
             && !rbxts_luau::is_reserved_identifier(export)
-            && !names.contains(export)
+            && !state.plugin_file.identifier_names(file).contains(export)
             && !state.plugin_file.import_names.contains(export);
         let id: AnyIdentifier = if usable { create::any_id(export) } else { temp_id(export).into() };
         state.plugin_file.import_names.insert(export.to_owned());

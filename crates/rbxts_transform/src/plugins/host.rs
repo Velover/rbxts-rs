@@ -93,6 +93,8 @@ pub struct PluginHost {
     pub(crate) statements: FxHashMap<Kind, Vec<(usize, Tag)>>,
     /// `RBXTS_PLUGIN_CLAIMS=all`: ask every matching plugin, and report a double claim.
     pub(crate) claims_all: bool,
+    /// Interests registered that this compiler does not dispatch yet (S2); the build fails with these.
+    pub unsupported_interests: Vec<String>,
     /// The checker's diagnostics of each file (all of them warnings or suggestions: an error stops the build first).
     pub(crate) file_diagnostics: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>>,
     /// Each source file's index in program order.
@@ -125,6 +127,7 @@ impl PluginHost {
             expressions: FxHashMap::default(),
             statements: FxHashMap::default(),
             claims_all,
+            unsupported_interests: Vec::new(),
             file_diagnostics,
             file_indices: program.source_files().iter().enumerate().map(|(i, &f)| (f, FileIndex(i as u32))).collect(),
             lines: RefCell::default(),
@@ -138,7 +141,21 @@ impl PluginHost {
             let mut interest = Interest::new();
             instance.interest(&mut interest);
             // rbxts-rs: S2 — `accesses_by_marker` (property_key) and `assignments_by_receiver_symbol` (assignment)
-            // are accepted but not dispatched yet.
+            // are not dispatched yet: registering them fails the build rather than being ignored
+            for (registered, what) in [
+                (!interest.access_markers().is_empty(), "accesses_by_marker (the property_key hook)"),
+                (
+                    interest.wants_assignments_by_receiver_symbol(),
+                    "assignments_by_receiver_symbol (the assignment hook)",
+                ),
+            ] {
+                if registered {
+                    host.unsupported_interests.push(format!(
+                        "rbxts-rs internal error: plugin `{}` registered {what}, which is not supported until S2",
+                        plugin.info.name
+                    ));
+                }
+            }
             for &(kind, tag) in interest.expression_kinds() {
                 host.expressions.entry(kind).or_default().push((index, tag));
             }

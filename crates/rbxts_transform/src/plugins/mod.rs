@@ -19,12 +19,20 @@
 //!   `ns.f()`, `a.b.m()`) is offered before anything of the chain is compiled, so a plugin that takes it leaves the
 //!   callee uncompiled (no diagnostics from it, no use of its import);
 //! - any other chain call (after a `?.` link or another call) is offered with its receiver already compiled and,
-//!   inside an optional chain, nil-checked: `compile_receiver` returns that value;
+//!   inside an optional chain, nil-checked: `compile_receiver` returns that value. That includes `f?.()`, offered
+//!   as `CallKind::Call` with `receiver: None` once the chain lowering has nil-checked `f`;
 //! - `new` expressions before constructor macros; decorators (`@D`, `@D(…)`) before the decorator expression is
 //!   compiled.
 //!
-//! Not offered yet (`// rbxts-rs: S2`): optional calls `f?.()` / `o.m?.()`, `super.m()` calls, and the
-//! `property_key` / `assignment` hooks (their interests are accepted and ignored).
+//! `compile_expr(call.node)` inside the call's own hook lowers the call as roblox-ts does (its macros included),
+//! without asking the plugins again, and on the base already compiled, so a receiver is never evaluated twice. A
+//! hook that lowered the call (`compile_expr` of it, `compile_call`) or left anything behind (a hoist, a root
+//! insertion, a header, an import, prereqs before `compile_receiver`) cannot decline it: that is an internal error,
+//! and the call is not offered again.
+//!
+//! Not offered yet (`// rbxts-rs: S2`): optional method calls `o.m?.()` / `o[k]?.()` and `super.m()` calls; a
+//! plugin whose interest matches one gets an internal error naming it. The `property_key` / `assignment` hooks are
+//! not dispatched: registering `accesses_by_marker` or `assignments_by_receiver_symbol` fails the build.
 
 pub mod backend;
 pub mod dispatch;

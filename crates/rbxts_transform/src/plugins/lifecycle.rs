@@ -136,6 +136,35 @@ fn path_key(services: &ProjectServices, path: &str) -> String {
     if services.use_case_sensitive_file_names { normalized } else { normalized.to_lowercase() }
 }
 
+/// A component Windows would rewrite when opening it (a trailing `.` or space), so that two spellings name one
+/// file: `a.luau.` is `a.luau`.
+fn has_rewritten_component(path: &str) -> bool {
+    path.split(['/', '\\']).any(|c| c != "." && c != ".." && (c.ends_with('.') || c.ends_with(' ')))
+}
+
+/// The path as the file system resolves it: its deepest existing ancestor canonicalised (junctions, symlinks,
+/// case), the rest appended. A comparison key like [`path_key`].
+fn real_key(services: &ProjectServices, path: &str) -> String {
+    let mut existing = PathBuf::from(nodepath::normalize(path));
+    let mut rest = Vec::new();
+    while !existing.exists() {
+        match existing.file_name() {
+            Some(name) => {
+                rest.push(name.to_owned());
+                existing.pop();
+            }
+            None => break,
+        }
+    }
+    let mut real = std::fs::canonicalize(&existing).unwrap_or(existing);
+    for name in rest.iter().rev() {
+        real.push(name);
+    }
+    let text = real.to_string_lossy();
+    let text = text.strip_prefix(r"\\?\").unwrap_or(&text);
+    path_key(services, text)
+}
+
 // --- setup ---
 
 /// The compiler's side of `SetupCx` for one plugin.
@@ -289,7 +318,15 @@ impl Finish<'_> {
     /// a Luau output. Records an error naming the plugin otherwise.
     fn checked_path(&mut self, path: &Path, what: &str) -> Option<String> {
         let absolute = plugin_path(self.services, path);
-        let key = path_key(self.services, &absolute);
+        if has_rewritten_component(&absolute) {
+            self.errors.push(format!(
+                "plugin `{}`: {what} {absolute} has a path component ending in `.` or a space",
+                self.plugin
+            ));
+            return None;
+        }
+        // through the file system: a junction or symlink inside the project can lead outside it
+        let key = real_key(self.services, &absolute);
         let data = &self.services.data;
         let roots = [
             data.project_path.as_str(),
@@ -298,7 +335,7 @@ impl Finish<'_> {
             data.options.include_path.as_str(),
         ];
         let under_root = roots.iter().filter(|r| !r.is_empty()).any(|root| {
-            let root = path_key(self.services, root);
+            let root = real_key(self.services, root);
             key.len() > root.len() && key.starts_with(&root) && key.as_bytes()[root.len()] == b'/'
         });
         if !under_root {
@@ -409,7 +446,10 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let temp: PathBuf = dir.join(format!(".{name}.rbxts-tmp-{}-{n}", std::process::id()));
-    std::fs::write(&temp, bytes)?;
+    if let Err(e) = std::fs::write(&temp, bytes) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(e);
+    }
     let mut delay = Duration::from_millis(10);
     let mut attempt = 0;
     loop {
@@ -487,5 +527,5 @@ pub(crate) fn commit_plugin_files(queue: &CommitQueue) -> Result<(Vec<String>, V
 
 /// The key for a Luau output path, to keep artifacts off them.
 pub(crate) fn output_key(services: &ProjectServices, path: &str) -> String {
-    path_key(services, path)
+    real_key(services, path)
 }

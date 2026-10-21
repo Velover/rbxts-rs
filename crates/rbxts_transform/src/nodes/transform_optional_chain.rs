@@ -268,6 +268,8 @@ fn transform_optional_chain_inner(
 
         let mut branch_prereqs = Prereqs::new();
         let new_expression: Option<Expr> = if item.is_compound_call() && item.call_optional() {
+            // rbxts-rs: not offered to plugins yet (S2); a matching plugin interest is an internal error
+            crate::plugins::dispatch::check_unoffered_call(state, item);
             let callee = item.node.expression().expect("a call has a callee");
             let callee_type = state.get_type(callee);
             let exp_type = state.checker.get_non_optional_type(callee_type);

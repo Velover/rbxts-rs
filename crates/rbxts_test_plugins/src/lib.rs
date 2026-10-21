@@ -8,10 +8,13 @@
 //!   `new` and decorator claims, `compile_call` slots, prereqs, hoists, captures, imports and import elision, the
 //!   class hook, the by-kind fallbacks, late strings, artifacts, and (in its failure modes) the phase guards,
 //!   panics and the contracts the compiler enforces.
+//! - [`identity`]: claims every call and lowers it as roblox-ts would (`compile_expr` or `compile_call`): its output
+//!   must equal a build without plugins.
 
 #[path = "../../rbxts_plugin/tests/support/stamp.rs"]
 pub mod stamp;
 
+pub mod identity;
 pub mod probe;
 
 use rbxts_plugin::erased::{DynPlugin, erase};
@@ -27,6 +30,12 @@ pub const NAMES: &[&str] = &[
     "probe-fail",
     "probe-err",
     "probe-artifact-outside",
+    "probe-artifact-sneaky",
+    "probe-setup-panic",
+    "probe-finish-panic",
+    "probe-s2-interest",
+    "identity-expr",
+    "identity-call",
 ];
 
 /// A test plugin by name (`rbxts-bench build --plugin <name>`).
@@ -42,6 +51,12 @@ pub fn by_name(name: &str) -> Option<Box<dyn DynPlugin>> {
         "probe-fail" => erase(Probe::new("probe", Mode::Fail)),
         "probe-err" => erase(Probe::new("probe", Mode::ErrWithoutError)),
         "probe-artifact-outside" => erase(Probe::new("probe", Mode::ArtifactOutside)),
+        "probe-artifact-sneaky" => erase(Probe::new("probe", Mode::ArtifactSneaky)),
+        "probe-setup-panic" => erase(Probe::new("probe", Mode::SetupPanic)),
+        "probe-finish-panic" => erase(Probe::new("probe", Mode::FinishPanic)),
+        "probe-s2-interest" => erase(Probe::new("probe", Mode::S2Interest)),
+        "identity-expr" => erase(identity::Identity(identity::IdentityMode::Expr)),
+        "identity-call" => erase(identity::Identity(identity::IdentityMode::Call)),
         _ => return None,
     })
 }

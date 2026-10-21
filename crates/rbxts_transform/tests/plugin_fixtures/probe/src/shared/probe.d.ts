@@ -65,3 +65,33 @@ declare const probeVoid: number;
 
 /** @probe facts {@link marked} */
 declare function probeFacts(): string;
+
+/** @probe self */
+declare function probeSelf(a: number): number;
+
+/** A chain of calls the probe claims with `compile_expr` of the call itself. */
+interface Chain {
+	/** @probe self */
+	s(a: number): number;
+	inner: Chain;
+}
+declare const maybeChain: Chain | undefined;
+declare function getChain(): Chain;
+declare function sideEffect(): number;
+
+// Declined after compile_expr of the call, a hoist, or a prereq: each an internal error (used by the tests only).
+
+/** @probe declineafter */
+declare function probeDeclineAfter(a: number): number;
+
+/** @probe hoistdecline */
+declare function probeHoistDecline(): number;
+
+/** @probe prereqdecline */
+declare function probePrereqDecline(): number;
+
+/** A marked base class, for a `super.probeMethod()` call (used by the tests only). */
+declare class MarkedBase {
+	readonly __probeMarker: true;
+	probeMethod(value: number): number;
+}

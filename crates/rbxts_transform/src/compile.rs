@@ -189,6 +189,15 @@ fn file_info(services: &ProjectServices, host: &PluginHost, file: P<SourceFile>)
     }
 }
 
+/// The text of a caught panic.
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+    panic
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+        .unwrap_or_else(|| "panic".to_owned())
+}
+
 /// One file's transform: its Luau (unless it panicked) and what it reported.
 struct FileTransform {
     ast: Option<Vec<Stmt>>,
@@ -226,11 +235,7 @@ fn transform_file(
         Ok(ast) => Some(ast),
         Err(panic) => {
             panicked = true;
-            let message = panic
-                .downcast_ref::<String>()
-                .cloned()
-                .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
-                .unwrap_or_else(|| "panic".to_owned());
+            let message = panic_message(&*panic);
             // a panic inside a hook is the plugin's; inside compiler code (a hook's compile_* included) the compiler's
             let message = match host.and_then(PluginHost::take_panic_frame) {
                 Some((plugin, hook)) => {
@@ -283,7 +288,17 @@ fn setup_plugins<'p>(
             messages: &mut report.plugin_messages,
             warnings: &mut report.warnings,
         };
-        let (shared, state, time) = run_setup(plugin, &mut backend);
+        let (shared, state, time) = match catch_unwind(AssertUnwindSafe(|| run_setup(plugin, &mut backend))) {
+            Ok(result) => result,
+            Err(panic) => {
+                report.fatal.push(format!(
+                    "plugin `{}` panicked in setup: {}",
+                    plugin.info.name,
+                    panic_message(&*panic)
+                ));
+                continue;
+            }
+        };
         let inputs = backend.inputs.into_inner();
         report.build_inputs.extend(inputs);
         PluginHost::add_time(&mut run.times, index, HookKind::Setup, time);
@@ -343,9 +358,23 @@ fn explain_failures(
         let root = file.as_node();
         for diagnostic in diagnostics {
             for plugin in 0..host.len() {
-                let explained = run_hook(&mut state, None, None, plugin, HookKind::Explain, root, |instance, cx| {
-                    Ok(instance.explain_checker_diagnostic(cx, diagnostic))
-                });
+                let explained = catch_unwind(AssertUnwindSafe(|| {
+                    run_hook(&mut state, None, None, plugin, HookKind::Explain, root, |instance, cx| {
+                        Ok(instance.explain_checker_diagnostic(cx, diagnostic))
+                    })
+                }));
+                let explained = match explained {
+                    Ok(explained) => explained,
+                    Err(panic) => {
+                        host.take_panic_frame();
+                        report.fatal.push(format!(
+                            "plugin `{}` panicked in explain_checker_diagnostic: {}",
+                            host.name(plugin),
+                            panic_message(&*panic)
+                        ));
+                        continue;
+                    }
+                };
                 if let Ok(Some(explanation)) = explained {
                     replacements.insert(diagnostic, to_diagnostic(&explanation));
                     break;
@@ -520,6 +549,12 @@ pub fn compile_project_with(options: &CompileOptions, plugin_options: &PluginOpt
                 claims_all,
             )
         });
+        if let Some(host) = &host
+            && !host.unsupported_interests.is_empty()
+        {
+            report.fatal.extend(host.unsupported_interests.iter().cloned());
+            return report;
+        }
         let mut multi = MultiTransformState::new();
         for &file in &files {
             let transformed =
@@ -596,8 +631,20 @@ pub fn compile_project_with(options: &CompileOptions, plugin_options: &PluginOpt
                 warnings: &mut report.warnings,
                 messages: &mut report.plugin_messages,
             };
-            let (result, time) =
-                run_finish(plugin, &run.shared[index], &mut run.states[index], &plugin_parts, &mut backend);
+            let finished = catch_unwind(AssertUnwindSafe(|| {
+                run_finish(plugin, &run.shared[index], &mut run.states[index], &plugin_parts, &mut backend)
+            }));
+            let (result, time) = match finished {
+                Ok(result) => result,
+                Err(panic) => {
+                    errors.push(format!(
+                        "plugin `{}` panicked in finish: {}",
+                        plugin.info.name,
+                        panic_message(&*panic)
+                    ));
+                    continue;
+                }
+            };
             PluginHost::add_time(&mut run.times, index, HookKind::Finish, time);
             if let Err(fatal) = result {
                 errors.push(format!("plugin `{}`: {fatal}", plugin.info.name));

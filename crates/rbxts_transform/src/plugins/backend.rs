@@ -29,6 +29,7 @@ use crate::nodes::expressions::transform_call_expression::{
 };
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::expressions::transform_super_keyword::transform_super_keyword;
+use crate::nodes::transform_optional_chain::{ChainItem, transform_chain_item};
 use crate::shared::diagnostics::node_range;
 use crate::util::add_one_if_array_type::add_one_if_array_type;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
@@ -89,22 +90,27 @@ pub(crate) enum CallShape {
 }
 
 /// A call being offered to plugins.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct CallContext {
     pub site: CallSite,
     pub shape: CallShape,
     /// The compiled base: the receiver of a property or element call, else the callee. Given by the chain lowering
     /// (eager), or compiled on first need (lazy).
     pub base: Option<Expr>,
-    /// The prereq count right after a lazily compiled base, which a declining plugin may leave behind.
+    /// The prereq counts right before and after a lazily compiled base: a declining plugin may leave those
+    /// statements behind (the next plugin, or roblox-ts, reuses the base), but nothing emitted before them.
+    pub base_prereqs_start: Option<usize>,
     pub base_prereqs_end: Option<usize>,
-    /// `compile_call` ran: the call cannot be declined any more.
-    pub lowered: bool,
+    /// What a plugin did that the call can no longer be declined after (`compile_call`, `compile_expr` of the call,
+    /// a hoist, a root insertion, a header, an import).
+    pub lowered: Option<&'static str>,
+    /// The chain link of a chain call, to lower the call on its compiled base.
+    pub item: Option<ChainItem>,
 }
 
 impl CallContext {
     pub(crate) fn new(site: CallSite, shape: CallShape, base: Option<Expr>) -> CallContext {
-        CallContext { site, shape, base, base_prereqs_end: None, lowered: false }
+        CallContext { site, shape, base, base_prereqs_start: None, base_prereqs_end: None, lowered: None, item: None }
     }
 }
 
@@ -212,6 +218,21 @@ impl HookBackend<'_, '_> {
         self.host.name(self.plugin)
     }
 
+    /// A side effect of a call hook that the call can no longer be declined after.
+    fn note_effect(&mut self, what: &'static str) {
+        if let Some(context) = self.call.as_deref_mut() {
+            context.lowered.get_or_insert(what);
+        }
+    }
+
+    fn hoist_unchecked(&mut self, value: Expr, hint: &str) -> Expr {
+        self.note_effect("calling hoist");
+        let id = temp_id(hint);
+        self.state.plugin_file.main_chunk_locals += 1;
+        self.state.plugin_file.root_inserts.push(create::local(id.clone(), Some(value)));
+        Expr::TemporaryIdentifier(id)
+    }
+
     /// Records the internal error for a call the phase table refuses, and says whether it was refused.
     fn refused(&mut self, what: &str, row: Row) -> bool {
         let allowed = match (self.phase, row) {
@@ -316,11 +337,10 @@ impl CxBackend for HookBackend<'_, '_> {
     // --- lowering ---
 
     fn compile_expr(&mut self, node: P<Node>) -> Result<Expr, Aborted> {
-        // the claimed node itself is lowered as roblox-ts lowers it, without asking the plugins again
-        if let Some(context) = self.call.as_deref()
-            && context.site.node == node
-        {
-            self.state.plugin_file.offered.insert(node);
+        if self.call.as_deref().is_some_and(|context| context.site.node == node) {
+            return self.lower("compile_expr", |state, prereqs, context| {
+                compile_claimed_call(state, prereqs, context.expect("a call context"))
+            });
         }
         if self.hook == HookKind::Expression && node == self.anchor {
             self.state.plugin_file.offered_expressions.insert(node);
@@ -350,7 +370,7 @@ impl CxBackend for HookBackend<'_, '_> {
         self.check_site(call, "compile_call")?;
         self.lower_unchecked(|state, prereqs, context| {
             let context = context.expect("checked above");
-            context.lowered = true;
+            context.lowered = Some("lowering it with compile_call");
             lower_call(state, prereqs, context, callee, args)
         })
     }
@@ -399,6 +419,7 @@ impl CxBackend for HookBackend<'_, '_> {
 
     fn insert_before_root_statement(&mut self, stmts: Vec<Stmt>) {
         if !self.refused("insert_before_root_statement", Row::Lowering) {
+            self.note_effect("calling insert_before_root_statement");
             self.state.plugin_file.main_chunk_locals += stmts.iter().map(declared_locals).sum::<u32>();
             self.state.plugin_file.root_inserts.extend(stmts);
         }
@@ -406,6 +427,7 @@ impl CxBackend for HookBackend<'_, '_> {
 
     fn header(&mut self, stmts: Vec<Stmt>) {
         if !self.refused("header", Row::FileLevel) {
+            self.note_effect("calling header");
             self.state.plugin_file.main_chunk_locals += stmts.iter().map(declared_locals).sum::<u32>();
             self.state.plugin_file.header.extend(stmts);
         }
@@ -415,22 +437,23 @@ impl CxBackend for HookBackend<'_, '_> {
         if self.refused("hoist", Row::Lowering) {
             return create::nil();
         }
-        let id = temp_id(hint);
-        self.state.plugin_file.main_chunk_locals += 1;
-        self.state.plugin_file.root_inserts.push(create::local(id.clone(), Some(value)));
-        Expr::TemporaryIdentifier(id)
+        self.hoist_unchecked(value, hint)
     }
 
     fn hoist_spillable(&mut self, value: Expr, hint: &str) -> Expr {
+        if self.refused("hoist_spillable", Row::Lowering) {
+            return create::nil();
+        }
         // rbxts-rs: TODO S2 — the spill table: when the main chunk would pass Luau's 200-local limit, spillable
         // hoists become fields of one table local, and the compiler reports the limit only after spilling.
-        self.hoist(value, hint)
+        self.hoist_unchecked(value, hint)
     }
 
     fn import_named(&mut self, specifier: &str, export: &str) -> Result<Expr, Aborted> {
         if self.refused("import_named", Row::FileLevel) {
             return Err(Aborted);
         }
+        self.note_effect("calling import_named");
         let anchor = self.anchor;
         let before = self.state.diagnostics.diagnostics.len();
         match dispatch::import_named(self.state, self.host, anchor, specifier, export) {
@@ -471,8 +494,14 @@ impl CxBackend for HookBackend<'_, '_> {
         temp_id(hint)
     }
 
+    /// A valid identifier, not a name roblox-ts's output uses itself (`luau.globals`), not a name a plugin import
+    /// took, and not a name the file's source uses anywhere, which covers every global (Roblox's or declared) the
+    /// output refers to and every local.
     fn is_usable_local_name(&self, name: &str) -> bool {
-        rbxts_luau::is_valid_identifier(name) && !rbxts_luau::is_reserved_identifier(name)
+        rbxts_luau::is_valid_identifier(name)
+            && !rbxts_luau::is_reserved_identifier(name)
+            && !self.state.plugin_file.identifier_names(self.state.source_file).contains(name)
+            && !self.state.plugin_file.import_names.contains(name)
     }
 
     fn locals(&self) -> LocalCounts {
@@ -563,10 +592,33 @@ fn compile_receiver(
     if let Some(base) = &context.base {
         return Ok(base.clone());
     }
+    context.base_prereqs_start = Some(prereqs.statements.len());
     let value = transform_expression(state, prereqs, receiver);
     context.base = Some(value.clone());
     context.base_prereqs_end = Some(prereqs.statements.len());
     Ok(value)
+}
+
+/// `compile_expr` of the claimed call itself: the call lowered as roblox-ts lowers it, without asking the plugins
+/// again. A chain call whose base the chain lowering (or `compile_receiver`) already compiled is lowered on that
+/// base, so the receiver is not evaluated twice; a call nothing of which is compiled yet is lowered from scratch.
+fn compile_claimed_call(
+    state: &mut TransformState<'_>,
+    prereqs: &mut Prereqs,
+    context: &mut CallContext,
+) -> Result<Expr, String> {
+    if context.lowered == Some("lowering it with compile_call") {
+        return Err("compile_expr of the claimed call after compile_call lowered it".to_owned());
+    }
+    context.lowered = Some("lowering it with compile_expr");
+    let node = context.site.node;
+    // the call is not offered again on the way down
+    state.plugin_file.offered.insert(node);
+    match (&context.base, context.item) {
+        (Some(base), Some(item)) => Ok(transform_chain_item(state, prereqs, base.clone(), &item)),
+        (Some(_), None) => Err("compile_expr of the claimed call after its callee was compiled".to_owned()),
+        (None, _) => Ok(transform_expression(state, prereqs, node)),
+    }
 }
 
 /// The original callee's base, compiled now unless the chain lowering or `compile_receiver` already did.

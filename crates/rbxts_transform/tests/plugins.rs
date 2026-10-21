@@ -216,7 +216,8 @@ fn probe_and_stamp_match_the_expected_luau() {
          {\"file\":\"src/shared/elide.ts\",\"claims\":3},{\"file\":\"src/shared/elideAll.ts\",\"claims\":1},\
          {\"file\":\"src/shared/elideKept.ts\",\"claims\":1},{\"file\":\"src/shared/facts.ts\",\"claims\":1},\
          {\"file\":\"src/shared/fallbacks.ts\",\"claims\":2},{\"file\":\"src/shared/receivers.ts\",\"claims\":3},\
-         {\"file\":\"src/shared/reuse.ts\",\"claims\":1}]\n"
+         {\"file\":\"src/shared/reuse.ts\",\"claims\":1},{\"file\":\"src/shared/selfcalls.ts\",\"claims\":5},\
+         {\"file\":\"src/shared/shadow.ts\",\"claims\":2}]\n"
     );
     assert_eq!(report.artifacts_written.len(), 3, "{:?}", report.artifacts_written);
     // a second build changes no Luau and no artifact (write if changed); the stamp state counts the clean build anew
@@ -332,6 +333,109 @@ fn finish_errors_fail_the_build() {
     assert!(report.fatal[0].ends_with("is outside the project directory, the outDir and the include path"));
     assert!(!project.out_exists());
     assert!(!project.root.join("probe-report.json").exists());
+}
+
+#[test]
+fn declining_after_lowering_is_an_error_and_a_call_is_offered_once() {
+    let Some(project) = Project::new("decline") else { return };
+    project.write(
+        "src/shared/declines.ts",
+        "export const a = probeDeclineAfter(1);\nexport const b = probeHoistDecline();\nexport const c = probePrereqDecline();\n",
+    );
+    let report = project.build(&["stamp", "probe"], |_| {});
+    let all = diagnostics(&report);
+    let declines: Vec<&String> = all.iter().filter(|d| d.starts_with("error declines.ts")).collect();
+    assert_eq!(
+        declines,
+        vec![
+            "error declines.ts: rbxts-rs internal error: plugin `probe` declined a call after lowering it with compile_expr",
+            "error declines.ts: rbxts-rs internal error: plugin `probe` declined a call after calling hoist",
+            "error declines.ts: rbxts-rs internal error: plugin `probe` declined a call after emitting prerequisites (they would run twice)",
+        ]
+    );
+    // the hook that compiled the call itself and declined ran once: the call is not offered again
+    assert_eq!(all.iter().filter(|d| d.ends_with("probe: declineafter was offered")).count(), 1, "{all:?}");
+    assert!(!project.out_exists());
+}
+
+#[test]
+fn call_shapes_and_interests_s1_does_not_dispatch_fail_clearly() {
+    let Some(project) = Project::new("s2") else { return };
+    project.write(
+        "src/shared/s2.ts",
+        "export const o = marked.probeMethod?.(1);\n\
+         export class Sub extends MarkedBase {\n\
+         \tprobeMethod(value: number) {\n\
+         \t\treturn super.probeMethod(value);\n\
+         \t}\n\
+         }\n",
+    );
+    let report = project.build(&["stamp", "probe"], |_| {});
+    assert_eq!(
+        errors(&report),
+        vec![
+            "error s2.ts: rbxts-rs internal error: plugin `probe`: this call matches its interest, but optional method \
+             calls (`o.m?.()`, `o[k]?.()`) are not offered to plugins until S2",
+            "error s2.ts: rbxts-rs internal error: plugin `probe`: this call matches its interest, but `super.m()` calls are \
+             not offered to plugins until S2",
+        ]
+    );
+    assert!(!project.out_exists());
+
+    std::fs::remove_file(project.root.join("src/shared/s2.ts")).unwrap();
+    let report = project.build(&["stamp", "probe-s2-interest"], |_| {});
+    assert_eq!(
+        report.fatal,
+        vec![
+            "rbxts-rs internal error: plugin `probe` registered accesses_by_marker (the property_key hook), which is not \
+             supported until S2"
+        ]
+    );
+    assert!(!project.out_exists());
+}
+
+#[test]
+fn plugin_panics_outside_the_transform_fail_the_build() {
+    let Some(project) = Project::new("panics") else { return };
+    let report = project.build(&["stamp", "probe-setup-panic"], |_| {});
+    assert_eq!(report.fatal, vec!["plugin `probe` panicked in setup: probe: setup panic"]);
+    let report = project.build(&["stamp", "probe-finish-panic"], |_| {});
+    assert_eq!(report.fatal, vec!["plugin `probe` panicked in finish: probe: finish panic"]);
+    assert!(!project.out_exists());
+}
+
+#[test]
+fn artifacts_cannot_escape_through_links_or_alias_a_luau_output() {
+    let Some(project) = Project::new("sneaky") else { return };
+    let outside = std::env::temp_dir().join(format!("rbxts-rs-plugins-outside-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&outside);
+    std::fs::create_dir_all(&outside).unwrap();
+    let link = project.root.join("link");
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(&outside)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success(), "could not make the junction");
+    let report = project.build(&["stamp", "probe-artifact-sneaky"], |_| {});
+    let _ = std::process::Command::new("cmd").args(["/C", "rmdir"]).arg(&link).status();
+    assert_eq!(report.fatal.len(), 2, "{:?}", report.fatal);
+    assert!(
+        report.fatal[0].ends_with("calls.luau. has a path component ending in `.` or a space"),
+        "{:?}",
+        report.fatal
+    );
+    assert!(
+        report.fatal[1]
+            .ends_with("through-the-junction.txt is outside the project directory, the outDir and the include path"),
+        "{:?}",
+        report.fatal
+    );
+    assert!(!project.out_exists());
+    assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0, "nothing written through the junction");
+    let _ = std::fs::remove_dir_all(&outside);
 }
 
 #[test]
