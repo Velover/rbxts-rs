@@ -113,7 +113,8 @@ pub fn is_boolean_type(_: &mut TransformState<'_>, t: P<Type>) -> bool {
 pub fn is_boolean_literal_type(value: bool) -> impl Fn(&mut TransformState<'_>, P<Type>) -> bool {
     move |state, t| {
         if t.flags().intersects(TypeFlags::BooleanLiteral) {
-            let value_type = if value { state.checker.true_type } else { state.checker.false_type };
+            // `getTrueType()` / `getFalseType()` without `fresh` are the regular literal types, which `boolean` is made of
+            let value_type = if value { state.checker.regular_true_type } else { state.checker.regular_false_type };
             return t == value_type;
         }
         is_boolean_type(state, t)
