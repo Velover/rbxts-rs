@@ -1,5 +1,5 @@
 // The loops area's fixture: for (numeric and fallback), for-of (every loop builder, $range), while, do-while, and
-// roblox-ts's loop.spec.ts without its destructuring tests (T2).
+// roblox-ts's loop.spec.ts (its destructuring tests came with the binding area).
 // `expected/`: roblox-ts master (`probe/rbxts-driver.cjs`); the TypeScript 5 and tsrs backends give the same output.
 {
 	"include": ["src", "node_modules/@rbxts/testez/globals.d.ts"],

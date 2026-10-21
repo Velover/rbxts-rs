@@ -9,7 +9,9 @@ use tsrs_core::P;
 use crate::classes::macro_manager::symbol_names;
 use crate::classes::prereqs::{Prereqs, temp_id};
 use crate::classes::transform_state::TransformState;
+use crate::nodes::binding::transform_array_assignment_pattern::transform_array_assignment_pattern;
 use crate::nodes::binding::transform_binding_name::transform_binding_name;
+use crate::nodes::binding::transform_object_assignment_pattern::transform_object_assignment_pattern;
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::transform_initializer::transform_initializer;
 use crate::nodes::transform_statement_list::transform_statement_list;
@@ -27,31 +29,6 @@ use crate::util::types::{
     is_shared_table_type, is_string_type,
 };
 use crate::util::value_to_id_str::value_to_id_str;
-
-/// `transformArrayAssignmentPattern`
-///
-/// rbxts-rs: destructuring assignment belongs to the binding area; until it lands, a loop that assigns through an
-/// array pattern is reported with the label `transformBinaryExpression` uses.
-fn transform_array_assignment_pattern(
-    state: &mut TransformState<'_>,
-    _prereqs: &mut Prereqs,
-    assignment_pattern: P<Node>,
-    _parent_id: &Expr,
-) {
-    state.unsupported_subtree(assignment_pattern, "array destructuring assignment");
-}
-
-/// `transformObjectAssignmentPattern`
-///
-/// rbxts-rs: as [`transform_array_assignment_pattern`], until the binding area lands.
-fn transform_object_assignment_pattern(
-    state: &mut TransformState<'_>,
-    _prereqs: &mut Prereqs,
-    assignment_pattern: P<Node>,
-    _parent_id: &Expr,
-) {
-    state.unsupported_subtree(assignment_pattern, "object destructuring assignment");
-}
 
 /// `makeForLoopBuilder`: `for ids in expression do initializers; statements end`.
 fn make_for_loop(
@@ -86,13 +63,13 @@ fn transform_for_initializer_expression_direct(
         Kind::ArrayLiteralExpression => {
             let mut binding_prereqs = Prereqs::new();
             let parent_id = binding_prereqs.push_to_var(value, "binding");
-            transform_array_assignment_pattern(state, &mut binding_prereqs, initializer, &parent_id);
+            transform_array_assignment_pattern(state, &mut binding_prereqs, initializer, parent_id.clone());
             initializers.extend(binding_prereqs.statements);
         }
         Kind::ObjectLiteralExpression => {
             let mut binding_prereqs = Prereqs::new();
             let parent_id = binding_prereqs.push_to_var(value, "binding");
-            transform_object_assignment_pattern(state, &mut binding_prereqs, initializer, &parent_id);
+            transform_object_assignment_pattern(state, &mut binding_prereqs, initializer, parent_id.clone());
             initializers.extend(binding_prereqs.statements);
         }
         _ => {
@@ -118,7 +95,7 @@ fn transform_for_initializer(
             let parent_id = temp_id("binding");
             let mut binding_prereqs = Prereqs::new();
             let parent = Expr::TemporaryIdentifier(parent_id.clone());
-            transform_array_assignment_pattern(state, &mut binding_prereqs, initializer, &parent);
+            transform_array_assignment_pattern(state, &mut binding_prereqs, initializer, parent);
             initializers.extend(binding_prereqs.statements);
             AnyIdentifier::Temporary(parent_id)
         }
@@ -126,7 +103,7 @@ fn transform_for_initializer(
             let parent_id = temp_id("binding");
             let mut binding_prereqs = Prereqs::new();
             let parent = Expr::TemporaryIdentifier(parent_id.clone());
-            transform_object_assignment_pattern(state, &mut binding_prereqs, initializer, &parent);
+            transform_object_assignment_pattern(state, &mut binding_prereqs, initializer, parent);
             initializers.extend(binding_prereqs.statements);
             AnyIdentifier::Temporary(parent_id)
         }
@@ -204,7 +181,7 @@ fn transform_in_line_array_assignment_pattern(
                     let statement = transform_initializer(state, value.clone(), initializer);
                     binding_prereqs.push(statement);
                 }
-                transform_array_assignment_pattern(state, &mut binding_prereqs, element, &value);
+                transform_array_assignment_pattern(state, &mut binding_prereqs, element, value.clone());
             }
             _ => {
                 assert!(element.kind() == Kind::ObjectLiteralExpression, "Expected object assignment pattern");
@@ -212,7 +189,7 @@ fn transform_in_line_array_assignment_pattern(
                     let statement = transform_initializer(state, value.clone(), initializer);
                     binding_prereqs.push(statement);
                 }
-                transform_object_assignment_pattern(state, &mut binding_prereqs, element, &value);
+                transform_object_assignment_pattern(state, &mut binding_prereqs, element, value.clone());
             }
         }
 

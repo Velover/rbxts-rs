@@ -1,5 +1,5 @@
 -- Compiled with roblox-ts v3.0.0
--- roblox-ts's tests/src/tests/loop.spec.ts without the tests that destructure (binding patterns are another area)
+-- roblox-ts's tests/src/tests/loop.spec.ts
 local function difference(set1, set2)
 	local result = {}
 	for value in set1 do
@@ -204,6 +204,29 @@ return function()
 		end
 		-- ▲ ReadonlyArray.map ▲
 		expect(table.concat(_newValue_1, ",")).to.equal("0,1,2")
+	end)
+	it("should collect nested loop bindings and omit skipped elements", function()
+		local values = {}
+		do
+			local _binding, _, _binding_1 = {
+				value = 0,
+			}, 100, { 2 }
+			local value = _binding.value
+			local other = _binding_1[1]
+			local _shouldIncrement = false
+			while true do
+				if _shouldIncrement then
+					value += 1
+				else
+					_shouldIncrement = true
+				end
+				if not (value < 2) then
+					break
+				end
+				table.insert(values, value + other)
+			end
+		end
+		expect(table.concat(values, ",")).to.equal("2,3")
 	end)
 	it("should retain loops with missing initializers or incrementors", function()
 		local values = {}
@@ -424,6 +447,66 @@ return function()
 		expect(table.concat(values, ",")).to.equal("0,1,2")
 		expect(calls).to.equal(2)
 	end)
+	it("should preserve fractional bounds copied from literal-typed properties", function()
+		local source = {
+			limit = 3,
+		}
+		local alias = source
+		alias.limit = 2.5
+		local function getLimit()
+			return source.limit
+		end
+		local computed = getLimit()
+		local destructured = source.limit
+		local element = source.limit
+		local values = {}
+		do
+			local i = 0
+			local _shouldIncrement = false
+			while true do
+				if _shouldIncrement then
+					i += 1
+				else
+					_shouldIncrement = true
+				end
+				if not (i < computed) then
+					break
+				end
+				table.insert(values, i)
+			end
+		end
+		do
+			local i = 0
+			local _shouldIncrement = false
+			while true do
+				if _shouldIncrement then
+					i += 1
+				else
+					_shouldIncrement = true
+				end
+				if not (i < destructured) then
+					break
+				end
+				table.insert(values, i)
+			end
+		end
+		do
+			local i = 0
+			local _shouldIncrement = false
+			while true do
+				if _shouldIncrement then
+					i += 1
+				else
+					_shouldIncrement = true
+				end
+				if not (i < element) then
+					break
+				end
+				table.insert(values, i)
+			end
+		end
+		expect(table.concat(values, ",")).to.equal("0,1,2,0,1,2,0,1,2")
+	end)
 	it("should preserve fractional starts copied from literal-typed properties", function()
 		local source = {
 			start = 0,
@@ -476,6 +559,35 @@ return function()
 			end
 		end
 		expect(table.concat(values, ",")).to.equal("0,-1,-2")
+	end)
+	it("should use copied integer constants from destructuring", function()
+		local calls = 0
+		local function getOptions()
+			calls += 1
+			return {
+				step = 1,
+			}
+		end
+		local start, _, limit = 0, 99, 3
+		local step = getOptions().step
+		local values = {}
+		do
+			local i = start
+			local _shouldIncrement = false
+			while true do
+				if _shouldIncrement then
+					i += step
+				else
+					_shouldIncrement = true
+				end
+				if not (i < limit) then
+					break
+				end
+				table.insert(values, i)
+			end
+		end
+		expect(table.concat(values, ",")).to.equal("0,1,2")
+		expect(calls).to.equal(1)
 	end)
 	it("should support negated constants and integer arithmetic in loops", function()
 		local limit = 3
@@ -606,6 +718,66 @@ return function()
 		end
 		expect(table.concat(values, ",")).to.equal("0,1,2")
 		expect(checks).to.equal(4)
+	end)
+	it("should support dynamic and missing destructured loop bounds", function()
+		local bounds = { 3, 4 }
+		local dynamic = bounds[1]
+		local _binding = {}
+		local missing = _binding[1]
+		if missing == nil then
+			missing = 2
+		end
+		local _array = {}
+		local _length = #_array
+		table.move(bounds, 1, #bounds, _length + 1, _array)
+		local spread = _array[1]
+		local values = {}
+		do
+			local i = 0
+			local _shouldIncrement = false
+			while true do
+				if _shouldIncrement then
+					i += 1
+				else
+					_shouldIncrement = true
+				end
+				if not (i < dynamic) then
+					break
+				end
+				table.insert(values, i)
+			end
+		end
+		do
+			local i = 0
+			local _shouldIncrement = false
+			while true do
+				if _shouldIncrement then
+					i += 1
+				else
+					_shouldIncrement = true
+				end
+				if not (i < missing) then
+					break
+				end
+				table.insert(values, i)
+			end
+		end
+		do
+			local i = 0
+			local _shouldIncrement = false
+			while true do
+				if _shouldIncrement then
+					i += 1
+				else
+					_shouldIncrement = true
+				end
+				if not (i < spread) then
+					break
+				end
+				table.insert(values, i)
+			end
+		end
+		expect(table.concat(values, ",")).to.equal("0,1,2,0,1,0,1,2")
 	end)
 	it("should reevaluate negated mutable loop bounds", function()
 		local limit = 3
@@ -789,6 +961,28 @@ return function()
 			end
 		end
 		expect(remaining).to.equal(1)
+	end)
+	it("should preserve destructuring writes to the loop variable", function()
+		local iterations = 0
+		do
+			local _i = 0
+			local _shouldIncrement = false
+			while true do
+				local i = _i
+				if _shouldIncrement then
+					i += 1
+				else
+					_shouldIncrement = true
+				end
+				if not (i < 3) then
+					break
+				end
+				i = 5
+				iterations += 1
+				_i = i
+			end
+		end
+		expect(iterations).to.equal(1)
 	end)
 	it("should support numeric for loops", function()
 		local hit = {}
@@ -1083,6 +1277,43 @@ return function()
 			["4"] = true,
 		})) == nil).to.equal(true)
 	end)
+	it("should support optimized destructuring in for-of loops over Maps", function()
+		local hit = {}
+		local map = {
+			["1"] = "2",
+			["3"] = "4",
+		}
+		local n = 0
+		for k, v in map do
+			hit[k] = true
+			hit[v] = true
+			n += 1
+		end
+		expect(n).to.equal(2)
+		expect(next(difference(hit, {
+			["1"] = true,
+			["2"] = true,
+			["3"] = true,
+			["4"] = true,
+		})) == nil).to.equal(true)
+	end)
+	it("should support destructuring optimized destructuring in for-of loops over Maps", function()
+		local n = 0
+		for _binding, _binding_1 in {
+			[{ "1", "2" }] = { "3", "4" },
+		} do
+			local i = _binding[1]
+			local j = _binding[2]
+			local k = _binding_1[1]
+			local v = _binding_1[2]
+			expect(i).to.equal("1")
+			expect(j).to.equal("2")
+			expect(k).to.equal("3")
+			expect(v).to.equal("4")
+			n += 1
+		end
+		expect(n).to.equal(1)
+	end)
 	it("should support break", function()
 		local array = { 1, 2, 3, 4, 5 }
 		local sum = 0
@@ -1141,6 +1372,32 @@ return function()
 			x += 1
 		end
 		expect(x).to.equal(10)
+	end)
+	it("should support for-of destructuring", function()
+		local arr = { {
+			a = 1,
+			b = 2,
+			c = 3,
+		} }
+		for _, _binding in arr do
+			local a = _binding.a
+			local b = _binding.b
+			local c = _binding.c
+			expect(a).to.equal(1)
+			expect(b).to.equal(2)
+			expect(c).to.equal(3)
+		end
+	end)
+	it("should work with gmatch", function()
+		for a in string.gmatch("H", ".") do
+			expect(a).to.equal("H")
+		end
+		for a, b, c, d in string.gmatch("Hello!", "(%l)(%l)(%l)(%l)") do
+			expect(a).to.equal("e")
+			expect(b).to.equal("l")
+			expect(c).to.equal("l")
+			expect(d).to.equal("o")
+		end
 	end)
 	it("should support indexing tuple as array", function()
 		local obj = {

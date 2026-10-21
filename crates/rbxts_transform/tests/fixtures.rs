@@ -22,7 +22,7 @@
 //!   order, so the fixture declares its exported functions first.
 //! - `loops`: numeric `for` loops under `--optimizedLoops` and the `while` fallback (copies of captured loop
 //!   variables, finalizers before `continue`), every for-of loop builder and `$range`, `while`, `do`-`while`, and
-//!   `continue` / `break` inside `try` in loops.
+//!   `continue` / `break` inside `try` in loops, and roblox-ts's `loop.spec.ts` (destructured loop variables included).
 //! - `macros`: every call, identifier, constructor and property-call macro, as values and statements, on optional
 //!   chains and with evaluation-order cases.
 

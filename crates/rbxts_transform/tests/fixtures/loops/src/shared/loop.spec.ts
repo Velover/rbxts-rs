@@ -1,4 +1,4 @@
-// roblox-ts's tests/src/tests/loop.spec.ts without the tests that destructure (binding patterns are another area)
+// roblox-ts's tests/src/tests/loop.spec.ts
 function difference<T>(set1: Set<T>, set2: Set<T>): Set<T> {
 	const result = new Set<T>();
 	for (const value of set1) {
@@ -103,6 +103,14 @@ export = () => {
 		expect(iterations.map(read => read()).join(",")).to.equal("0,1,2");
 	});
 
+	it("should collect nested loop bindings and omit skipped elements", () => {
+		const values = new Array<number>();
+		for (let [{ value }, , [other]] = [{ value: 0 }, 100, [2]] as const; value < 2; value++) {
+			values.push(value + other);
+		}
+
+		expect(values.join(",")).to.equal("2,3");
+	});
 
 	it("should retain loops with missing initializers or incrementors", () => {
 		const values = new Array<number>();
@@ -244,6 +252,30 @@ export = () => {
 		expect(calls).to.equal(2);
 	});
 
+	it("should preserve fractional bounds copied from literal-typed properties", () => {
+		const source: { limit: 3 } = { limit: 3 };
+		const alias: { limit: number } = source;
+		alias.limit = 2.5;
+		function getLimit(): 3 {
+			return source.limit;
+		}
+
+		const computed = getLimit();
+		const { limit: destructured } = source;
+		const [element] = [source.limit];
+		const values = new Array<number>();
+		for (let i = 0; i < computed; i++) {
+			values.push(i);
+		}
+		for (let i = 0; i < destructured; i++) {
+			values.push(i);
+		}
+		for (let i = 0; i < element; i++) {
+			values.push(i);
+		}
+
+		expect(values.join(",")).to.equal("0,1,2,0,1,2,0,1,2");
+	});
 
 	it("should preserve fractional starts copied from literal-typed properties", () => {
 		const source: { start: 0 } = { start: 0 };
@@ -274,6 +306,23 @@ export = () => {
 		expect(values.join(",")).to.equal("0,-1,-2");
 	});
 
+	it("should use copied integer constants from destructuring", () => {
+		let calls = 0;
+		function getOptions(): { step: 1 } {
+			calls++;
+			return { step: 1 };
+		}
+
+		const [start, , limit] = [0, 99, 3];
+		const { step } = getOptions();
+		const values = new Array<number>();
+		for (let i = start; i < limit; i += step) {
+			values.push(i);
+		}
+
+		expect(values.join(",")).to.equal("0,1,2");
+		expect(calls).to.equal(1);
+	});
 
 	it("should support negated constants and integer arithmetic in loops", () => {
 		const limit = 3;
@@ -373,6 +422,24 @@ export = () => {
 		expect(checks).to.equal(4);
 	});
 
+	it("should support dynamic and missing destructured loop bounds", () => {
+		const bounds = [3, 4];
+		const [dynamic] = bounds;
+		const [missing = 2] = [];
+		const [spread] = [...bounds];
+		const values = new Array<number>();
+		for (let i = 0; i < dynamic; i++) {
+			values.push(i);
+		}
+		for (let i = 0; i < missing; i++) {
+			values.push(i);
+		}
+		for (let i = 0; i < spread; i++) {
+			values.push(i);
+		}
+
+		expect(values.join(",")).to.equal("0,1,2,0,1,0,1,2");
+	});
 
 	it("should reevaluate negated mutable loop bounds", () => {
 		let limit = 3;
@@ -469,6 +536,14 @@ export = () => {
 		expect(remaining).to.equal(1);
 	});
 
+	it("should preserve destructuring writes to the loop variable", () => {
+		let iterations = 0;
+		for (let i = 0; i < 3; i++) {
+			[i] = [5];
+			iterations++;
+		}
+		expect(iterations).to.equal(1);
+	});
 
 	it("should support numeric for loops", () => {
 		const hit = new Set<number>();
@@ -706,7 +781,38 @@ export = () => {
 		expect(difference(hit, new Set(["1", "2", "3", "4"])).isEmpty()).to.equal(true);
 	});
 
+	it("should support optimized destructuring in for-of loops over Maps", () => {
+		const hit = new Set<string>();
+		const map = new Map([
+			["1", "2"],
+			["3", "4"],
+		]);
+		let n = 0;
+		for (const [k, v] of map) {
+			hit.add(k);
+			hit.add(v);
+			n++;
+		}
+		expect(n).to.equal(2);
+		expect(difference(hit, new Set(["1", "2", "3", "4"])).isEmpty()).to.equal(true);
+	});
 
+	it("should support destructuring optimized destructuring in for-of loops over Maps", () => {
+		let n = 0;
+		for (const [[i, j], [k, v]] of new Map<[string, string], [string, string]>([
+			[
+				["1", "2"],
+				["3", "4"],
+			],
+		])) {
+			expect(i).to.equal("1");
+			expect(j).to.equal("2");
+			expect(k).to.equal("3");
+			expect(v).to.equal("4");
+			n++;
+		}
+		expect(n).to.equal(1);
+	});
 
 	it("should support break", () => {
 		const array = [1, 2, 3, 4, 5];
@@ -770,7 +876,33 @@ export = () => {
 		expect(x).to.equal(10);
 	});
 
+	it("should support for-of destructuring", () => {
+		const arr = [
+			{
+				a: 1,
+				b: 2,
+				c: 3,
+			},
+		];
+		for (const { a, b, c } of arr) {
+			expect(a).to.equal(1);
+			expect(b).to.equal(2);
+			expect(c).to.equal(3);
+		}
+	});
 
+	it("should work with gmatch", () => {
+		for (const [a] of "H".gmatch(".")) {
+			expect(a).to.equal("H");
+		}
+
+		for (const [a, b, c, d] of "Hello!".gmatch("(%l)(%l)(%l)(%l)")) {
+			expect(a).to.equal("e");
+			expect(b).to.equal("l");
+			expect(c).to.equal("l");
+			expect(d).to.equal("o");
+		}
+	});
 
 	it("should support indexing tuple as array", () => {
 		const obj = {
