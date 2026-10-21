@@ -1,0 +1,3 @@
+# Check out every text file with LF: parity fixtures and expected outputs are compared byte for byte, and the
+# machine default core.autocrlf=true would turn them into CRLF in a fresh checkout.
+* text=auto eol=lf
