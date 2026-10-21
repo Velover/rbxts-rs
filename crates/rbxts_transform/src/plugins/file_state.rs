@@ -1,7 +1,7 @@
 //! What one file's transform records for its plugins (in `TransformState::plugin_file`). Empty, and never touched,
 //! when the build has no plugins.
 
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -60,7 +60,8 @@ impl EffectMark {
             Some("emitting prerequisites (they would run twice)")
         } else if self.root_inserts > earlier.root_inserts {
             Some(
-                "leaving statements before the root statement behind (a hoist or an insertion, its own or a nested hook's)",
+                "leaving statements before the root statement behind (a hoist or an insertion, its own or a nested \
+                 hook's)",
             )
         } else if self.header > earlier.header {
             Some("leaving header statements behind (its own or a nested hook's)")
@@ -70,6 +71,23 @@ impl EffectMark {
             None
         }
     }
+}
+
+/// One running hook on the frame stack ([`PluginFileState::frames`]). Pushed by every hook call and popped after
+/// it, so a nested hook (reached through the outer hook's `compile_*` calls) never touches the outer hook's state.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HookFrame {
+    /// What the hook did that its node can no longer be declined after: `compile_expr` of the node itself,
+    /// `compile_call`, a hoist, a root insertion, a header, an import, a receiver compiled inside a capture.
+    pub lowered: Option<&'static str>,
+    /// `compile_call` ran.
+    pub called: bool,
+    /// Hooks (claim or class hooks) that ran while this one ran, through its `compile_*` calls: declining after
+    /// them would run them again.
+    pub nested_hooks: u32,
+    /// Of those, the ones the lazy `compile_receiver` ran: the receiver is kept for reuse, so they do not run
+    /// again.
+    pub receiver_nested_hooks: u32,
 }
 
 /// The per-file plugin state.
@@ -109,9 +127,13 @@ pub struct PluginFileState {
     /// `local` names declared at the top level of the main chunk so far (statements done, root insertions,
     /// imports, header).
     pub main_chunk_locals: u32,
-    /// What an expression or statement hook did that the node can no longer be declined after (`compile_expr` of
-    /// its own node, a hoist, a header, an import): the call path keeps this in its call context.
-    pub hook_lowered: Option<&'static str>,
+    /// The hooks running now, innermost last.
+    pub frames: Vec<HookFrame>,
+    /// Names `is_usable_local_name` approved: the plugin may declare them anywhere, so no seam temporary or
+    /// plugin import takes them.
+    approved_names: RefCell<FxHashSet<String>>,
+    /// The hints seam temporaries were given: their names `_hint` / `_hint_<n>` are taken for later approvals.
+    seam_bases: FxHashSet<String>,
 }
 
 impl PluginFileState {
@@ -160,23 +182,70 @@ impl PluginFileState {
     /// hoist or an import is declared at the top of the file and may be used in any nested function, where a user
     /// local of that name would capture it. So the hint is changed (`hint2`, `hint3`, …) until no identifier of the
     /// file is `_hint` or `_hint_<n>`.
-    pub fn seam_hint(&self, file: P<SourceFile>, hint: &str) -> String {
+    ///
+    /// Names `is_usable_local_name` approved and plugin import names count too, so a name the plugin may declare
+    /// in a nested scope never captures a seam temporary; the hint chosen is recorded, so a later approval cannot
+    /// take its names either.
+    pub fn seam_hint(&mut self, file: P<SourceFile>, hint: &str) -> String {
         let hint = if hint.is_empty() { "seam" } else { hint };
-        let names = self.identifier_names(file);
-        let taken = |base: &str| {
-            let exact = format!("_{base}");
-            let numbered = format!("_{base}_");
-            names.iter().any(|name| {
-                *name == exact
-                    || name
-                        .strip_prefix(numbered.as_str())
-                        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
-            })
+        let base = {
+            let names = self.identifier_names(file);
+            let approved = self.approved_names.borrow();
+            let taken = |base: &str| {
+                let exact = format!("_{base}");
+                let numbered = format!("_{base}_");
+                let matches = |name: &str| {
+                    name == exact
+                        || name
+                            .strip_prefix(numbered.as_str())
+                            .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+                };
+                names.iter().any(|n| matches(n))
+                    || approved.iter().any(|n| matches(n))
+                    || self.import_names.iter().any(|n| matches(n))
+            };
+            if taken(hint) {
+                (2..).map(|i| format!("{hint}{i}")).find(|candidate| !taken(candidate)).expect("a free name")
+            } else {
+                hint.to_owned()
+            }
         };
-        if !taken(hint) {
-            return hint.to_owned();
+        self.seam_bases.insert(base.clone());
+        base
+    }
+
+    /// `name` is a seam temporary's name: `_base` or `_base_<n>` for a recorded hint.
+    fn is_seam_name(&self, name: &str) -> bool {
+        let Some(rest) = name.strip_prefix('_') else { return false };
+        self.seam_bases.iter().any(|base| {
+            rest.strip_prefix(base.as_str()).is_some_and(|tail| {
+                tail.is_empty()
+                    || tail
+                        .strip_prefix('_')
+                        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+            })
+        })
+    }
+
+    /// `name` is used by the file's source, a plugin import, an approved name or a seam temporary.
+    pub fn name_taken(&self, file: P<SourceFile>, name: &str) -> bool {
+        self.identifier_names(file).contains(name)
+            || self.import_names.contains(name)
+            || self.approved_names.borrow().contains(name)
+            || self.is_seam_name(name)
+    }
+
+    /// `is_usable_local_name`: a valid identifier, not a `luau.globals` name, and not taken
+    /// ([`PluginFileState::name_taken`]). An approved name is recorded, so later seam temporaries and plugin
+    /// imports avoid it.
+    pub fn approve_name(&self, file: P<SourceFile>, name: &str) -> bool {
+        let usable = rbxts_luau::is_valid_identifier(name)
+            && !rbxts_luau::is_reserved_identifier(name)
+            && !self.name_taken(file, name);
+        if usable {
+            self.approved_names.borrow_mut().insert(name.to_owned());
         }
-        (2..).map(|i| format!("{hint}{i}")).find(|candidate| !taken(candidate)).expect("a free name")
+        usable
     }
 
     /// Records a late key the file's Luau uses.

@@ -18,22 +18,29 @@
 //! - a call in a property/element/call chain whose callee is reached through plain accesses only (`f()`,
 //!   `ns.f()`, `a.b.m()`) is offered before anything of the chain is compiled, so a plugin that takes it leaves the
 //!   callee uncompiled (no diagnostics from it, no use of its import);
-//! - any other chain call (after a `?.` link or another call) is offered with its receiver already compiled and,
-//!   inside an optional chain, nil-checked: `compile_receiver` returns that value. That includes `f?.()`, offered
-//!   as `CallKind::Call` with `receiver: None` once the chain lowering has nil-checked `f`;
+//! - any other chain call (after a `?.` link or another call) is offered with its receiver already compiled (and
+//!   nil-checked when it is inside an optional chain): `compile_receiver` returns that value. That includes
+//!   `f?.()`, offered as `CallKind::Call` with `receiver: None` once the chain lowering has nil-checked `f`;
 //! - `new` expressions before constructor macros; decorators (`@D`, `@D(…)`) before the decorator expression is
 //!   compiled.
 //!
 //! `compile_expr(call.node)` inside the call's own hook lowers the call as roblox-ts does (its macros included),
-//! without asking the plugins again, and on the base already compiled, so a receiver is never evaluated twice. A
-//! hook that lowered the call (`compile_expr` of it, `compile_call`) or left anything behind cannot decline it:
-//! prereqs, a hoist, a root insertion, a header statement or a plugin import, made by the hook itself or by a hook
-//! nested in one of its `compile_*` calls (only what `compile_receiver` left is kept, for reuse). That is an
-//! internal error, and the call is not offered again. The expression and statement fallbacks follow the same rule.
+//! without asking the plugins again, and on the base already compiled, so a receiver is never evaluated twice.
 //!
-//! Temporary identifiers plugins ask for (`temp_id`, `hoist`, `push_to_var`, the `import_named` fallback) are named
-//! so that no identifier of the file can capture them, since a hoist or an import is declared at the top of the
-//! file and may be used in any nested function; roblox-ts's own temporaries keep its naming.
+//! **Declining.** Offer state lives in a stack of hook frames ([`file_state::HookFrame`]), one per running hook,
+//! so a hook nested in another (through its `compile_*` calls) never resets the outer one's. A claim hook cannot
+//! decline its node after it lowered it (`compile_expr` of the node, `compile_call`), compiled the receiver inside
+//! a capture, or left anything behind in the scope it writes into or the file: prereqs, a hoist, a root insertion,
+//! a header statement or a plugin import, its own or a nested hook's. Nor after any hook ran inside it (a nested
+//! node offered or claimed, a class hook): that hook would run again. Only what a `compile_receiver` into the
+//! offer's own scope left (statements and nested hooks) is kept, for the next plugin or roblox-ts to reuse. A
+//! decline that breaks the rule is an internal error, and the node is not offered again.
+//!
+//! **Names.** Temporary identifiers plugins ask for (`temp_id`, `hoist`, `hoist_spillable`, `push_to_var`, the
+//! `import_named` fallback) are named so that no identifier of the file, no name `is_usable_local_name` approved,
+//! and no plugin import can capture them (a hoist or import is declared at the top of the file and may be used in
+//! any nested function); approved names and import names avoid the seam temporaries made before them in turn.
+//! roblox-ts's own temporaries keep its naming.
 //!
 //! Not offered yet (`// rbxts-rs: S2`): optional method calls `o.m?.()` / `o[k]?.()` and `super.m()` calls; a
 //! plugin whose interest matches one gets an internal error naming it. The `property_key` / `assignment` hooks are

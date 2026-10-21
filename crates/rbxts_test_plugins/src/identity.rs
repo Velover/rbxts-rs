@@ -2,8 +2,9 @@
 //! `compile_expr(call.node)` ([`IdentityMode::Expr`]) or `compile_call(Callee::Original, all Original)`
 //! ([`IdentityMode::Call`]). Its output must equal a build without plugins: a check of the lowering primitives on a
 //! whole corpus (`rbxts-bench build --plugin identity-expr --parity …`). Calls of the compiler-types (roblox-ts's
-//! macros) and of `@rbxts/types` (where some of them are declared) are declined, as `compile_call` cannot pass argument slots to a macro; call shapes S1 does not offer
-//! (`o.m?.()`, `super.m()`) are reported as internal errors by the compiler.
+//! macros) and of `@rbxts/types` (where some of them are declared) are declined, as `compile_call` cannot pass
+//! argument slots to a macro; call shapes S1 does not offer (`o.m?.()`, `super.m()`) are reported as internal errors
+//! by the compiler.
 
 use std::sync::Arc;
 

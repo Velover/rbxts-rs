@@ -212,7 +212,8 @@ fn probe_and_stamp_match_the_expected_luau() {
     assert_eq!(read(".stamp-state"), "1");
     assert_eq!(
         read("probe-report.json"),
-        "[{\"file\":\"src/shared/calls.ts\",\"claims\":10},{\"file\":\"src/shared/capture.ts\",\"claims\":2},\
+        "[{\"file\":\"src/shared/approved.ts\",\"claims\":4},{\"file\":\"src/shared/approvedAfter.ts\",\"claims\":2},\
+         {\"file\":\"src/shared/calls.ts\",\"claims\":10},{\"file\":\"src/shared/capture.ts\",\"claims\":2},\
          {\"file\":\"src/shared/classes.ts\",\"claims\":2},{\"file\":\"src/shared/decorators.ts\",\"claims\":2},\
          {\"file\":\"src/shared/elide.ts\",\"claims\":3},{\"file\":\"src/shared/elideAll.ts\",\"claims\":1},\
          {\"file\":\"src/shared/elideKept.ts\",\"claims\":1},{\"file\":\"src/shared/facts.ts\",\"claims\":1},\
@@ -342,7 +343,10 @@ fn declining_after_lowering_is_an_error_and_a_call_is_offered_once() {
     project.write(
         "src/shared/declines.ts",
         "export const a = probeDeclineAfter(1);\nexport const b = probeHoistDecline();\nexport const c = probePrereqDecline();\n\
-         export const d = probeArgDecline(probeHoist(sideEffect()));\nexport const e = void probeVoidHoist;\n",
+         export const d = probeArgDecline(probeHoist(sideEffect()));\nexport const e = void probeVoidHoist;\n\
+         export const f = probeArgDecline(probeSelf(1));\n\
+         export const g = capMap[probePrereq(tostring(sideEffect()))].cr(1);\n\
+         export const h = void void probeVoidSelf;\n",
     );
     let report = project.build(&["stamp", "probe"], |_| {});
     let all = diagnostics(&report);
@@ -357,6 +361,15 @@ fn declining_after_lowering_is_an_error_and_a_call_is_offered_once() {
             "error declines.ts: rbxts-rs internal error: plugin `probe` declined a call after leaving statements before \
              the root statement behind (a hoist or an insertion, its own or a nested hook's)",
             "error declines.ts: rbxts-rs internal error: plugin `probe` declined an expression after calling hoist",
+            // the nested probeSelf claim would run again
+            "error declines.ts: rbxts-rs internal error: plugin `probe` declined a call after a node inside it was \
+             offered to a plugin hook (it would be offered again)",
+            // the receiver's prereqs were captured and dropped: it is not reused
+            "error declines.ts: rbxts-rs internal error: plugin `probe` declined a call after compiling the receiver \
+             inside a capture",
+            // the inner `void probeVoidSelf` hook ran inside the outer one: its frame does not reset the outer's
+            "error declines.ts: rbxts-rs internal error: plugin `probe` declined an expression after lowering it with \
+             compile_expr",
         ]
     );
     // the hook that compiled the call itself and declined ran once: the call is not offered again

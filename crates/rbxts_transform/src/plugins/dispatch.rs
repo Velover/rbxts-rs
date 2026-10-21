@@ -9,8 +9,8 @@ use tsrs_ast::{Kind, ModifierFlags, Node, SourceFile, Symbol, SymbolFlags};
 use tsrs_core::P;
 
 use super::HookKind;
-use super::backend::{CallContext, CallShape, access_call_kind, run_classify, run_hook};
-use super::file_state::{EffectMark, ImportOverrides, PluginImport, RootRange, declared_locals};
+use super::backend::{CallContext, CallShape, access_call_kind, run_classify, run_hook, run_hook_framed};
+use super::file_state::{EffectMark, HookFrame, ImportOverrides, PluginImport, RootRange, declared_locals};
 use super::host::PluginHost;
 use crate::classes::prereqs::{Prereqs, temp_id};
 use crate::classes::transform_state::TransformState;
@@ -149,8 +149,8 @@ fn offer_call(
     let start = state.plugin_file.effect_mark(prereqs.statements.len());
     let site = context.site;
     for (position, &(plugin, tag)) in candidates.iter().enumerate() {
-        let result =
-            run_hook(state, Some(prereqs), Some(context), plugin, HookKind::Call, site.node, |instance, cx| {
+        let (result, frame) =
+            run_hook_framed(state, Some(prereqs), Some(context), plugin, HookKind::Call, site.node, |instance, cx| {
                 instance.call(cx, &site, tag)
             });
         match result {
@@ -160,11 +160,27 @@ fn offer_call(
                 }
                 return Some(value);
             }
-            Ok(Claim::Decline) => check_decline(state, host, prereqs, &mut *context, plugin, start),
+            Ok(Claim::Decline) => check_decline(state, host, prereqs, &mut *context, plugin, start, frame),
             Err(()) => return Some(create::nil()),
         }
     }
     None
+}
+
+/// What makes a decline wrong, from the declining hook's frame and the effect marks: the hook lowered the node or
+/// left something of its own (`frame.lowered`), something grew in the offer's scope or the file (its own effects
+/// or a nested hook's), or a hook ran inside it (it would run again when the node is lowered as usual). What a
+/// reused receiver left is allowed (`allowed`, `allowed_nested`).
+fn decline_problem(
+    frame: &HookFrame,
+    now: &EffectMark,
+    allowed: &EffectMark,
+    allowed_nested: u32,
+) -> Option<&'static str> {
+    frame.lowered.or_else(|| now.growth_since(allowed)).or_else(|| {
+        (frame.nested_hooks > allowed_nested)
+            .then_some("a node inside it was offered to a plugin hook (it would be offered again)")
+    })
 }
 
 /// A declined call must leave nothing behind (its own effects or those of hooks nested in it, through
@@ -176,23 +192,18 @@ fn check_decline(
     context: &mut CallContext,
     plugin: usize,
     start: EffectMark,
+    frame: HookFrame,
 ) {
-    // a receiver compiled first (compile_receiver) stays for the next plugin, or roblox-ts, to reuse
-    let allowed = match context.base_marks {
-        Some((base_start, base_end)) if base_start == start => base_end,
-        _ => start,
+    // a receiver compiled first into the offer's scope (compile_receiver) stays for the next plugin, or roblox-ts
+    let (allowed, allowed_nested) = match context.base_marks {
+        Some((base_start, base_end)) if base_start == start => (base_end, frame.receiver_nested_hooks),
+        _ => (start, 0),
     };
     let now = state.plugin_file.effect_mark(prereqs.statements.len());
-    let problem = if let Some(what) = context.lowered {
-        Some(format!("declined a call after {what}"))
-    } else {
-        now.growth_since(&allowed).map(|what| format!("declined a call after {what}"))
-    };
-    if let Some(problem) = problem {
-        let message = format!("plugin `{}` {problem}", host.name(plugin));
+    if let Some(problem) = decline_problem(&frame, &now, &allowed, allowed_nested) {
+        let message = format!("plugin `{}` declined a call after {problem}", host.name(plugin));
         state.internal_error(context.site.node, &message);
     }
-    context.lowered = None;
 }
 
 /// `RBXTS_PLUGIN_CLAIMS=all`: asks the remaining candidates too, in a scratch scope, and reports each that also
@@ -211,7 +222,6 @@ fn report_double_claims(
         }
         let mut scratch = Prereqs::new();
         let mut copy = context.clone();
-        copy.lowered = None;
         let result =
             run_hook(state, Some(&mut scratch), Some(&mut copy), plugin, HookKind::Call, site.node, |instance, cx| {
                 instance.call(cx, &site, tag)
@@ -399,6 +409,10 @@ fn claim_chain_start_slow(
     }
     // declined: a `compile_expr` of the call in a hook consumed the mark, which keeps it from being offered again
     state.plugin_file.offered.insert(item.node);
+    if context.base_captured {
+        // its prereqs were the plugin's (and the decline is an error): lowered again as usual
+        return None;
+    }
     let base = context.base.take()?;
     Some((k + 1, transform_chain_item(state, prereqs, base, item)))
 }
@@ -555,14 +569,15 @@ fn claim_expression_slow(state: &mut TransformState<'_>, prereqs: &mut Prereqs, 
             continue;
         }
         let start = state.plugin_file.effect_mark(prereqs.statements.len());
-        state.plugin_file.hook_lowered = None;
-        match run_hook(state, Some(prereqs), None, plugin, HookKind::Expression, node, |instance, cx| {
-            instance.expression(cx, node, tag)
-        }) {
+        let (result, frame) =
+            run_hook_framed(state, Some(prereqs), None, plugin, HookKind::Expression, node, |instance, cx| {
+                instance.expression(cx, node, tag)
+            });
+        match result {
             Ok(Claim::Take(value)) => return Some(value),
             Ok(Claim::Decline) => {
                 let now = state.plugin_file.effect_mark(prereqs.statements.len());
-                if let Some(what) = state.plugin_file.hook_lowered.take().or_else(|| now.growth_since(&start)) {
+                if let Some(what) = decline_problem(&frame, &now, &start, 0) {
                     let message = format!("plugin `{}` declined an expression after {what}", host.name(plugin));
                     state.internal_error(node, &message);
                 }
@@ -590,10 +605,11 @@ fn claim_statement_slow(state: &mut TransformState<'_>, node: P<Node>) -> Option
         }
         let mut prereqs = Prereqs::new();
         let start = state.plugin_file.effect_mark(0);
-        state.plugin_file.hook_lowered = None;
-        match run_hook(state, Some(&mut prereqs), None, plugin, HookKind::Statement, node, |instance, cx| {
-            instance.statement(cx, node, tag)
-        }) {
+        let (result, frame) =
+            run_hook_framed(state, Some(&mut prereqs), None, plugin, HookKind::Statement, node, |instance, cx| {
+                instance.statement(cx, node, tag)
+            });
+        match result {
             Ok(Claim::Take(statements)) => {
                 let mut out = prereqs.statements;
                 out.extend(statements);
@@ -601,7 +617,7 @@ fn claim_statement_slow(state: &mut TransformState<'_>, node: P<Node>) -> Option
             }
             Ok(Claim::Decline) => {
                 let now = state.plugin_file.effect_mark(prereqs.statements.len());
-                if let Some(what) = state.plugin_file.hook_lowered.take().or_else(|| now.growth_since(&start)) {
+                if let Some(what) = decline_problem(&frame, &now, &start, 0) {
                     let message = format!("plugin `{}` declined a statement after {what}", host.name(plugin));
                     state.internal_error(node, &message);
                 }
@@ -997,8 +1013,7 @@ pub(crate) fn import_named(
     } else {
         let usable = rbxts_luau::is_valid_identifier(export)
             && !rbxts_luau::is_reserved_identifier(export)
-            && !state.plugin_file.identifier_names(file).contains(export)
-            && !state.plugin_file.import_names.contains(export);
+            && !state.plugin_file.name_taken(file, export);
         let id: AnyIdentifier =
             if usable { create::any_id(export) } else { temp_id(state.plugin_file.seam_hint(file, export)).into() };
         state.plugin_file.import_names.insert(export.to_owned());

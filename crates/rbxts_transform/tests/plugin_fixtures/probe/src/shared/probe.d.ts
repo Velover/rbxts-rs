@@ -108,3 +108,19 @@ declare const probeVoidHoist: number;
 declare function probeDecoSelf(label?: string): (ctor: object) => void;
 /** @probe decoself */
 declare function probeDecoSelfPlain(ctor: object): void;
+
+/** Declare a local named `_hoisted` / `impl` when the compiler approves the name, then compile the argument. */
+/** @probe approve */
+declare function probeApprove<T>(v: T): T;
+/** @probe approveimpl */
+declare function probeApproveImpl<T>(v: T): T;
+
+/** Compiles its receiver inside a capture, drops the statements and declines (tests only). */
+interface CapChain {
+	/** @probe caprecv */
+	cr(a: number): number;
+}
+declare const capMap: Record<string, CapChain>;
+
+/** `void void probeVoidSelf`: the outer hook compiles its own node and declines (tests only). */
+declare const probeVoidSelf: number;

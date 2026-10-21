@@ -20,7 +20,7 @@ use tsrs_diagnostics::{Category, new_ad_hoc_message};
 use super::HookKind;
 use super::dispatch;
 use super::facts;
-use super::file_state::{EffectMark, declared_locals};
+use super::file_state::{EffectMark, HookFrame, declared_locals};
 use super::host::PluginHost;
 use crate::classes::prereqs::{Prereqs, temp_id};
 use crate::classes::transform_state::TransformState;
@@ -38,6 +38,7 @@ use crate::util::evaluation::effects::{effects_commute, get_effects, get_effects
 use crate::util::is_method::{is_method, is_method_from_type};
 use crate::util::types::{get_first_construct_symbol, get_first_defined_symbol};
 use crate::util::validate_not_any::validate_not_any_type;
+use crate::util::value_to_id_str::value_to_id_str;
 use crate::util::wrap_return_if_lua_tuple::wrap_return_if_lua_tuple;
 
 /// Which column of the phase table a hook is in.
@@ -97,19 +98,19 @@ pub(crate) struct CallContext {
     /// The compiled base: the receiver of a property or element call, else the callee. Given by the chain lowering
     /// (eager), or compiled on first need (lazy).
     pub base: Option<Expr>,
-    /// The effect marks right before and after a lazily compiled base: a declining plugin may leave what compiling
-    /// the base left (the next plugin, or roblox-ts, reuses the base), but nothing from before it.
+    /// The effect marks right before and after a lazily compiled base, measured against the offer's own prereq
+    /// scope: a declining plugin may leave what compiling the base left (the next plugin, or roblox-ts, reuses the
+    /// base), but nothing from before it. `None` when the base was not compiled lazily into that scope.
     pub base_marks: Option<(EffectMark, EffectMark)>,
-    /// What a plugin did that the call can no longer be declined after (`compile_call`, `compile_expr` of the call,
-    /// a hoist, a root insertion, a header, an import).
-    pub lowered: Option<&'static str>,
+    /// The base was compiled lazily inside a capture: its prereqs are the plugin's, so it is never reused.
+    pub base_captured: bool,
     /// The chain link of a chain call, to lower the call on its compiled base.
     pub item: Option<ChainItem>,
 }
 
 impl CallContext {
     pub(crate) fn new(site: CallSite, shape: CallShape, base: Option<Expr>) -> CallContext {
-        CallContext { site, shape, base, base_marks: None, lowered: None, item: None }
+        CallContext { site, shape, base, base_marks: None, base_captured: false, item: None }
     }
 }
 
@@ -139,8 +140,30 @@ pub(crate) fn run_hook<R>(
     anchor: P<Node>,
     f: impl FnOnce(&dyn DynInstance, &mut Cx<'_>) -> PResult<R>,
 ) -> Result<R, ()> {
+    run_hook_framed(state, prereqs, call, plugin, hook, anchor, f).0
+}
+
+/// [`run_hook`], also returning the hook's frame ([`HookFrame`]): what it did that its node can no longer be
+/// declined after, and the hooks that ran inside it. The frame is pushed before the hook and popped after it; the
+/// enclosing hook's frame counts this hook as nested (`classify_symbol`, memoised, does not count).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_hook_framed<R>(
+    state: &mut TransformState<'_>,
+    prereqs: Option<&mut Prereqs>,
+    call: Option<&mut CallContext>,
+    plugin: usize,
+    hook: HookKind,
+    anchor: P<Node>,
+    f: impl FnOnce(&dyn DynInstance, &mut Cx<'_>) -> PResult<R>,
+) -> (Result<R, ()>, HookFrame) {
     let host = state.plugins.expect("the build has plugins");
     let diagnostics_before = state.diagnostics.diagnostics.len();
+    if hook != HookKind::Classify
+        && let Some(parent) = state.plugin_file.frames.last_mut()
+    {
+        parent.nested_hooks += 1;
+    }
+    state.plugin_file.frames.push(HookFrame::default());
     host.enter(Some(plugin), hook);
     let result = {
         let mut backend = HookBackend {
@@ -158,7 +181,8 @@ pub(crate) fn run_hook<R>(
         f(&*host.plugins[plugin].instance, &mut cx)
     };
     host.exit();
-    match result {
+    let frame = state.plugin_file.frames.pop().expect("this hook's frame");
+    let result = match result {
         Ok(value) => Ok(value),
         Err(_) => {
             if !has_errors_since(state, diagnostics_before) {
@@ -171,7 +195,8 @@ pub(crate) fn run_hook<R>(
             }
             Err(())
         }
-    }
+    };
+    (result, frame)
 }
 
 /// Runs `classify_symbol` (no `PResult`; diagnostics are refused there).
@@ -217,20 +242,13 @@ impl HookBackend<'_, '_> {
         self.host.name(self.plugin)
     }
 
-    /// A side effect of a call hook that the call can no longer be declined after.
+    /// Something the running hook did that its node can no longer be declined after (on its own frame).
     fn note_effect(&mut self, what: &'static str) {
-        match self.call.as_deref_mut() {
-            Some(context) => {
-                context.lowered.get_or_insert(what);
-            }
-            None => {
-                self.state.plugin_file.hook_lowered.get_or_insert(what);
-            }
-        }
+        note_effect(self.state, what);
     }
 
     /// A temporary identifier no user local of the file can capture ([`PluginFileState::seam_hint`]).
-    fn seam_temp(&self, hint: &str) -> LuauIdent {
+    fn seam_temp(&mut self, hint: &str) -> LuauIdent {
         temp_id(self.state.plugin_file.seam_hint(self.state.source_file, hint))
     }
 
@@ -367,9 +385,10 @@ impl CxBackend for HookBackend<'_, '_> {
             return Err(Aborted);
         }
         self.check_site(call, "compile_receiver")?;
+        let in_capture = !self.captures.is_empty();
         self.lower_unchecked(|state, prereqs, context| {
             let context = context.expect("checked above");
-            compile_receiver(state, prereqs, context)
+            compile_receiver(state, prereqs, context, in_capture)
         })
     }
 
@@ -380,7 +399,10 @@ impl CxBackend for HookBackend<'_, '_> {
         self.check_site(call, "compile_call")?;
         self.lower_unchecked(|state, prereqs, context| {
             let context = context.expect("checked above");
-            context.lowered = Some("lowering it with compile_call");
+            if let Some(frame) = state.plugin_file.frames.last_mut() {
+                frame.called = true;
+            }
+            note_effect(state, "lowering it with compile_call");
             lower_call(state, prereqs, context, callee, args)
         })
     }
@@ -414,11 +436,9 @@ impl CxBackend for HookBackend<'_, '_> {
         if self.refused("push_to_var", Row::Lowering) {
             return create::nil();
         }
-        let hint = if hint.is_empty() {
-            String::new()
-        } else {
-            self.state.plugin_file.seam_hint(self.state.source_file, hint)
-        };
+        // an empty hint is the one roblox-ts derives from the value, made capture-safe like any other
+        let hint = if hint.is_empty() { value_to_id_str(&value) } else { hint.to_owned() };
+        let hint = self.state.plugin_file.seam_hint(self.state.source_file, &hint);
         self.scope().push_to_var(value, &hint)
     }
 
@@ -513,10 +533,7 @@ impl CxBackend for HookBackend<'_, '_> {
     /// took, and not a name the file's source uses anywhere, which covers every global (Roblox's or declared) the
     /// output refers to and every local.
     fn is_usable_local_name(&self, name: &str) -> bool {
-        rbxts_luau::is_valid_identifier(name)
-            && !rbxts_luau::is_reserved_identifier(name)
-            && !self.state.plugin_file.identifier_names(self.state.source_file).contains(name)
-            && !self.state.plugin_file.import_names.contains(name)
+        self.state.plugin_file.approve_name(self.state.source_file, name)
     }
 
     fn locals(&self) -> LocalCounts {
@@ -595,11 +612,21 @@ fn receiver_node(shape: CallShape) -> Option<P<Node>> {
     }
 }
 
-/// `compile_receiver`: the receiver as the chain lowering compiled it, or compiled now (once).
+/// Records on the running hook's frame something its node can no longer be declined after.
+fn note_effect(state: &mut TransformState<'_>, what: &'static str) {
+    if let Some(frame) = state.plugin_file.frames.last_mut() {
+        frame.lowered.get_or_insert(what);
+    }
+}
+
+/// `compile_receiver`: the receiver as the chain lowering compiled it, or compiled now (once). Compiled into the
+/// offer's own scope, it is kept for the next plugin (or roblox-ts) to reuse if this one declines; compiled inside a
+/// capture, its prereqs are the plugin's to place, so the call cannot be declined any more.
 fn compile_receiver(
     state: &mut TransformState<'_>,
     prereqs: &mut Prereqs,
     context: &mut CallContext,
+    in_capture: bool,
 ) -> Result<Expr, String> {
     let Some(receiver) = receiver_node(context.shape) else {
         return Err(format!("compile_receiver: a {:?} call has no receiver", context.site.kind));
@@ -608,9 +635,18 @@ fn compile_receiver(
         return Ok(base.clone());
     }
     let before = state.plugin_file.effect_mark(prereqs.statements.len());
+    let nested_before = state.plugin_file.frames.last().map_or(0, |f| f.nested_hooks);
     let value = transform_expression(state, prereqs, receiver);
     context.base = Some(value.clone());
-    context.base_marks = Some((before, state.plugin_file.effect_mark(prereqs.statements.len())));
+    if in_capture {
+        context.base_captured = true;
+        note_effect(state, "compiling the receiver inside a capture");
+    } else {
+        context.base_marks = Some((before, state.plugin_file.effect_mark(prereqs.statements.len())));
+        if let Some(frame) = state.plugin_file.frames.last_mut() {
+            frame.receiver_nested_hooks += frame.nested_hooks - nested_before;
+        }
+    }
     Ok(value)
 }
 
@@ -622,10 +658,10 @@ fn compile_claimed_call(
     prereqs: &mut Prereqs,
     context: &mut CallContext,
 ) -> Result<Expr, String> {
-    if context.lowered == Some("lowering it with compile_call") {
+    if state.plugin_file.frames.last().is_some_and(|f| f.called) {
         return Err("compile_expr of the claimed call after compile_call lowered it".to_owned());
     }
-    context.lowered = Some("lowering it with compile_expr");
+    note_effect(state, "lowering it with compile_expr");
     let node = context.site.node;
     if let CallShape::Decorator { call } = context.shape {
         // the decorator's expression, its call (offered as this decorator) not asked about again
