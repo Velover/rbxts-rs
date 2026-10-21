@@ -125,11 +125,20 @@ resolution sees packages installed or upgraded since the last build.
   output roots with its `getProjectOutputs` keep set, declaration outputs and both build infos included, plus the
   include folder; links removed as links; artifacts of the last build that this one did not write), plugin state
   files, the incremental state last.
-- **Watch mode:** `notify` events (the sources, configs, Rojo files, plugin inputs and `watch_dir` roots, and the
-  package directories plugin `resolve_module` calls went through; not the rest of `node_modules`), a trailing 100 ms
+- **Errors before writes:** the output set (roblox-ts's `getProjectOutputs`: two inputs emitting to one output, an
+  output root holding sources) is computed before anything is compiled, and the assets are read before the first
+  write, so a failing build writes nothing; only I/O errors can stop a commit midway.
+- **Watch mode:** `notify` events (the sources, configs, Rojo files, plugin inputs and `watch_dir` roots; under
+  `node_modules`, never recursively: `node_modules` and its scopes for packages added or removed, and the packages in
+  use, named by an unresolved import or by a plugin's `resolve_module` for their `package.json` and declaration
+  files; a directory created or moved in counts, a directory's own modification does not), a trailing 100 ms
   debounce, `--usePolling`, `--events json` (`build-start` and
   `build-end` lines), and a restart of the watcher process past `RBXTS_WATCH_MEMORY_LIMIT_MB` (default 2048; 0 turns
   it off), since programs are never freed. A crashed rebuild is reported and the next one starts clean.
+
+**Deviations from roblox-ts** (beside those listed in `build::outputs`): a case-only rename of a source renames its
+output too, so the Rojo instance follows; roblox-ts writes into the existing file and keeps its old name (a roblox-ts
+bug, kept fixed on purpose).
 
 **Watch parity** (W1): `rbxts-bench watch-parity --source <project> --script <file.json> --scratch <dir> [...]` copies
 the project, applies a scripted edit sequence to the copy as watch rebuilds (or `--incremental` builds), and after
