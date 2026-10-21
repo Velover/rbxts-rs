@@ -1,0 +1,127 @@
+//! `nodes/expressions/transformExpression.ts`: expression dispatch by syntax kind.
+
+use rbxts_luau::{Expr, globals};
+use tsrs_ast::{Kind, Node};
+use tsrs_core::P;
+
+use crate::classes::prereqs::Prereqs;
+use crate::classes::transform_state::TransformState;
+use crate::shared::diagnostics::errors;
+use crate::util::evaluation::facts::mark_primitive_value;
+use crate::util::types::{is_boolean_type, is_definitely_type, is_number_type, is_string_type, is_undefined_type};
+use crate::util::validate_method_assignment::validate_method_expression;
+
+use super::transform_binary_expression::transform_binary_expression;
+use super::transform_call_expression::transform_call_expression;
+use super::transform_element_access_expression::transform_element_access_expression;
+use super::transform_function_expression::transform_function_expression;
+use super::transform_identifier::transform_identifier;
+use super::transform_no_substitution_template_literal::transform_no_substitution_template_literal;
+use super::transform_numeric_literal::transform_numeric_literal;
+use super::transform_parenthesized_expression::transform_parenthesized_expression;
+use super::transform_property_access_expression::transform_property_access_expression;
+use super::transform_string_literal::transform_string_literal;
+use super::transform_template_expression::transform_template_expression;
+use super::transform_this_expression::transform_this_expression;
+use super::transform_type_expression::transform_type_expression;
+use super::transform_unary_expression::{transform_postfix_unary_expression, transform_prefix_unary_expression};
+use super::transform_void_expression::transform_void_expression;
+
+/// The label of a node kind in diagnostics and the parity report (`getKindName`).
+pub fn kind_name(kind: Kind) -> String {
+    format!("{kind:?}")
+}
+
+/// `transformExpression`
+pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Expr {
+    let mut expression = match node.kind() {
+        // banned expressions
+        Kind::BigIntLiteral => {
+            state.add_diagnostic(errors::no_big_int(node));
+            Expr::None
+        }
+        Kind::NullKeyword => {
+            state.add_diagnostic(errors::no_null_literal(node));
+            Expr::None
+        }
+        Kind::PrivateIdentifier => {
+            state.add_diagnostic(errors::no_private_identifier(node));
+            Expr::None
+        }
+        Kind::RegularExpressionLiteral => {
+            state.add_diagnostic(errors::no_regex(node));
+            Expr::None
+        }
+        Kind::TypeOfExpression => {
+            state.add_diagnostic(errors::no_type_of_expression(node));
+            Expr::None
+        }
+
+        // skip transforms
+        Kind::ImportKeyword => Expr::None,
+
+        // regular transforms
+        Kind::ArrowFunction | Kind::FunctionExpression => transform_function_expression(state, node),
+        Kind::AsExpression
+        | Kind::ExpressionWithTypeArguments
+        | Kind::NonNullExpression
+        | Kind::SatisfiesExpression
+        | Kind::TypeAssertionExpression => transform_type_expression(state, prereqs, node),
+        Kind::BinaryExpression => transform_binary_expression(state, prereqs, node),
+        Kind::CallExpression => transform_call_expression(state, prereqs, node),
+        Kind::ElementAccessExpression => transform_element_access_expression(state, prereqs, node),
+        Kind::FalseKeyword => Expr::False,
+        Kind::TrueKeyword => Expr::True,
+        Kind::Identifier => transform_identifier(state, node),
+        Kind::NoSubstitutionTemplateLiteral => transform_no_substitution_template_literal(node),
+        Kind::NumericLiteral => transform_numeric_literal(node),
+        Kind::OmittedExpression => Expr::Nil,
+        Kind::ParenthesizedExpression => transform_parenthesized_expression(state, prereqs, node),
+        Kind::PostfixUnaryExpression => transform_postfix_unary_expression(state, prereqs, node),
+        Kind::PrefixUnaryExpression => transform_prefix_unary_expression(state, prereqs, node),
+        Kind::PropertyAccessExpression => transform_property_access_expression(state, prereqs, node),
+        Kind::StringLiteral => transform_string_literal(node),
+        Kind::SuperKeyword => globals::super_(),
+        Kind::TemplateExpression => transform_template_expression(state, prereqs, node),
+        Kind::ThisKeyword => transform_this_expression(state, node),
+        Kind::VoidExpression => transform_void_expression(state, prereqs, node),
+
+        // rbxts-rs: kinds roblox-ts transforms that are not ported yet
+        Kind::ArrayLiteralExpression
+        | Kind::AwaitExpression
+        | Kind::ClassExpression
+        | Kind::ConditionalExpression
+        | Kind::DeleteExpression
+        | Kind::JsxElement
+        | Kind::JsxExpression
+        | Kind::JsxFragment
+        | Kind::JsxSelfClosingElement
+        | Kind::NewExpression
+        | Kind::ObjectLiteralExpression
+        | Kind::SpreadElement
+        | Kind::TaggedTemplateExpression
+        | Kind::YieldExpression => return state.unsupported_subtree(node, &kind_name(node.kind())),
+
+        kind => {
+            // roblox-ts asserts here; a diagnostic keeps the build going
+            state.internal_error(node, &format!("Unknown expression: {}", kind_name(kind)));
+            return Expr::None;
+        }
+    };
+
+    let t = state.get_type(node);
+    validate_method_expression(state, node, t);
+    let is_primitive = match state.multi_transform_state.is_primitive_type_cache.get(&t) {
+        Some(&cached) => cached,
+        None => {
+            let result =
+                is_definitely_type(state, t, &[&is_boolean_type, &is_number_type, &is_string_type, &is_undefined_type]);
+            state.multi_transform_state.is_primitive_type_cache.insert(t, result);
+            result
+        }
+    };
+    if is_primitive {
+        mark_primitive_value(&mut expression);
+    }
+    expression
+}

@@ -1,0 +1,30 @@
+//! The TypeScript → Luau transform: a port of roblox-ts master's `src/TSTransformer` (DESIGN §9b), plus the build
+//! pipeline of `compileFiles` ([`compile`]).
+//!
+//! The module layout follows roblox-ts's folders, one Rust module per TypeScript file, and ported functions keep
+//! their TypeScript names in snake_case, so the two can be read side by side. Deliberate differences are marked
+//! `// rbxts-rs:`.
+//!
+//! - [`classes`]: [`TransformState`] (one file), [`MultiTransformState`] (the build), [`Prereqs`], the
+//!   [`MacroManager`], the diagnostics of a file.
+//! - [`nodes`]: `transform_expression` / `transform_statement` dispatch and the node transforms.
+//! - [`macros`]: the macro tables (names only in T1; each transform is `None` until ported).
+//! - [`util`]: helpers, including the evaluation-order analysis (`util::evaluation`).
+//! - [`shared`]: roblox-ts's diagnostics table and constants.
+//!
+//! Node kinds not ported yet are reported as `not yet supported in rbxts-rs: <kind>` errors (and listed per file in
+//! [`compile::FileOutcome::unsupported`]); the build carries on and reports every file.
+//!
+//! [`TransformState`]: classes::transform_state::TransformState
+//! [`MultiTransformState`]: classes::multi_transform_state::MultiTransformState
+//! [`Prereqs`]: classes::prereqs::Prereqs
+//! [`MacroManager`]: classes::macro_manager::MacroManager
+
+pub mod classes;
+pub mod compile;
+pub mod macros;
+pub mod nodes;
+pub mod shared;
+pub mod util;
+
+pub use compile::{CompileOptions, CompileReport, FileOutcome, Timings, compile_project};

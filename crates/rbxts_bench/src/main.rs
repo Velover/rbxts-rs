@@ -6,10 +6,15 @@
 //! - `rbxts-bench project-parity`: compare rbxts_project's project setup (Rojo resolver, path translator, checks) with
 //!   roblox-ts's on the same project (`tools/dump-project-services.cjs`), value by value.
 //!
+//! - `rbxts-bench build`: build a project with `rbxts_transform` (check, transform, render, write), with phase
+//!   timings, peak memory and an optional parity comparison against a reference output directory.
+//!
+//! rbxts-bench build [-p tsconfig.json] [--out-dir DIR] [--parity REF_DIR] [--report FILE] …
 //! rbxts-bench load [-p tsconfig.json] [--checkers N] [--lazy-dts] [--check project|all|none] [--json]
-//! rbxts-bench luau-parity <dump.jsonl>... [--show N] [--repeat N]
+//! rbxts-bench luau-parity <dump.jsonl>... [--show N] [--repeat N] [--threads N]
 //! rbxts-bench project-parity <dump.json> [--runs N] [--max-diffs N]
 
+mod build;
 mod luau_parity;
 mod project_parity;
 
@@ -40,7 +45,7 @@ struct Args {
     json: bool,
 }
 
-const USAGE: &str = "usage: rbxts-bench load [-p tsconfig.json] [--checkers N] [--check project|all|none] [--lazy-dts] [--json]\n       rbxts-bench luau-parity <dump.jsonl>... [--show N] [--repeat N]";
+const USAGE: &str = "usage: rbxts-bench load [-p tsconfig.json] [--checkers N] [--check project|all|none] [--lazy-dts] [--json]\n       rbxts-bench build [-p tsconfig.json] [--out-dir DIR] [--parity REF_DIR] [--report FILE] [--json] (see `rbxts-bench build --help`)\n       rbxts-bench luau-parity <dump.jsonl>... [--show N] [--repeat N] [--threads N]\n       rbxts-bench project-parity <dump.json> [--runs N] [--max-diffs N]";
 
 fn parse_args() -> Result<Args, String> {
     let mut args = std::env::args().skip(1);
@@ -85,7 +90,7 @@ fn parse_args() -> Result<Args, String> {
 
 /// Peak and current working set, and peak commit (private bytes), in bytes.
 #[cfg(windows)]
-fn memory() -> Option<(usize, usize, usize)> {
+pub(crate) fn memory() -> Option<(usize, usize, usize)> {
     use std::ffi::c_void;
     #[repr(C)]
     #[derive(Default)]
@@ -115,7 +120,7 @@ fn memory() -> Option<(usize, usize, usize)> {
 }
 
 #[cfg(not(windows))]
-fn memory() -> Option<(usize, usize, usize)> {
+pub(crate) fn memory() -> Option<(usize, usize, usize)> {
     None
 }
 
@@ -136,7 +141,7 @@ fn message(d: P<Diagnostic>) -> String {
 ")
 }
 
-fn mib(bytes: usize) -> f64 {
+pub(crate) fn mib(bytes: usize) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
 }
 
@@ -231,6 +236,16 @@ fn run(args: &Args) -> i32 {
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("project-parity") {
         std::process::exit(project_parity::main(std::env::args().skip(2).collect()));
+    }
+    if std::env::args().nth(1).as_deref() == Some("build") {
+        let status = std::thread::Builder::new()
+            .name("build".into())
+            .stack_size(STACK_SIZE)
+            .spawn(|| build::run(std::env::args().skip(2)))
+            .expect("spawn the build thread")
+            .join()
+            .unwrap_or(101);
+        std::process::exit(status);
     }
     if std::env::args().nth(1).as_deref() == Some("luau-parity") {
         // Deep trees recurse deeply, as checking does.

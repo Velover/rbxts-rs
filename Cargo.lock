@@ -349,6 +349,7 @@ dependencies = [
  "mimalloc-safe",
  "rbxts_luau",
  "rbxts_project",
+ "rbxts_transform",
  "serde",
  "serde_json",
  "tsrs_ast",
@@ -384,6 +385,21 @@ dependencies = [
  "tsrs_module",
  "tsrs_tsoptions",
  "tsrs_vfs",
+]
+
+[[package]]
+name = "rbxts_transform"
+version = "0.0.0"
+dependencies = [
+ "rbxts_luau",
+ "rbxts_project",
+ "rustc-hash",
+ "tsrs_ast",
+ "tsrs_checker",
+ "tsrs_compiler",
+ "tsrs_core",
+ "tsrs_diagnostics",
+ "tsrs_scanner",
 ]
 
 [[package]]
