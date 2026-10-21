@@ -330,7 +330,7 @@ impl<'p> BuildSession<'p> {
 
         // 1. load or update the program
         let content_only = match (&committed, &last) {
-            (Some(c), Some(last)) if !c.from_disk && !touched.is_empty() => self.edited_sources(touched, last),
+            (Some(c), Some(last)) if !c.from_disk && !touched.is_empty() => self.edited_sources(touched, last, c),
             _ => None,
         };
         let loaded = match (content_only, last) {
@@ -1043,10 +1043,10 @@ impl<'p> BuildSession<'p> {
     /// The touched paths' program files when the touched paths are only edits of existing program files and of
     /// other existing files that are not configs (assets): the program can then be updated in place. `None` when the
     /// project must be loaded again.
-    fn edited_sources(&self, touched: &[String], last: &Loaded) -> Option<Vec<String>> {
+    fn edited_sources(&self, touched: &[String], last: &Loaded, committed: &Committed) -> Option<Vec<String>> {
         let services = &last.services;
         let program = last.project.program;
-        let configs: FxHashSet<String> = self.config_inputs_of(last, None);
+        let configs: FxHashSet<String> = self.config_inputs_of(last, Some(committed));
         let mut changed = Vec::new();
         for path in touched {
             let key = path_key_of(services, path);
