@@ -323,10 +323,34 @@ impl<'a> TransformState<'a> {
         Some(create::computed_index(self.get_module_id_from_symbol(module_symbol).into(), alias))
     }
 
-    /// `guessVirtualPath`: reverses a symlink lookup.
+    /// `guessVirtualPath`: the path a file has through a symlinked (or junctioned) directory the program resolved
+    /// through, from its real path. Module resolution gives packages under a linked `node_modules`, or linked packages
+    /// inside it, their real paths; imports need the `node_modules` ones.
     ///
-    /// rbxts-rs: not ported yet (it needs the program's symlink cache); used only for symlinked packages.
-    pub fn guess_virtual_path(&self, _fs_path: &str) -> Option<String> {
+    /// rbxts-rs: TS7's cache keeps a directory's symlinks in a set, not in insertion order as TS5's `MultiMap` does,
+    /// so of several symlinks to one directory this takes the first in sort order instead of the first seen.
+    pub fn guess_virtual_path(&self, fs_path: &str) -> Option<String> {
+        use rbxts_project::nodepath;
+        let reverse_symlink_map = self.program.get_symlink_cache();
+        let reverse_symlink_map = reverse_symlink_map.directories_by_realpath();
+        let cwd = self.program.get_current_directory();
+        let case_sensitive = self.program.use_case_sensitive_file_names();
+
+        let original = fs_path;
+        let mut fs_path = fs_path.to_owned();
+        loop {
+            // the map's keys always have trailing slashes, as it is built from `SymlinkedDirectory.real`
+            let parent = tsrs_core::tspath::ensure_trailing_directory_separator(nodepath::dirname(&fs_path));
+            if fs_path == parent {
+                break;
+            }
+            fs_path = parent;
+            let key = tsrs_core::tspath::to_path(&fs_path, cwd, case_sensitive);
+            let symlink = reverse_symlink_map.load(&key).and_then(|set| set.to_slice().into_iter().min());
+            if let Some(symlink) = symlink {
+                return Some(nodepath::join(&[&symlink, &nodepath::relative(&fs_path, original)]));
+            }
+        }
         None
     }
 

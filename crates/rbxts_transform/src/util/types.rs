@@ -278,6 +278,10 @@ pub fn is_roblox_type(state: &mut TransformState<'_>, t: P<Type>) -> bool {
 }
 
 /// Whether `declaration` is in `node_modules/@rbxts/types` (cached per file).
+///
+/// roblox-ts bug, mirrored: it tests the file's real path, so with `node_modules` (or `@rbxts/types`) linked from
+/// elsewhere no type counts as a Roblox type (Roblox method calls lose their `:` form, among others). The pure
+/// builtins check in `util/evaluation` goes through here too.
 pub fn is_in_rbxts_types(state: &mut TransformState<'_>, declaration: P<Node>) -> bool {
     let Some(file) = tsrs_ast::get_source_file_of_node(declaration) else { return false };
     if let Some(&cached) = state.multi_transform_state.is_rbxts_types_file_cache.get(&file) {

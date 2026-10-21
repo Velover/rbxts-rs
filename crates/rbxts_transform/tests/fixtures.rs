@@ -8,7 +8,7 @@
 //! - the build reports nothing: no diagnostic of any category (checker, setup or transform), no warning, no fatal
 //!   error, no unsupported kind, no internal error. A fixture has no expected diagnostics.
 //!
-//! The `node_modules` (with `@rbxts/compiler-types`, `@rbxts/types` and `@rbxts/testez`) is
+//! The `node_modules` (with `@rbxts/compiler-types`, `@rbxts/types`, `@rbxts/testez` and `@rbxts/services`) is
 //! `RBXTS_RS_FIXTURE_NODE_MODULES` when set (a path that lacks the packages fails the test), else the roblox-ts
 //! tests project's, found as `roblox-ts/tests/node_modules` or `roblox-ts-test/roblox-ts/tests/node_modules` under
 //! the crate's directory or any directory above it. Without one the test is skipped and says so on the terminal
@@ -29,6 +29,10 @@
 //! - `jsx`: JSX elements, attributes (string, boolean, namespaced, with prerequisites), spread props (first, later,
 //!   possibly undefined, conditional), fragments, keyed, conditional, mapped and spread children, JSX text whitespace
 //!   and entities, `@jsx` / `@jsxFrag` pragmas, and the JSX factory import kept alive when only JSX uses it.
+//! - `junction`: static and dynamic imports of packages behind junctions (symlinks elsewhere): `@rbxts/services`
+//!   in the shared `node_modules`, and `@rbxts/greeter` (the fixture's `packages/greeter`) outside any
+//!   `node_modules`, with either the packages or the whole `node_modules` linked (see `check_junction`). Imports keep
+//!   their `node_modules` paths, as with stock roblox-ts (`guessVirtualPath`).
 //! - `literals`: object and array literals, methods in object literals, spread in objects, arrays and calls, every
 //!   iterable kind an array spread accepts. TypeScript 5 lists exported functions first and TypeScript 7 in source
 //!   order, so the fixture declares its exported functions first.
@@ -53,7 +57,7 @@ use tsrs_diagnostics::Category;
 
 const NODE_MODULES_VAR: &str = "RBXTS_RS_FIXTURE_NODE_MODULES";
 /// The packages a fixture's `node_modules` must have.
-const PACKAGES: [&str; 3] = ["compiler-types", "types", "testez"];
+const PACKAGES: [&str; 4] = ["compiler-types", "types", "testez", "services"];
 
 fn has_packages(node_modules: &Path) -> bool {
     PACKAGES.iter().all(|name| node_modules.join("@rbxts").join(name).is_dir())
@@ -297,6 +301,59 @@ fn check(area: &'static str) {
     let report = build(&project.root);
     let failures = compare(&report, &project.root, &fixture.join("expected"));
     assert!(failures.is_empty(), "{area}:\n{}", failures.join("\n"));
+}
+
+/// How the `junction` fixture's packages are linked in.
+#[derive(Clone, Copy)]
+enum Layout {
+    /// `node_modules/@rbxts` is a real directory whose packages are links: the shared `node_modules`'s, and
+    /// `greeter` to the copy's `packages/greeter`.
+    LinkedPackages,
+    /// `node_modules` links to `store/node_modules`, laid out as in `LinkedPackages`.
+    LinkedNodeModules,
+}
+
+/// The `junction` fixture in `layout`. Module resolution gives every package its real path (in the shared
+/// `node_modules`, or `packages/greeter` outside any `node_modules`); imports must still go through the project's
+/// `node_modules`, as stock roblox-ts's do in both layouts (`expected/` is its output, the same for both).
+fn check_junction(layout: Layout) {
+    const AREA: &str = "junction";
+    let label = match layout {
+        Layout::LinkedPackages => "junction-packages",
+        Layout::LinkedNodeModules => "junction-node-modules",
+    };
+    let node_modules = match node_modules() {
+        Ok(path) => path,
+        Err(why) => return announce_skip(label, &why),
+    };
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(AREA);
+    let mut project = TempProject::copy_of(&fixture, label);
+    let scope = match layout {
+        Layout::LinkedPackages => "node_modules/@rbxts",
+        Layout::LinkedNodeModules => "store/node_modules/@rbxts",
+    };
+    for name in PACKAGES {
+        project.link(&format!("{scope}/{name}"), &node_modules.join("@rbxts").join(name));
+    }
+    let greeter = project.root.join("packages/greeter");
+    project.link(&format!("{scope}/greeter"), &greeter);
+    if let Layout::LinkedNodeModules = layout {
+        let store = project.root.join("store/node_modules");
+        project.link("node_modules", &store);
+    }
+    let report = build(&project.root);
+    let failures = compare(&report, &project.root, &fixture.join("expected"));
+    assert!(failures.is_empty(), "{label}:\n{}", failures.join("\n"));
+}
+
+#[test]
+fn junction_linked_packages() {
+    check_junction(Layout::LinkedPackages);
+}
+
+#[test]
+fn junction_linked_node_modules() {
+    check_junction(Layout::LinkedNodeModules);
 }
 
 #[test]
