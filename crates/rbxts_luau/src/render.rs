@@ -71,8 +71,26 @@ pub fn render_ast(ast: &[Stmt]) -> String {
 /// [`render`], appending to `out`.
 pub fn render_into(ast: &[Stmt], late_strings: &LateStrings, out: &mut String) {
     let temp_names = solve_temp_ids(Root::Statements(ast));
-    let mut r = Renderer { out, indent: 0, temp_names: &temp_names, late_strings };
+    let mut r = Renderer { out, indent: 0, temp_names: &temp_names, late_strings, starts: None };
     r.statements(ast);
+}
+
+/// [`render`], and for each of the file's own statements the line its text starts on (1-based), so a message about
+/// a line of the output (Luau's) can be traced to the statement that holds it.
+pub fn render_with_lines(ast: &[Stmt], late_strings: &LateStrings) -> (String, Vec<u32>) {
+    let mut out = String::new();
+    let temp_names = solve_temp_ids(Root::Statements(ast));
+    let mut r = Renderer { out: &mut out, indent: 0, temp_names: &temp_names, late_strings, starts: Some(Vec::new()) };
+    r.statements(ast);
+    let starts = r.starts.take().unwrap_or_default();
+    let mut lines = Vec::with_capacity(starts.len());
+    let (mut line, mut counted) = (1u32, 0usize);
+    for start in starts {
+        line += out.as_bytes()[counted..start].iter().filter(|&&b| b == b'\n').count() as u32;
+        counted = start;
+        lines.push(line);
+    }
+    (out, lines)
 }
 
 /// Renders one expression, with its temporary identifiers named as if it were the whole file (`debugRender`; for
@@ -80,7 +98,7 @@ pub fn render_into(ast: &[Stmt], late_strings: &LateStrings, out: &mut String) {
 pub fn render_expr(expr: &Expr, late_strings: &LateStrings) -> String {
     let mut out = String::new();
     let temp_names = solve_temp_ids(Root::Expr(expr));
-    let mut r = Renderer { out: &mut out, indent: 0, temp_names: &temp_names, late_strings };
+    let mut r = Renderer { out: &mut out, indent: 0, temp_names: &temp_names, late_strings, starts: None };
     r.expr(expr, Ctx::None);
     out
 }
@@ -131,6 +149,8 @@ struct Renderer<'a> {
     indent: usize,
     temp_names: &'a TempNames,
     late_strings: &'a LateStrings,
+    /// Where each of the file's own statements starts in `out` (`render_with_lines`).
+    starts: Option<Vec<usize>>,
 }
 
 impl Renderer<'_> {
@@ -144,6 +164,11 @@ impl Renderer<'_> {
     fn statements(&mut self, statements: &[Stmt]) {
         let mut has_final = false;
         for (i, statement) in statements.iter().enumerate() {
+            if self.indent == 0
+                && let Some(starts) = &mut self.starts
+            {
+                starts.push(self.out.len());
+            }
             assert!(!has_final || statement.is_comment(), "Cannot render statement after break, continue, or return!");
             has_final |= statement.is_final();
             self.statement(statement, &statements[i + 1..]);

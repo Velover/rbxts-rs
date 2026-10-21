@@ -414,3 +414,22 @@ fn numbers_without_literals() {
     assert_eq!(text(f64::NEG_INFINITY), "-math.huge");
     assert_eq!(text(-1.5), "-1.5");
 }
+
+#[test]
+fn statement_lines() {
+    let statements = vec![
+        crate::create::comment("a"),
+        crate::create::function_declaration(
+            true,
+            crate::create::id("f"),
+            vec![],
+            false,
+            vec![crate::create::call_statement(crate::create::call(crate::create::id("g"), vec![]))],
+        ),
+        crate::create::local(crate::create::any_id("x"), Some(crate::create::number(1.0))),
+    ];
+    let (luau, lines) = crate::render_with_lines(&statements, &crate::LateStrings::new());
+    assert_eq!(luau, crate::render_ast(&statements));
+    assert_eq!(luau, "--a\nlocal function f()\n\tg()\nend\nlocal x = 1\n");
+    assert_eq!(lines, vec![1, 2, 5]);
+}

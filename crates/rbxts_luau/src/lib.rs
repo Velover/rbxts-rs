@@ -30,7 +30,7 @@ mod util;
 pub use ast::*;
 pub use create::TempIds;
 pub use facts::{Binding, BindingKey, Effects, Facts};
-pub use render::{LateStrings, render, render_ast, render_expr, render_into};
+pub use render::{LateStrings, render, render_ast, render_expr, render_into, render_with_lines};
 pub use util::{
     LUAU_METAMETHODS, LUAU_RESERVED_CLASS_FIELDS, LUAU_RESERVED_KEYWORDS, RESERVED_IDENTIFIERS, is_js_whitespace,
     is_metamethod, is_reserved_class_field, is_reserved_identifier, is_valid_identifier, is_valid_number_literal,
