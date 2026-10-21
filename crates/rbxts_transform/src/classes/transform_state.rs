@@ -127,14 +127,6 @@ impl<'a> TransformState<'a> {
         Expr::None
     }
 
-    /// rbxts-rs: [`TransformState::unsupported`] for a node whose children are not transformed either: the unsupported
-    /// kinds inside it are recorded too (without diagnostics), so the parity report sees them.
-    pub fn unsupported_subtree(&mut self, node: P<Node>, kind: &str) -> Expr {
-        let result = self.unsupported(node, kind);
-        crate::util::unsupported_probe::probe_unsupported_children(self, node);
-        result
-    }
-
     /// rbxts-rs: a compiler bug at `node`; the file is not written.
     pub fn internal_error(&mut self, node: P<Node>, message: &str) {
         self.diagnostics.add_diagnostic(internal_error(node, message));

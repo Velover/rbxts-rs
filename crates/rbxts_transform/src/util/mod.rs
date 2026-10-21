@@ -35,7 +35,6 @@ pub mod pointer;
 pub mod symbols;
 pub mod traversal;
 pub mod types;
-pub mod unsupported_probe;
 pub mod validate_method_assignment;
 pub mod validate_not_any;
 pub mod value_to_id_str;
