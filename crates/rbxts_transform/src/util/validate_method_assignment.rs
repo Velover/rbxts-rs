@@ -136,6 +136,10 @@ fn validate_heritage_clause(state: &mut TransformState<'_>, node: P<Node>, type_
 
     let t = state.get_type(node);
     let heritage_type = state.get_type(type_node);
+    // rbxts-rs: TypeScript 5's `getPropertyNameForPropertyNameNode` returns the escaped name and
+    // `getTypeOfPropertyOfType` escapes it again, so roblox-ts never finds (and never checks) members whose names
+    // start with `__`. TypeScript 7 names are not escaped, so those members are checked here too: a deliberate
+    // difference that only adds diagnostics for real calling-convention mismatches.
     let Some(property_type) = state.checker.get_type_of_property_of_type_exported(heritage_type, &name) else {
         return;
     };

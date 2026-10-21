@@ -36,7 +36,9 @@ const MAGIC_TO_STRING_METHOD: &str = "toString";
 
 /// The result of [`transform_class_like_declaration`]: the statements, and the name the class ends up in.
 pub struct TransformedClass {
+    /// `local Class` (unless hoisted) and the `do … end` block that builds the class.
     pub statements: Vec<Stmt>,
+    /// What the class is stored in: its name, `default`, or a temporary for class expressions.
     pub name: AnyIdentifier,
 }
 
