@@ -112,3 +112,22 @@ resolver per type root and the package mapping (those three in parallel), and `c
   spells out paths only for directories and project files.
 - Partition checks (`checkRojoConfig`, lookups) compare already-resolved ASCII paths without building `path.relative`
   strings; that took the real project's setup from ~200 ms to ~80 ms before the walks were parallel.
+
+## M1 (part): the T1 transform skeleton (`rbxts-bench build`)
+
+`rbxts-bench build --optimizedLoops --allowCommentDirectives --write-partial`, profile `measure`, one checker:
+load, project setup, check of the project files, transform in program order, render, write changed outputs. T1 ports
+only part of the transform (DESIGN §9b): files using a kind not ported yet are reported and not written, so the
+transform time covers less than the full work. Parity counts files whose output equals the reference byte for byte.
+Three rounds interleaved with stock roblox-ts master (TS 5.9, `node out/CLI/cli.js build`, same flags; peak memory
+from `bench/maxrss.cjs`) on 2026-10-21, machine moderately busy (ms; MiB).
+
+| corpus | config | program | setup | check | transform | render | write | total | peak WS | identical | roblox-ts TS5 total, peak |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| the real project without Flamework (605 files) | 9-11 | 75-86 | 50-56 | 637-787 | 203-231 | 1.5-2.0 | 1.7-2.3 | 1019-1162 | 146.5-146.7 | 17 (588 unsupported) | 20.3-21.0 s, 611-618 |
+| roblox-ts tests (`tsconfig.bench.json`, 72 files) | 2.3-2.5 | 39-49 | 3.8-4.7 | 85-103 | 75-81 | 0.8-1.2 | 1.2-2.2 | 216-236 | 62.5-62.8 | 17 (55 unsupported) | 6.5-7.2 s, 450-454 |
+
+References: the tests project against the tsrs-backed roblox-ts build (`exp/out-C-tsrs`, TS 7 semantics), the real
+project against `refs/real-noplugin-tsrs`. Every file that uses only T1 kinds is identical in both corpora, and so
+are the 10 files of a hand-written T1 fixture (scratchpad `rbxts-rs/t1/fixture`) against the same tsrs-backed
+pipeline.
