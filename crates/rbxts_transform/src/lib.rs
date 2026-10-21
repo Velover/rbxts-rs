@@ -13,6 +13,7 @@
 //! - [`shared`]: roblox-ts's diagnostics table and constants.
 //! - [`build`]: clean, incremental and watch builds ([`build::BuildSession`], DESIGN §14).
 //! - [`plugins`]: the compiler side of the plugin seam (`rbxts_plugin`'s backends, dispatch, build lifecycle).
+//! - [`project`]: roblox-ts's project build steps around the transform (the include copy).
 //!
 //! Node kinds not ported yet are reported as `not yet supported in rbxts-rs: <kind>` errors (and listed per file in
 //! [`compile::FileOutcome::unsupported`]); the build carries on and reports every file.
@@ -28,6 +29,7 @@ pub mod compile;
 pub mod macros;
 pub mod nodes;
 pub mod plugins;
+pub mod project;
 pub mod shared;
 pub mod util;
 

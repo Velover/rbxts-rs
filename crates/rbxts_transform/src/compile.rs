@@ -8,10 +8,11 @@
 //! rendering. [`CompileOptions::write_partial`] relaxes the second for parity runs: files that transformed cleanly
 //! are written even when other files failed (plugin artifacts never are).
 //!
-//! **Commit order** (DESIGN §14), only when the build has no errors: Luau outputs and assets; plugin artifacts (only
-//! if changed); deletions (stale outputs, stale artifacts, removals); plugin state files, then the incremental
-//! state. Every file is written to a temporary file and renamed into place, with retries while another process holds
-//! the target ([`crate::plugins::lifecycle::write_atomic`]).
+//! **Commit order** (DESIGN §14), only when the build has no errors: Luau outputs, assets and the runtime include
+//! files ([`crate::project::copy_include`]); plugin artifacts (only if changed); deletions (stale outputs, stale
+//! artifacts, removals); plugin state files, then the incremental state. Every file is written to a temporary file
+//! and renamed into place, with retries while another process holds the target
+//! ([`crate::plugins::lifecycle::write_atomic`]).
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Duration;

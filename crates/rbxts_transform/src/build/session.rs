@@ -57,6 +57,7 @@ use crate::plugins::lifecycle::{
     commit_state_files, output_key, plain_late_key, run_finish, run_setup, write_if_changed,
 };
 use crate::plugins::{HookKind, PluginHost};
+use crate::project::copy_include::{IncludeCopy, prepare_copy_include};
 use crate::shared::diagnostics::text_diagnostic;
 
 /// A program and its project setup, kept for the next build.
@@ -915,6 +916,16 @@ impl<'p> BuildSession<'p> {
         } else {
             Vec::new()
         };
+        // the runtime files (`copyInclude`), read before the first write too
+        let include = match (success && !self.options.no_write)
+            .then(|| prepare_copy_include(services, self.options.out_dir_override.as_deref()))
+        {
+            Some(Err(message)) => {
+                report.fatal.push(message);
+                return (report, summary, committed, Some(loaded));
+            }
+            prepared => prepared.and_then(Result::ok).flatten(),
+        };
         if !self.options.no_write {
             for outcome in &mut report.files {
                 let Some(source) = &outcome.luau else { continue };
@@ -965,6 +976,7 @@ impl<'p> BuildSession<'p> {
                     &loaded,
                     &mut project_outputs,
                     &asset_bytes,
+                    include.as_ref(),
                     &queue,
                     &stale,
                     &listing,
@@ -1045,7 +1057,7 @@ impl<'p> BuildSession<'p> {
         (report, summary, Some(committed), Some(loaded))
     }
 
-    /// Commit steps 1 (assets), 2, 3 and 4 after the Luau outputs.
+    /// Commit steps 1 (assets, the runtime include files), 2, 3 and 4 after the Luau outputs.
     #[allow(clippy::too_many_arguments)]
     fn commit_rest(
         &self,
@@ -1054,6 +1066,7 @@ impl<'p> BuildSession<'p> {
         loaded: &Loaded,
         outputs: &mut outputs::ProjectOutputs,
         asset_bytes: &[Vec<u8>],
+        include: Option<&IncludeCopy>,
         queue: &CommitQueue,
         stale: &[String],
         listing: &outputs::Listing,
@@ -1072,6 +1085,9 @@ impl<'p> BuildSession<'p> {
         }
         // 1. assets (the Luau is written)
         summary.written.extend(outputs::sync_assets(services, outputs, asset_bytes, listing)?);
+        if let Some(include) = include {
+            summary.written.extend(include.commit()?);
+        }
         // 2. artifacts
         let written = commit_artifacts(queue)?;
         summary.written.extend(written.iter().cloned());

@@ -18,7 +18,7 @@
 //! rbxts-rs: differences from roblox-ts, all keeping more or writing less:
 //! - assets are written only when their bytes changed (DESIGN §14 commit step 1), not copied on every build;
 //! - the include folder is kept whole when it lies under an output root (DESIGN §14: "The include folder is in the
-//!   clean step's keep set"), not only the runtime files roblox-ts copies (rbxts-rs does not copy them yet);
+//!   clean step's keep set"), not only the runtime files it copies ([`crate::project::copy_include`]);
 //! - plugin artifacts and state files of this build are kept;
 //! - declaration assets (project `.d.ts` files of a declaration build) are kept but not written: roblox-ts rewrites
 //!   them (`transformDeclarationFile`, a TypeScript print), which is not ported; rbxts-rs emits no `.d.ts` either;
