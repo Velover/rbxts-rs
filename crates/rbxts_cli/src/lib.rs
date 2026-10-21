@@ -20,6 +20,7 @@
 //! `RBXTS_PLUGIN_CLAIMS=all` asks every matching plugin for each claimable node and reports double claims.
 
 pub mod watch;
+pub mod yargs;
 
 use std::ffi::OsString;
 use std::process::ExitCode;
@@ -86,115 +87,73 @@ pub enum Command {
     Version,
 }
 
-/// Splits `--name=value` into the name and the value.
-fn split_flag(arg: &str) -> (&str, Option<&str>) {
-    match arg.split_once('=') {
-        Some((name, value)) if name.starts_with('-') => (name, Some(value)),
-        _ => (arg, None),
+/// A path option as roblox-ts reads it: `path.resolve` of a string; an empty string or `false` (`--no-includePath`)
+/// means the default; anything else makes roblox-ts throw.
+fn path_option(name: &str, value: &yargs::Value, cwd: &str) -> Result<String, String> {
+    match value {
+        yargs::Value::Str(path) if path.is_empty() => Ok(String::new()),
+        yargs::Value::Str(path) => Ok(nodepath::resolve(&[cwd, path])),
+        yargs::Value::Bool(false) => Ok(String::new()),
+        other => Err(not_a_path(name, other)),
     }
 }
 
-/// The boolean options and their negated form (`--no-<name>`, yargs's boolean negation).
-fn boolean_flag(name: &str) -> Option<(&str, bool)> {
-    const BOOLEANS: &[&str] = &[
-        "--verbose",
-        "--timings",
-        "--noInclude",
-        "--logTruthyChanges",
-        "--writeOnlyChanged",
-        "--writeTransformedFiles",
-        "--optimizedLoops",
-        "--allowCommentDirectives",
-        "--luau",
-        "--watch",
-        "--usePolling",
-    ];
-    if let Some(&flag) = BOOLEANS.iter().find(|&&flag| flag == name) {
-        return Some((flag, true));
-    }
-    let negated = format!("--{}", name.strip_prefix("--no-")?);
-    BOOLEANS.iter().find(|&&flag| flag == negated).map(|&flag| (flag, false))
+/// rbxts-rs: roblox-ts crashes on a path option that is not one string (`path.resolve` throws a TypeError, exit 1);
+/// rbxtsc says so instead.
+fn not_a_path(name: &str, value: &yargs::Value) -> String {
+    format!("--{name} must be given once, as a path (got {}); roblox-ts stops with a TypeError here", value.to_json())
 }
 
-/// Parses roblox-ts's `build` arguments (the leading `build` is optional, as `$0` is its alias) as yargs does: a
-/// boolean takes `=true` / `=false` or a following `true` / `false`, and `--no-<name>` negates it; a string option
-/// takes `=value` or the next argument unless that is a flag, else it is empty. Paths are resolved against `cwd`, as
-/// `path.resolve` does in roblox-ts; an empty `--includePath` or `--rojo` means the default, as there. Errors carry
-/// yargs's message.
+/// Parses roblox-ts's `build` arguments as roblox-ts's yargs does ([`yargs`]) and reads them as roblox-ts does:
+/// paths are resolved against `cwd` (`path.resolve`), an empty `--includePath` or `--rojo` means the default, and a
+/// repeated `--type` of valid choices is neither a game nor a package (roblox-ts then compares an array), as a model.
+/// Errors carry yargs's message.
 pub fn parse_args(args: impl IntoIterator<Item = String>, cwd: &str) -> Result<Command, String> {
-    let mut args = args.into_iter().peekable();
-    if args.peek().is_some_and(|a| a == "build") {
-        args.next();
-    }
+    let args: Vec<String> = args.into_iter().collect();
+    let options = match yargs::parse(&args) {
+        yargs::Parsed::Help => return Ok(Command::Help),
+        yargs::Parsed::Version => return Ok(Command::Version),
+        yargs::Parsed::Fail(message) => return Err(message),
+        yargs::Parsed::Options(options) => options,
+    };
     let mut out = BuildArgs { project: ".".to_owned(), ..BuildArgs::default() };
-    while let Some(arg) = args.next() {
-        let (name, inline) = split_flag(&arg);
-        if !name.starts_with('-') {
-            return Err(format!("Unknown argument: {name}"));
-        }
-        if let Some((flag, positive)) = boolean_flag(if name == "-w" { "--watch" } else { name }) {
-            let value = match inline {
-                Some(v) => Some(v.to_owned()),
-                None if args.peek().is_some_and(|a| a == "true" || a == "false") => args.next(),
-                None => None,
-            };
-            let value = match value.as_deref() {
-                None | Some("true") => positive,
-                Some("false") => !positive,
-                Some(other) => return Err(format!("Invalid value for {flag}: {other:?} (expected true or false)")),
-            };
-            match flag {
-                "--verbose" => out.verbose = value,
-                "--timings" => out.timings = value,
-                "--noInclude" => out.options.no_include = Some(value),
-                "--logTruthyChanges" => out.options.log_truthy_changes = Some(value),
-                "--writeOnlyChanged" => out.options.write_only_changed = Some(value),
-                "--writeTransformedFiles" => out.options.write_transformed_files = Some(value),
-                "--optimizedLoops" => out.options.optimized_loops = Some(value),
-                "--allowCommentDirectives" => out.options.allow_comment_directives = Some(value),
-                "--watch" => out.watch = value,
-                "--usePolling" => out.use_polling = value,
-                _ => out.options.luau = Some(value),
+    for (name, value) in &options {
+        // a boolean is truthy unless false (an object from `--verbose.x` is truthy too)
+        let flag = !matches!(value, yargs::Value::Bool(false));
+        match name.as_str() {
+            "project" => match value {
+                yargs::Value::Str(project) => out.project = project.clone(),
+                other => return Err(not_a_path("project", other)),
+            },
+            "includePath" => out.options.include_path = Some(path_option("includePath", value, cwd)?),
+            "rojo" => out.options.rojo = Some(path_option("rojo", value, cwd)?),
+            "type" => {
+                out.options.project_type = Some(match value {
+                    yargs::Value::Str(t) => ProjectType::parse(t).expect("yargs checked the choices"),
+                    _ => ProjectType::Model,
+                })
             }
-            continue;
-        }
-        // a string option's value: inline, or the next argument unless it is a flag (None: no value at all)
-        let mut value = || -> Option<String> {
-            match inline {
-                Some(v) => Some(v.to_owned()),
-                None if args.peek().is_some_and(|a| !a.starts_with('-')) => args.next(),
-                None => None,
-            }
-        };
-        let path = |value: Option<String>| match value.unwrap_or_default() {
-            empty if empty.is_empty() => empty,
-            path => nodepath::resolve(&[cwd, &path]),
-        };
-        match name {
-            "-h" | "--help" => return Ok(Command::Help),
-            "-v" | "--version" => return Ok(Command::Version),
-            "-p" | "--project" => out.project = value().unwrap_or_default(),
-            "--events" => {
-                let v = value();
-                if v.as_deref() != Some("json") {
-                    let given = v.as_ref().map_or_else(|| "true".to_owned(), |v| format!("{v:?}"));
-                    return Err(format!("Invalid values:\n  Argument: events, Given: {given}, Choices: \"json\""));
+            "verbose" => out.verbose = flag,
+            "timings" => out.timings = flag,
+            "noInclude" => out.options.no_include = Some(flag),
+            "logTruthyChanges" => out.options.log_truthy_changes = Some(flag),
+            "writeOnlyChanged" => out.options.write_only_changed = Some(flag),
+            "writeTransformedFiles" => out.options.write_transformed_files = Some(flag),
+            "optimizedLoops" => out.options.optimized_loops = Some(flag),
+            "allowCommentDirectives" => out.options.allow_comment_directives = Some(flag),
+            "luau" => out.options.luau = Some(flag),
+            "watch" => out.watch = flag,
+            "usePolling" => out.use_polling = flag,
+            "events" => match value {
+                yargs::Value::Str(events) if events == "json" => out.events_json = true,
+                other => {
+                    return Err(format!(
+                        "Invalid values:\n  Argument: events, Given: {}, Choices: \"json\"",
+                        other.to_json()
+                    ));
                 }
-                out.events_json = true;
-            }
-            "--type" => {
-                let v = value();
-                let t = v.as_deref().and_then(ProjectType::parse).ok_or_else(|| {
-                    let given = v.as_ref().map_or_else(|| "true".to_owned(), |v| format!("{v:?}"));
-                    format!(
-                        "Invalid values:\n  Argument: type, Given: {given}, Choices: \"game\", \"model\", \"package\""
-                    )
-                })?;
-                out.options.project_type = Some(t);
-            }
-            "-i" | "--includePath" => out.options.include_path = Some(path(value())),
-            "--rojo" => out.options.rojo = Some(path(value())),
-            _ => return Err(format!("Unknown argument: {}", name.trim_start_matches('-'))),
+            },
+            _ => {}
         }
     }
     Ok(Command::Build(out))
@@ -420,27 +379,42 @@ mod tests {
         assert_eq!(parse(&["build", "build"]).unwrap_err(), "Unknown argument: build");
     }
 
-    /// yargs's value rules, as roblox-ts's CLI parses them.
+    /// yargs's value rules, as roblox-ts's CLI parses and reads them (checked against roblox-ts's own yargs).
     #[test]
     fn yargs_values() {
         let build = |args: &[&str]| match parse(args).unwrap() {
             Command::Build(build) => build,
             other => panic!("a build, not {other:?}"),
         };
-        // a string option without a value is empty: `-p` alone builds the working directory
-        assert_eq!(build(&["-p"]).project, "");
+        // a string option without a value takes its default (`-p`: ".") or is empty
+        assert_eq!(build(&["-p"]).project, ".");
         let b = build(&["-p", "--noInclude"]);
-        assert_eq!((b.project.as_str(), b.options.no_include), ("", Some(true)));
-        // an empty include path or Rojo file means the default
+        assert_eq!((b.project.as_str(), b.options.no_include), (".", Some(true)));
+        // an empty include path or Rojo file, or a negated one, means the default
         assert_eq!(build(&["-i"]).options.include_path.as_deref(), Some(""));
         assert_eq!(build(&["--includePath="]).options.include_path.as_deref(), Some(""));
+        assert_eq!(build(&["--no-i"]).options.include_path.as_deref(), Some(""));
         assert_eq!(build(&["--rojo", "--verbose"]).options.rojo.as_deref(), Some(""));
-        // booleans: a following true/false, `=value`, and `--no-<name>`
+        // booleans: a following true/false, `=value` (anything but "true" is false), `--no-<name>`
         assert_eq!(build(&["--noInclude", "false"]).options.no_include, Some(false));
-        assert_eq!(build(&["--noInclude=false"]).options.no_include, Some(false));
+        assert_eq!(build(&["--noInclude=0"]).options.no_include, Some(false));
         assert_eq!(build(&["--no-noInclude"]).options.no_include, Some(false));
-        assert_eq!(build(&["--no-luau"]).options.luau, Some(false));
+        assert_eq!(build(&["--luau=yes"]).options.luau, Some(false));
+        assert!(!build(&["--verbose=maybe"]).verbose);
         assert!(build(&["--verbose", "true"]).verbose);
-        assert!(parse(&["--verbose=maybe"]).unwrap_err().contains("expected true or false"));
+        // kebab-case forms of the options
+        assert_eq!(build(&["--optimized-loops"]).options.optimized_loops, Some(true));
+        let b = build(&["--include-path", "include"]);
+        assert_eq!(b.options.include_path.as_deref(), Some(nodepath::resolve(&["E:/work", "include"]).as_str()));
+        assert_eq!(build(&["--no-no-include"]).options.no_include, Some(false));
+        // a repeated --type of valid choices is neither a game nor a package
+        assert_eq!(build(&["--type", "game", "--type", "game"]).options.project_type, Some(ProjectType::Model));
+        // yargs's messages
+        assert_eq!(parse(&["--no-include"]).unwrap_err(), "Unknown argument: include");
+        assert_eq!(parse(&["--foo-bar"]).unwrap_err(), "Unknown arguments: foo-bar, fooBar");
+        assert_eq!(parse(&["--verbose", "1"]).unwrap_err(), "Unknown argument: 1");
+        assert!(parse(&["--usePolling"]).unwrap_err().starts_with("Missing dependent arguments:"));
+        assert!(parse(&["-p", "a", "-p", "b"]).unwrap_err().contains("TypeError"));
+        assert_eq!(parse(&["x", "help"]).unwrap(), Command::Help);
     }
 }

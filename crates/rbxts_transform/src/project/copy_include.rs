@@ -15,7 +15,9 @@
 //! package of its own, so it takes the include folder of the roblox-ts package the project resolves: the first
 //! `node_modules/roblox-ts` (with a package.json) from the project folder upwards, as Node resolves a package (a
 //! junction or link to a roblox-ts checkout is followed). The include folder then equals stock's byte for byte,
-//! whichever roblox-ts version the project pins. Only when no roblox-ts package is found does rbxts-rs use the
+//! whichever roblox-ts version the project pins. The npm roblox-ts 3.0.0 package ships `include/*.lua` and copies
+//! the folder whole (no renaming, no deletion of the other extension); master's rules leave `.lua` sources alone, so
+//! a 3.0.0 project gets 3.0.0's files, byte-identical. Only when no roblox-ts package is found does rbxts-rs use the
 //! files it embeds (`crates/rbxts_transform/include`): those of roblox-ts master at 68648b0, the version this port
 //! follows, under roblox-ts's MIT licence (`include/LICENSE`).
 //!
