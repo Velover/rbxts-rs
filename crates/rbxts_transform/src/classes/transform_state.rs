@@ -75,9 +75,7 @@ impl<'a> TransformState<'a> {
         source_file: P<SourceFile>,
     ) -> TransformState<'a> {
         let resolver = checker.get_emit_resolver();
-        let source_out_path = services.path_translator.get_output_path(source_file.get().file_name());
-        let rbx_path = services.rojo_resolver.get_rbx_path_from_file_path(&source_out_path);
-        let is_in_replicated_first = rbx_path.is_some_and(|p| p.first().is_some_and(|s| s == "ReplicatedFirst"));
+        let is_in_replicated_first = services.file_info(source_file.get().file_name()).in_replicated_first;
         TransformState {
             program,
             checker,

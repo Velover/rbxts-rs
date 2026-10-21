@@ -404,3 +404,13 @@ fn globals_and_guards() {
     assert!(string("s").is_simple_primitive() && !id("a").is_simple_primitive() && id("a").is_simple());
     assert!(array(vec![]).is_table() && Stmt::Break.is_final() && !comment("x").is_final());
 }
+
+#[test]
+fn numbers_without_literals() {
+    use crate::{LateStrings, create, render_expr};
+    let text = |v: f64| render_expr(&create::number(v), &LateStrings::new());
+    assert_eq!(text(f64::NAN), "0 / 0");
+    assert_eq!(text(f64::INFINITY), "math.huge");
+    assert_eq!(text(f64::NEG_INFINITY), "-math.huge");
+    assert_eq!(text(-1.5), "-1.5");
+}

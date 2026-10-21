@@ -55,3 +55,23 @@ Dumps of the real project stay outside the repo (scratchpad `rbxts-rs/project-du
 (`tools/gen-nodepath-cases.cjs`), the JavaScript resolver's on hand-made Rojo trees (`tools/gen-rojo-cases.cjs`) and
 roblox-ts's setup on hand-made projects (`tools/gen-setup-fixtures.cjs`); rerun those scripts when the fixtures
 change.
+
+## Building a project (`rbxts_transform`)
+
+`crates/rbxts_transform` is roblox-ts master's `src/TSTransformer` ported module by module (DESIGN §9b), with the
+build pipeline (`compile_project`: load → setup → check → transform → render → write changed outputs). Node kinds
+not ported yet are errors reading `not yet supported in rbxts-rs: <kind>`; the build reports every file and writes
+nothing unless asked to (`--write-partial`).
+
+```sh
+cd <project>
+<rbxts-rs>/target/measure/rbxts-bench.exe build [-p tsconfig.json] [--optimizedLoops] [--allowCommentDirectives] \
+    [--out-dir DIR] [--write-partial] [--no-write] [--parity REF_DIR] [--report FILE] [--show N] [--json]
+```
+
+`--out-dir` writes outside the project's `outDir` (Rojo paths still resolve against `outDir`). `--parity` compares
+each output with a reference build's file (identical / differing / unsupported / failed / missing), ranks the
+unsupported kinds and the work areas by the files they block, and with `--report` writes the per-file list.
+References: roblox-ts's tests project (`tsconfig.bench.json`, against the tsrs-backed build in scratchpad
+`tsrs-roblox-ts/exp/out-C-tsrs/out`) and the real project without Flamework (scratchpad `rbxts-rs/refs`); both were
+built with `--optimizedLoops --allowCommentDirectives`.
