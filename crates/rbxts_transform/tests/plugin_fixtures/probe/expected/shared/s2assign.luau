@@ -52,6 +52,22 @@ do
 				print(i)
 			end
 		end
+		-- claimed inside parentheses of a `for` head: the parentheses wrap the value
+		do
+			local _ = (self:setAttribute("count", 0))
+			local _shouldIncrement = false
+			while true do
+				if _shouldIncrement then
+					local _1 = (self:setAttribute("count", self.attrs.count + 1))
+				else
+					_shouldIncrement = true
+				end
+				if not (self.attrs.count < 1) then
+					break
+				end
+				print(a)
+			end
+		end
 		return { a, b, c }
 	end
 end

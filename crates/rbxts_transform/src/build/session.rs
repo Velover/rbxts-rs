@@ -58,7 +58,7 @@ use crate::plugins::lifecycle::{
 };
 use crate::plugins::{HookKind, PluginHost};
 use crate::project::copy_include::{IncludeCopy, prepare_copy_include};
-use crate::shared::diagnostics::text_diagnostic;
+use crate::shared::diagnostics::{internal_error, text_diagnostic};
 
 /// A program and its project setup, kept for the next build.
 struct Loaded {
@@ -872,7 +872,20 @@ impl<'p> BuildSession<'p> {
                 && outcome.is_clean()
                 && (keys.is_empty() || finished)
             {
-                outcome.luau = Some(rbxts_luau::render(ast, &late_strings));
+                // rbxts-rs: a panic while rendering is this file's internal error, not the build's crash
+                match catch_unwind(AssertUnwindSafe(|| rbxts_luau::render(ast, &late_strings))) {
+                    Ok(luau) => outcome.luau = Some(luau),
+                    Err(panic) => {
+                        let message = format!("rendering the Luau panicked: {}", panic_message(&*panic));
+                        match project.program.get_source_file(&outcome.file_name) {
+                            Some(file) => outcome.diagnostics.push(internal_error(file.as_node(), &message)),
+                            None => {
+                                report.fatal.push(format!("{}: rbxts-rs internal error: {message}", outcome.file_name))
+                            }
+                        }
+                        outcome.internal_errors.push(message);
+                    }
+                }
             }
         }
         let mut rerendered: Vec<(String, String)> = Vec::new();
@@ -898,7 +911,8 @@ impl<'p> BuildSession<'p> {
             }
         }
         report.timings.render = start.elapsed();
-        if !report.fatal.is_empty() && !self.options.write_partial {
+        // a file that failed to render fails the build as a transform error does
+        if (!report.fatal.is_empty() || report.has_errors()) && !self.options.write_partial {
             return (report, summary, committed, Some(loaded));
         }
 

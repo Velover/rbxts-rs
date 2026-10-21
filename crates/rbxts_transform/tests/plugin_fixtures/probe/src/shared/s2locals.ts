@@ -10,3 +10,7 @@ export function inFunction() {
 	}
 	return probeLocals() + a + b + c + top1 + top2;
 }
+// a call claimed inside parentheses of a `for` head
+for ((probeLocals()); ; ) {
+	break;
+}

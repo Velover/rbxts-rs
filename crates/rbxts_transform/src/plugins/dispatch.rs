@@ -190,7 +190,7 @@ fn offer_call_inner(
                 if host.claims_all {
                     report_double_claims(state, host, context, plugin, &candidates[position + 1..]);
                 }
-                return Some(unused_value(prereqs, value, site.value_used));
+                return Some(unused_value(prereqs, site.node, value, site.value_used));
             }
             Ok(Claim::Decline) => {
                 if check_decline(state, host, prereqs, &mut *context, plugin, start, frame) {
@@ -204,12 +204,14 @@ fn offer_call_inner(
     None
 }
 
-/// A claimed value whose node's value is unused (statement position): evaluated as a statement now (a call
-/// statement, or `local _ = value`), and `Expr::None` returned, so that no lowering that drops
-/// unused values (the optional chain's) drops its effects. Used values, calls and temporaries are returned as they
-/// are.
-fn unused_value(prereqs: &mut Prereqs, value: Expr, value_used: bool) -> Expr {
+/// A claimed value of `node` whose value is unused (statement position): evaluated as a statement now (a call
+/// statement, or `local _ = value`), and `Expr::None` returned, so that no lowering that drops unused values (the
+/// optional chain's) drops its effects. Used values, calls and temporaries are returned as they are, and so is a
+/// value inside parentheses roblox-ts lowers (a `for` head's `(x = 0)`): the parentheses wrap it, and the statement
+/// around them evaluates it (`local _ = (x)`), as without plugins.
+fn unused_value(prereqs: &mut Prereqs, node: P<Node>, value: Expr, value_used: bool) -> Expr {
     if value_used
+        || in_lowered_parentheses(node)
         || value.is_none()
         || matches!(value, Expr::Call(_) | Expr::MethodCall(_) | Expr::TemporaryIdentifier(_))
     {
@@ -217,6 +219,26 @@ fn unused_value(prereqs: &mut Prereqs, value: Expr, value_used: bool) -> Expr {
     }
     prereqs.push_list(wrap_expression_statement(value));
     Expr::None
+}
+
+/// `node` is inside parentheses that roblox-ts lowers as such before its value is dropped: a `for` statement's
+/// parenthesized initializer or incrementor. (An expression statement's parentheses are skipped.)
+fn in_lowered_parentheses(node: P<Node>) -> bool {
+    let mut parenthesized = false;
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        match parent.kind() {
+            Kind::ParenthesizedExpression => parenthesized = true,
+            Kind::AsExpression
+            | Kind::NonNullExpression
+            | Kind::SatisfiesExpression
+            | Kind::TypeAssertionExpression => {}
+            Kind::ForStatement => return parenthesized,
+            _ => return false,
+        }
+        current = parent;
+    }
+    false
 }
 
 /// A hook that lowered its own node as a statement (roblox-ts lowers it as one, its value unused) got `nil` for its
@@ -679,7 +701,7 @@ fn claim_expression_slow(state: &mut TransformState<'_>, prereqs: &mut Prereqs, 
     let value = claim_expression_offer(state, host, prereqs, node, list);
     state.plugin_file.in_fallback_offer.remove(&node);
     match value {
-        Some(value) => Some(unused_value(prereqs, value, !is_used_as_statement(node))),
+        Some(value) => Some(unused_value(prereqs, node, value, !is_used_as_statement(node))),
         None => {
             state.plugin_file.fallback_declined.insert(node);
             None
@@ -1082,7 +1104,7 @@ fn claim_assignment_offer(
             });
         match result {
             Ok(Claim::Take(value)) => {
-                return Some(unused_value(prereqs, statement_form_value(&frame, value), site.value_used));
+                return Some(unused_value(prereqs, site.node, statement_form_value(&frame, value), site.value_used));
             }
             Ok(Claim::Decline) => {
                 let now = state.plugin_file.effect_mark(prereqs.statements.len());

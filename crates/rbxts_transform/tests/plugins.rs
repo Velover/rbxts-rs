@@ -227,9 +227,9 @@ fn probe_and_stamp_match_the_expected_luau() {
          {\"file\":\"src/shared/elide.ts\",\"claims\":3},{\"file\":\"src/shared/elideAll.ts\",\"claims\":1},\
          {\"file\":\"src/shared/elideKept.ts\",\"claims\":1},{\"file\":\"src/shared/exprcall.ts\",\"claims\":3},{\"file\":\"src/shared/facts.ts\",\"claims\":1},\
          {\"file\":\"src/shared/fallbacks.ts\",\"claims\":2},{\"file\":\"src/shared/inorder.ts\",\"claims\":5},{\"file\":\"src/shared/receivers.ts\",\"claims\":3},\
-         {\"file\":\"src/shared/reuse.ts\",\"claims\":1},{\"file\":\"src/shared/s2assign.ts\",\"claims\":11},\
+         {\"file\":\"src/shared/reuse.ts\",\"claims\":1},{\"file\":\"src/shared/s2assign.ts\",\"claims\":13},\
          {\"file\":\"src/shared/s2calls.ts\",\"claims\":11},{\"file\":\"src/shared/s2chains.ts\",\"claims\":1},\
-         {\"file\":\"src/shared/s2locals.ts\",\"claims\":2},{\"file\":\"src/shared/s2objects.ts\",\"claims\":4},\
+         {\"file\":\"src/shared/s2locals.ts\",\"claims\":3},{\"file\":\"src/shared/s2objects.ts\",\"claims\":4},\
          {\"file\":\"src/shared/s2spill.ts\",\"claims\":6},{\"file\":\"src/shared/selfcalls.ts\",\"claims\":5},\
          {\"file\":\"src/shared/shadow.ts\",\"claims\":3}]\n"
     );
@@ -659,4 +659,22 @@ fn tsconfig_plugins_must_be_compiled_in() {
         "{:?}",
         errors(&report)
     );
+}
+
+#[test]
+fn a_render_panic_is_the_file_s_internal_error() {
+    let Some(project) = Project::new("render") else { return };
+    // roblox-ts lowers an unused optional chain to no value, which the `for` head's parentheses then wrap: a
+    // compiler bug that panics while rendering (a statement of its own is fine)
+    project.write(
+        "src/shared/render.ts",
+        "declare const maybe: { f(): number } | undefined;\nfor ((maybe?.f()); ; ) {\n\tbreak;\n}\nexport {};\n",
+    );
+    let report = project.build(&["stamp", "probe"], |_| {});
+    assert_eq!(
+        errors(&report),
+        vec!["error render.ts: rbxts-rs internal error: rendering the Luau panicked: Cannot render None"]
+    );
+    assert!(report.fatal.is_empty(), "{:?}", report.fatal);
+    assert!(!project.out_exists());
 }

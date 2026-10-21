@@ -11,6 +11,13 @@ local function inFunction()
 	end
 	return "f3 m3" .. tostring(a) .. tostring(b) .. tostring(c) .. tostring(top1) .. tostring(top2)
 end
+-- a call claimed inside parentheses of a `for` head
+do
+	local _ = "f4 m4"
+	while true do
+		break
+	end
+end
 return {
 	atTop = atTop,
 	inFunction = inFunction,

@@ -25,6 +25,10 @@ export class Comp {
 		for (let i = 0; i < 2; this.attrs.count++) {
 			print(i);
 		}
+		// claimed inside parentheses of a `for` head: the parentheses wrap the value
+		for ((this.attrs.count = 0); this.attrs.count < 1; (this.attrs.count += 1)) {
+			print(a);
+		}
 		return [a, b, c];
 	}
 }
