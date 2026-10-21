@@ -1,5 +1,4 @@
-//! `util/validateMethodAssignment.ts` (the expression and object literal parts; class element checks come with the
-//! classes area).
+//! `util/validateMethodAssignment.ts`
 
 use tsrs_ast::{Kind, Node, NodeFlags};
 use tsrs_checker::{ContextFlags, SignatureKind, Type};
@@ -127,6 +126,23 @@ fn validate_object_literal_element(state: &mut TransformState<'_>, node: P<Node>
     }
 }
 
+/// `validateHeritageClause`: a class member against the same member of a base class or implemented interface.
+fn validate_heritage_clause(state: &mut TransformState<'_>, node: P<Node>, type_node: P<Node>) {
+    let name = tsrs_ast::get_property_name_for_property_name_node(node.name().expect("the element has a name"));
+    // rbxts-rs: TypeScript 7 gives `InternalSymbolNameMissing` where TypeScript 5 gives `undefined`
+    if name == tsrs_ast::InternalSymbolNameMissing {
+        return;
+    }
+
+    let t = state.get_type(node);
+    let heritage_type = state.get_type(type_node);
+    let Some(property_type) = state.checker.get_type_of_property_of_type_exported(heritage_type, &name) else {
+        return;
+    };
+
+    validate_types(state, node, t, property_type);
+}
+
 /// `validateSpread`: each spread property against the contextual type's property of the same name.
 fn validate_spread(state: &mut TransformState<'_>, node: P<Node>) {
     let expression = node.expression().expect("a spread assignment has an expression");
@@ -148,12 +164,17 @@ fn validate_spread(state: &mut TransformState<'_>, node: P<Node>) {
 
 /// `validateMethodAssignment`: a member assigned where the other calling convention (method or function) is
 /// expected.
-///
-/// rbxts-rs: only the object literal members so far; class elements (`validateHeritageClause`) come with the classes
-/// area.
 pub fn validate_method_assignment(state: &mut TransformState<'_>, node: P<Node>) {
     if tsrs_ast::is_class_element(node) && node.parent().is_some_and(tsrs_ast::is_class_like) && node.name().is_some() {
-        // rbxts-rs: `validateHeritageClause` for each super type node, with the classes area
+        let class = node.parent().expect("a class element has a parent");
+        // `ts.getAllSuperTypeNodes`
+        // rbxts-rs: TypeScript 7's `implements` entries are TypeReference nodes (ExpressionWithTypeArguments in
+        // TypeScript 5); both have the implemented type as their type.
+        let extends = tsrs_ast::get_class_extends_heritage_element(class);
+        let implements = tsrs_ast::get_implements_heritage_clause_elements(class);
+        for type_node in extends.into_iter().chain(implements.iter().copied()) {
+            validate_heritage_clause(state, node, type_node);
+        }
     } else if is_object_literal_element_like(node) {
         if node.kind() == Kind::SpreadAssignment {
             if node.expression().is_some_and(|e| e.kind() != Kind::ObjectLiteralExpression) {

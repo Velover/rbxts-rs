@@ -6,6 +6,10 @@
 //! in a `node_modules` with `@rbxts/compiler-types` and `@rbxts/types`: `RBXTS_RS_FIXTURE_NODE_MODULES`, else the
 //! roblox-ts tests project's. Without one the test is skipped (it says so on stderr).
 //!
+//! - `classes`: class declarations and expressions, constructors (parameter properties, property initializers,
+//!   `super` calls), methods with unusual names, static members and blocks, `this` in static members, hoisting,
+//!   default exports, and every kind of decorator. TypeScript 5 lists exported functions first and TypeScript 7 in
+//!   source order, so the fixture declares its exported functions first.
 //! - `literals`: object and array literals, methods in object literals, spread in objects, arrays and calls, every
 //!   iterable kind an array spread accepts. TypeScript 5 lists exported functions first and TypeScript 7 in source
 //!   order, so the fixture declares its exported functions first.
@@ -134,6 +138,11 @@ fn check(area: &'static str) {
     let _ = std::process::Command::new("cmd").args(["/C", "rmdir"]).arg(&link).status();
     let _ = std::fs::remove_dir_all(&root);
     assert!(failures.is_empty(), "{area}:\n{}", failures.join("\n"));
+}
+
+#[test]
+fn classes() {
+    check("classes");
 }
 
 #[test]

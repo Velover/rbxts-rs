@@ -11,6 +11,7 @@ use crate::util::traversal::has_declare_modifier;
 
 use super::transform_block::transform_block;
 use super::transform_break_statement::transform_break_statement;
+use super::transform_class_declaration::transform_class_declaration;
 use super::transform_continue_statement::transform_continue_statement;
 use super::transform_enum_declaration::transform_enum_declaration;
 use super::transform_export_assignment::transform_export_assignment;
@@ -55,6 +56,7 @@ pub fn transform_statement(state: &mut TransformState<'_>, node: P<Node>) -> Vec
         // regular transforms
         Kind::Block => transform_block(state, node),
         Kind::BreakStatement => transform_break_statement(state, node),
+        Kind::ClassDeclaration => transform_class_declaration(state, node),
         Kind::ContinueStatement => transform_continue_statement(state, node),
         Kind::EnumDeclaration => transform_enum_declaration(state, node),
         Kind::ExportAssignment => transform_export_assignment(state, node),
@@ -72,8 +74,7 @@ pub fn transform_statement(state: &mut TransformState<'_>, node: P<Node>) -> Vec
         Kind::VariableStatement => transform_variable_statement(state, node),
 
         // rbxts-rs: kinds roblox-ts transforms that are not ported yet
-        Kind::ClassDeclaration
-        | Kind::DoStatement
+        Kind::DoStatement
         | Kind::ForOfStatement
         | Kind::ForStatement
         | Kind::WhileStatement => {

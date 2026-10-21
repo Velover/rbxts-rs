@@ -17,6 +17,7 @@ pub mod ensure_transform_order;
 pub mod evaluation;
 pub mod expression_chain;
 pub mod expression_might_mutate;
+pub mod find_constructor;
 pub mod get_add_iterable_to_array_builder;
 pub mod get_block_comment_text;
 pub mod get_constant_value_literal;

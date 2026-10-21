@@ -2,6 +2,7 @@
 
 pub mod transform_block;
 pub mod transform_break_statement;
+pub mod transform_class_declaration;
 pub mod transform_continue_statement;
 pub mod transform_enum_declaration;
 pub mod transform_export_assignment;

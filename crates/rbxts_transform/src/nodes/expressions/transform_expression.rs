@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformExpression.ts`: expression dispatch by syntax kind.
 
-use rbxts_luau::{Expr, globals};
+use rbxts_luau::Expr;
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -15,6 +15,7 @@ use super::transform_array_literal_expression::transform_array_literal_expressio
 use super::transform_await_expression::transform_await_expression;
 use super::transform_binary_expression::transform_binary_expression;
 use super::transform_call_expression::transform_call_expression;
+use super::transform_class_expression::transform_class_expression;
 use super::transform_conditional_expression::transform_conditional_expression;
 use super::transform_delete_expression::transform_delete_expression;
 use super::transform_element_access_expression::transform_element_access_expression;
@@ -29,6 +30,7 @@ use super::transform_parenthesized_expression::transform_parenthesized_expressio
 use super::transform_property_access_expression::transform_property_access_expression;
 use super::transform_spread_element::transform_spread_element;
 use super::transform_string_literal::transform_string_literal;
+use super::transform_super_keyword::transform_super_keyword;
 use super::transform_tagged_template_expression::transform_tagged_template_expression;
 use super::transform_template_expression::transform_template_expression;
 use super::transform_this_expression::transform_this_expression;
@@ -81,6 +83,7 @@ pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereq
         Kind::AwaitExpression => transform_await_expression(state, prereqs, node),
         Kind::BinaryExpression => transform_binary_expression(state, prereqs, node),
         Kind::CallExpression => transform_call_expression(state, prereqs, node),
+        Kind::ClassExpression => transform_class_expression(state, prereqs, node),
         Kind::ConditionalExpression => transform_conditional_expression(state, prereqs, node),
         Kind::DeleteExpression => transform_delete_expression(state, prereqs, node),
         Kind::ElementAccessExpression => transform_element_access_expression(state, prereqs, node),
@@ -98,7 +101,7 @@ pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereq
         Kind::PropertyAccessExpression => transform_property_access_expression(state, prereqs, node),
         Kind::SpreadElement => transform_spread_element(state, prereqs, node),
         Kind::StringLiteral => transform_string_literal(node),
-        Kind::SuperKeyword => globals::super_(),
+        Kind::SuperKeyword => transform_super_keyword(),
         Kind::TaggedTemplateExpression => transform_tagged_template_expression(state, prereqs, node),
         Kind::TemplateExpression => transform_template_expression(state, prereqs, node),
         Kind::ThisKeyword => transform_this_expression(state, node),
@@ -106,8 +109,7 @@ pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereq
         Kind::YieldExpression => transform_yield_expression(state, prereqs, node),
 
         // rbxts-rs: kinds roblox-ts transforms that are not ported yet
-        Kind::ClassExpression
-        | Kind::JsxElement
+        Kind::JsxElement
         | Kind::JsxExpression
         | Kind::JsxFragment
         | Kind::JsxSelfClosingElement => return state.unsupported_subtree(node, &kind_name(node.kind())),

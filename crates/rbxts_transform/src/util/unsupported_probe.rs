@@ -16,7 +16,7 @@ use crate::util::types::get_first_defined_symbol;
 pub fn is_unsupported_statement_kind(kind: Kind) -> bool {
     matches!(
         kind,
-        Kind::ClassDeclaration | Kind::DoStatement | Kind::ForOfStatement | Kind::ForStatement | Kind::WhileStatement
+        Kind::DoStatement | Kind::ForOfStatement | Kind::ForStatement | Kind::WhileStatement
     )
 }
 
@@ -24,8 +24,7 @@ pub fn is_unsupported_statement_kind(kind: Kind) -> bool {
 pub fn is_unsupported_expression_kind(kind: Kind) -> bool {
     matches!(
         kind,
-        Kind::ClassExpression
-            | Kind::JsxElement
+        Kind::JsxElement
             | Kind::JsxExpression
             | Kind::JsxFragment
             | Kind::JsxSelfClosingElement

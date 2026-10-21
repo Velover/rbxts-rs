@@ -26,11 +26,11 @@ pub fn transform_this_expression(state: &mut TransformState<'_>, node: P<Node>) 
             && let Some(class) = container.parent()
             && tsrs_ast::is_class_like(class)
         {
-            let identifier = state.class_identifier_map.get(&class).cloned();
-            return match identifier {
-                Some(identifier) => identifier.into(),
-                None => state.unsupported(node, "this in a static class member"),
-            };
+            match state.class_identifier_map.get(&class) {
+                Some(identifier) => return identifier.clone().into(),
+                // roblox-ts asserts here
+                None => state.internal_error(node, "no class identifier for `this` in a static member"),
+            }
         }
     }
 
