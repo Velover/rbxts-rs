@@ -740,6 +740,11 @@ impl<'p> BuildSession<'p> {
                 ));
                 luau_outputs.insert(output_key(services, &services.path_translator.get_output_path(name)));
             }
+            // the rest of the output set too (assets, declaration and transformed outputs): an artifact never
+            // overwrites a copied asset
+            for path in &project_outputs.files {
+                luau_outputs.insert(output_key(services, path));
+            }
             let mut resolved = FxHashSet::default();
             let mut errors = Vec::new();
             for (index, plugin) in run.active.iter().enumerate() {

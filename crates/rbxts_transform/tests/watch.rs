@@ -401,3 +401,71 @@ fn the_clean_keeps_what_roblox_ts_keeps_and_removes_links_as_links() {
     let _ = std::fs::remove_dir_all(&sentinel);
     drop(copy);
 }
+
+/// Writes one artifact at a fixed path.
+struct ArtifactAt(&'static str);
+
+impl Plugin for ArtifactAt {
+    type Shared = ();
+    type State = ();
+    type FilePart = ();
+    type Instance = CounterInstance;
+
+    fn info(&self) -> PluginInfo {
+        PluginInfo { name: "artifact-at", version: "0.1.0", tsconfig_transform: None }
+    }
+
+    fn setup(&self, _cx: &mut SetupCx<'_>, _state: &mut ()) -> Result<Arc<()>, Fatal> {
+        Ok(Arc::new(()))
+    }
+
+    fn instance(&self, _shared: Arc<()>, _checker: CheckerInfo) -> CounterInstance {
+        CounterInstance
+    }
+
+    fn finish(
+        &self,
+        _shared: &(),
+        _state: &mut (),
+        _parts: &[(FileIndex, &())],
+        cx: &mut FinishCx<'_>,
+    ) -> Result<(), Fatal> {
+        cx.write_artifact(self.0, b"plugin bytes\n".to_vec());
+        Ok(())
+    }
+}
+
+/// A plugin artifact at an asset's output path fails the build, naming the plugin, and the asset is not overwritten.
+#[test]
+fn an_artifact_may_not_overwrite_an_asset_output() {
+    let Some(node_modules) = node_modules() else {
+        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        return;
+    };
+    let root = std::env::temp_dir().join(format!("rbxts-rs-watch-artifact-{}", std::process::id()));
+    parity::remove_tree(&root);
+    let copy = Copy(root.clone());
+    parity::copy_tree(&fixtures().join("basic"), &root).unwrap();
+    parity::junction(&root.join("node_modules"), &node_modules).unwrap();
+    let plugins = vec![erase(ArtifactAt("out/shared/asset.lua"))];
+    let fatal = big_stack(|| {
+        let options =
+            PluginOptions { plugins: &plugins, ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
+        let mut session = BuildSession::new(
+            CompileOptions {
+                tsconfig: "tsconfig.json".into(),
+                cwd: root.to_string_lossy().into_owned(),
+                project_options: ProjectOptionLayer::default(),
+                out_dir_override: None,
+                write_partial: false,
+                no_write: false,
+            },
+            &options,
+            false,
+        );
+        session.build(&[]).0.fatal
+    });
+    assert!(fatal.iter().any(|f| f.contains("artifact-at") && f.contains("is an output of this build")), "{fatal:?}");
+    assert!(!root.join("out").exists(), "a failing build writes nothing");
+    drop(copy);
+}

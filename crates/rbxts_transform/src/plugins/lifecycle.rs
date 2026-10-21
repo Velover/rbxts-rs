@@ -311,7 +311,7 @@ pub(crate) struct Finish<'s> {
     pub plugin: &'static str,
     /// Where outputs go (the override when there is one).
     pub out_dir: &'s str,
-    /// The path keys of this build's Luau outputs.
+    /// The path keys of this build's outputs (Luau, assets, declaration and transformed outputs).
     pub luau_outputs: &'s FxHashSet<String>,
     pub late: &'s mut LateStrings,
     pub resolved: &'s mut FxHashSet<String>,
@@ -356,7 +356,7 @@ impl Finish<'_> {
             return None;
         }
         if self.luau_outputs.contains(&key) {
-            self.errors.push(format!("plugin `{}`: {what} {absolute} is a Luau output of this build", self.plugin));
+            self.errors.push(format!("plugin `{}`: {what} {absolute} is an output of this build", self.plugin));
             return None;
         }
         Some(absolute)

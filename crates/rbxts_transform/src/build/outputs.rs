@@ -45,6 +45,9 @@ pub struct ProjectOutputs {
     pub keep_dirs: Vec<String>,
     /// Assets: (input, output), copied when their bytes differ.
     pub assets: Vec<(String, String)>,
+    /// Every output path of the build (Luau, declarations, transformed files, assets, declaration assets), which
+    /// plugin artifacts may not overwrite.
+    pub files: Vec<String>,
 }
 
 /// A path as a comparison key: normalised, forward slashes, lowercased unless the file system is case-sensitive.
@@ -127,6 +130,7 @@ pub fn get_project_outputs(inputs: &OutputInputs<'_>) -> Result<ProjectOutputs, 
         }
         owners.insert(key.clone(), input.to_owned());
         outputs.keep.insert(key);
+        outputs.files.push(output.to_owned());
         Ok(())
     };
     for (input, luau, declarations) in inputs.emitted {
