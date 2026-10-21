@@ -137,8 +137,10 @@ pub(crate) fn lower_binary(
 
     let left_type = state.get_type(left);
     let right_type = state.get_type(right);
-    if matches!(op, Kind::LessThanToken | Kind::LessThanEqualsToken | Kind::GreaterThanToken | Kind::GreaterThanEqualsToken)
-    {
+    if matches!(
+        op,
+        Kind::LessThanToken | Kind::LessThanEqualsToken | Kind::GreaterThanToken | Kind::GreaterThanEqualsToken
+    ) {
         let left_ok = is_definitely_type(state, left_type, &[&is_string_type])
             || is_definitely_type(state, left_type, &[&is_number_type]);
         // as transformBinaryExpression (which checks the left type's number-ness twice)
@@ -169,7 +171,9 @@ fn written_key(property: P<Node>) -> Option<&'static str> {
 /// The property a written key names: exactly one, or an error.
 fn field_index(properties: &[P<Node>], key: &str, what: &str) -> Result<usize, String> {
     let mut found = properties.iter().enumerate().filter(|(_, p)| written_key(**p) == Some(key)).map(|(i, _)| i);
-    let first = found.next().ok_or_else(|| format!("compile_object_literal: {what} `{key}`, which is not a written key of the literal"))?;
+    let first = found
+        .next()
+        .ok_or_else(|| format!("compile_object_literal: {what} `{key}`, which is not a written key of the literal"))?;
     if found.next().is_some() {
         return Err(format!("compile_object_literal: {what} `{key}`, which the literal writes more than once"));
     }
@@ -233,7 +237,9 @@ fn lower_permuted(
     let properties = node.properties();
     let count = properties.len() + append.len();
     let mut seen = vec![false; count];
-    if order.len() != count || order.iter().any(|&i| (i as usize) >= count || std::mem::replace(&mut seen[i as usize], true)) {
+    if order.len() != count
+        || order.iter().any(|&i| (i as usize) >= count || std::mem::replace(&mut seen[i as usize], true))
+    {
         return Err(format!(
             "compile_object_literal: FieldOrder::Permuted must list each of the {count} fields (written, then \
              appended) once"

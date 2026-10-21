@@ -5,7 +5,8 @@ use rustc_hash::FxHashSet;
 
 use rbxts_luau::{AnyIdentifier, Expr, Stmt, create};
 use rbxts_plugin::{
-    AccessPosition, AccessSite, AssignOp, AssignSite, CallKind, CallSite, Claim, ClassFilter, ClassSite, SymbolRole, Tag,
+    AccessPosition, AccessSite, AssignOp, AssignSite, CallKind, CallSite, Claim, ClassFilter, ClassSite, SymbolRole,
+    Tag,
 };
 use tsrs_ast::{Kind, ModifierFlags, Node, SourceFile, Symbol, SymbolFlags};
 use tsrs_core::P;
@@ -204,14 +205,24 @@ fn offer_call_inner(
 }
 
 /// A claimed value whose node's value is unused (statement position): evaluated as a statement now (a call
-/// statement, or `local _ = value`), and `Expr::None` returned, so that no lowering that drops unused values
-/// (the optional chain's) drops its effects. Used values, calls and temporaries are returned as they are.
+/// statement, or `local _ = value`), and `Expr::None` returned, so that no lowering that drops
+/// unused values (the optional chain's) drops its effects. Used values, calls and temporaries are returned as they
+/// are.
 fn unused_value(prereqs: &mut Prereqs, value: Expr, value_used: bool) -> Expr {
-    if value_used || value.is_none() || matches!(value, Expr::Call(_) | Expr::MethodCall(_) | Expr::TemporaryIdentifier(_)) {
+    if value_used
+        || value.is_none()
+        || matches!(value, Expr::Call(_) | Expr::MethodCall(_) | Expr::TemporaryIdentifier(_))
+    {
         return value;
     }
     prereqs.push_list(wrap_expression_statement(value));
     Expr::None
+}
+
+/// A hook that lowered its own node as a statement (roblox-ts lowers it as one, its value unused) got `nil` for its
+/// value: returned as it is, that `nil` is no value at all (the statement is in the prereqs).
+fn statement_form_value(frame: &HookFrame, value: Expr) -> Expr {
+    if frame.statement_form && matches!(value, Expr::Nil) { Expr::None } else { value }
 }
 
 /// What makes a decline wrong, from the declining hook's frame and the effect marks: the hook lowered the node or
@@ -318,7 +329,8 @@ fn is_access(item: &ChainItem) -> bool {
 fn is_optional_call(item: &ChainItem) -> bool {
     matches!(
         item.kind,
-        ChainItemKind::PropertyCall { call_optional: true, .. } | ChainItemKind::ElementCall { call_optional: true, .. }
+        ChainItemKind::PropertyCall { call_optional: true, .. }
+            | ChainItemKind::ElementCall { call_optional: true, .. }
     )
 }
 
@@ -384,7 +396,11 @@ fn finish_kind(state: &mut TransformState<'_>, context: &mut CallContext) {
 /// its receiver and then declined); `None` to lower the chain as usual (the links offered here are not offered
 /// again).
 #[inline]
-pub fn claim_chain_lazy(state: &mut TransformState<'_>, prereqs: &mut Prereqs, chain: &[ChainItem]) -> Option<(usize, Expr)> {
+pub fn claim_chain_lazy(
+    state: &mut TransformState<'_>,
+    prereqs: &mut Prereqs,
+    chain: &[ChainItem],
+) -> Option<(usize, Expr)> {
     state.plugins?;
     claim_chain_lazy_slow(state, prereqs, chain)
 }
@@ -397,7 +413,8 @@ fn claim_chain_lazy_slow(
 ) -> Option<(usize, Expr)> {
     let host = state.plugins?;
     let lazy_end = chain.iter().position(|item| item.optional || is_optional_call(item)).unwrap_or(chain.len());
-    let start = if host.any_calls { chain.iter().position(|item| !is_access(item)).filter(|&k| k < lazy_end) } else { None };
+    let start =
+        if host.any_calls { chain.iter().position(|item| !is_access(item)).filter(|&k| k < lazy_end) } else { None };
     let any_fallback = chain[..lazy_end].iter().any(|item| host.expressions.contains_key(&item.node.kind()));
     if !any_fallback && start.is_none() {
         return None;
@@ -708,7 +725,7 @@ fn claim_expression_offer(
                 instance.expression(cx, node, tag)
             });
         match result {
-            Ok(Claim::Take(value)) => return Some(value),
+            Ok(Claim::Take(value)) => return Some(statement_form_value(&frame, value)),
             Ok(Claim::Decline) => {
                 let now = state.plugin_file.effect_mark(prereqs.statements.len());
                 if let Some(what) = decline_problem(&frame, &now, &start, 0) {
@@ -880,9 +897,10 @@ fn property_key_offer(
     let site = AccessSite { node: access, receiver, key, position };
     for (plugin, tag) in candidates {
         let start = state.plugin_file.effect_mark(0);
-        let (result, frame) = run_hook_framed(state, None, None, plugin, HookKind::PropertyKey, access, |instance, cx| {
-            instance.property_key(cx, &site, tag)
-        });
+        let (result, frame) =
+            run_hook_framed(state, None, None, plugin, HookKind::PropertyKey, access, |instance, cx| {
+                instance.property_key(cx, &site, tag)
+            });
         match result {
             // the written key lowers the access as written
             Ok(Claim::Take(new_key)) => return (new_key != key).then_some(new_key),
@@ -1063,7 +1081,9 @@ fn claim_assignment_offer(
                 instance.assignment(cx, site, tag)
             });
         match result {
-            Ok(Claim::Take(value)) => return Some(unused_value(prereqs, value, site.value_used)),
+            Ok(Claim::Take(value)) => {
+                return Some(unused_value(prereqs, statement_form_value(&frame, value), site.value_used));
+            }
             Ok(Claim::Decline) => {
                 let now = state.plugin_file.effect_mark(prereqs.statements.len());
                 if let Some(what) = decline_problem(&frame, &now, &start, 0) {
@@ -1083,7 +1103,11 @@ fn claim_assignment_offer(
 /// assignment, `++` or `--`): offered to the expression hooks of its kind, then to the assignment hook, since it
 /// does not go through the expression lowering. The claimed value is evaluated as a statement.
 #[inline]
-pub fn claim_statement_expression(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Option<Expr> {
+pub fn claim_statement_expression(
+    state: &mut TransformState<'_>,
+    prereqs: &mut Prereqs,
+    node: P<Node>,
+) -> Option<Expr> {
     state.plugins?;
     claim_expression(state, prereqs, node).or_else(|| claim_assignment(state, prereqs, node))
 }

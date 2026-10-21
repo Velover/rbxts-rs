@@ -7,14 +7,13 @@ use tsrs_core::P;
 
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
-use crate::plugins::backend::{OptionalCall, OptionalReceiver};
-use rbxts_plugin::AccessPosition;
 use crate::nodes::expressions::transform_call_expression::{
     transform_call_expression_inner, transform_element_call_expression_inner, transform_property_call_expression_inner,
 };
 use crate::nodes::expressions::transform_element_access_expression::transform_element_access_expression_inner;
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::expressions::transform_property_access_expression::transform_property_access_expression_inner;
+use crate::plugins::backend::{OptionalCall, OptionalReceiver};
 use crate::shared::diagnostics::errors;
 use crate::util::add_one_if_array_type::add_one_if_array_type;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
@@ -24,6 +23,7 @@ use crate::util::symbols::is_used_as_statement;
 use crate::util::traversal::skip_downwards;
 use crate::util::types::get_first_defined_symbol;
 use crate::util::wrap_return_if_lua_tuple::wrap_return_if_lua_tuple;
+use rbxts_plugin::AccessPosition;
 
 /// One link of a chain (`ChainItem`).
 #[derive(Clone, Copy, Debug)]

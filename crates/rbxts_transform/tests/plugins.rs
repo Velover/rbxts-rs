@@ -338,7 +338,10 @@ fn refused_primitives_are_internal_errors_naming_the_plugin() {
     // (which moves with the checker count and file order): `probeHoist` is declared in probe.d.ts
     let classify: Vec<&String> = errors.iter().filter(|e| e.contains("in classify_symbol")).collect();
     assert!(
-        classify.iter().any(|e| *e == "error probe.d.ts: rbxts-rs internal error: plugin `probe` called late_string in classify_symbol"),
+        classify
+            .iter()
+            .any(|e| *e
+                == "error probe.d.ts: rbxts-rs internal error: plugin `probe` called late_string in classify_symbol"),
         "{classify:?}"
     );
     assert!(classify.iter().all(|e| !e.starts_with("error failures.ts")), "{classify:?}");
@@ -474,7 +477,9 @@ fn seam_misuse_is_refused_naming_the_plugin() {
          \t\tdelete this.reads.opt;\n\
          \t\t(this.reads as unknown as Record<string, number>)[i] = 1;\n\
          \t}\n\
-         }\n",
+         }\n\
+         export const f = maybeRe?.re(1);\n\
+         export const g = plainRe.re(2);\n",
     );
     let report = project.build(&["stamp", "probe"], |_| {});
     let prefix = "error misuse.ts: rbxts-rs internal error: plugin `probe`";
@@ -507,12 +512,30 @@ fn seam_misuse_is_refused_naming_the_plugin() {
                 "{prefix}: this assignment's receiver matches its assignments_by_receiver_symbol interest, but its key \
                  is computed (`obj[k]`), which AssignSite cannot carry, so it is not offered"
             ),
+            // after `?.` the receiver is compiled already (`plainRe.re(2)`, offered before it is compiled, is fine)
+            format!(
+                "{prefix}: compiled the receiver or callee of its node, which is compiled already (it would be \
+                 evaluated a second time): use compile_receiver, or compile_expr of the node itself"
+            ),
         ]
     );
     assert!(!project.out_exists());
 
-    // a class hook compiling its own class expression would lower it twice
+    // an expression hook offered a call inside a chain cannot compile the call's base again
     std::fs::remove_file(project.root.join("src/shared/misuse.ts")).unwrap();
+    project.write("src/shared/eager.ts", "export const h = maybeRe?.probeExprBase(1).value;\n");
+    let report = project.build(&["stamp", "probe", "probe-exprcall"], |_| {});
+    assert_eq!(
+        errors(&report),
+        vec![
+            "error eager.ts: rbxts-rs internal error: plugin `probe-exprcall`: compiled the receiver or callee of its \
+             node, which is compiled already (it would be evaluated a second time): use compile_receiver, or \
+             compile_expr of the node itself"
+        ]
+    );
+    std::fs::remove_file(project.root.join("src/shared/eager.ts")).unwrap();
+
+    // a class hook compiling its own class expression would lower it twice
     project.write("src/shared/classself.ts", "export const K = class Named {};\n");
     let report = project.build(&["stamp", "probe-classself"], |_| {});
     // (without the probe's statement hook, `debugger` in fallbacks.ts is roblox-ts's error)

@@ -107,6 +107,9 @@ pub struct HookFrame {
     pub touched: bool,
     /// The hook compiled its own node: a second time is an internal error (it would be lowered twice).
     pub self_compiled: bool,
+    /// The hook's own node was lowered as a statement (an assignment or update whose value is unused), and the hook
+    /// got `nil` for its value.
+    pub statement_form: bool,
 }
 
 /// The per-file plugin state.

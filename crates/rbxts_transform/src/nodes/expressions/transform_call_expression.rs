@@ -7,12 +7,11 @@ use tsrs_core::P;
 
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
-use crate::plugins::backend::{keyed_access, property_key_of};
-use rbxts_plugin::{AccessPosition, text_literal};
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::expressions::transform_import_expression::transform_import_expression;
 use crate::nodes::transform_macro_call::{MacroKind, transform_macro_call};
 use crate::nodes::transform_optional_chain::transform_optional_chain;
+use crate::plugins::backend::{keyed_access, property_key_of};
 use crate::util::add_one_if_array_type::add_one_if_array_type;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
 use crate::util::ensure_transform_order::ensure_transform_order;
@@ -24,6 +23,7 @@ use crate::util::is_method::{is_method, is_method_from_type};
 use crate::util::types::{get_first_defined_symbol, is_possibly_type, is_possibly_undefined, is_roblox_type};
 use crate::util::validate_not_any::validate_not_any_type;
 use crate::util::wrap_return_if_lua_tuple::wrap_return_if_lua_tuple;
+use rbxts_plugin::{AccessPosition, text_literal};
 
 /// Some C functions like `tonumber()` error when an argument is a call that returns nothing. Possibly-undefined call
 /// arguments of Roblox functions are wrapped in `()` to coerce the values to `nil`.

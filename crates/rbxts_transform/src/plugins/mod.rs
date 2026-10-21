@@ -39,11 +39,13 @@
 //! was offered lowers it as roblox-ts does there (its macros included), without offering it to that kind again: a
 //! call on the receiver or callee already compiled (so nothing is evaluated twice); an expression-hook node offered
 //! after its chain base was compiled, on that base; an assignment, `++` / `--` or logical assignment that roblox-ts
-//! lowers as a statement (its value unused), as that statement, with no value (`Expr::None`). Other kinds still see
-//! the node: an expression hook compiling its own call lets the call plugins claim it. The compiler refuses, as
-//! internal errors naming the plugin: a second self-compile, `compile_call` twice or after a self-compile, a class
-//! hook compiling its own class, a statement hook compiling its own statement, any hook compiling an ancestor of its
-//! own node, and an assignment hook compiling a `delete` operand (roblox-ts lowers it as the deletion).
+//! lowers as a statement (its value unused), as that statement, with `nil` for its value (returned as it is, it adds
+//! nothing). Other kinds still see the node: an expression hook compiling its own call lets the call plugins claim
+//! it. The compiler refuses, as internal errors naming the plugin: a second self-compile, `compile_call` twice or
+//! after a self-compile, a class hook compiling its own class, a statement hook compiling its own statement, any hook
+//! compiling an ancestor of its own node or a node whose value its offer compiled already (a call's receiver once
+//! compiled, a chain link's base), and an assignment hook compiling a `delete` operand (roblox-ts lowers it as the
+//! deletion).
 //!
 //! **Asked once.** A node every hook of a kind declined is not offered to that kind again, however often it is
 //! lowered (a call hook compiling its own call does not re-ask the expression hooks); `property_key` answers are

@@ -33,7 +33,8 @@
 //! - `binary`: `compile_binary(PlusToken, a, b)`; `locals`: the `locals()` counts as a string; `spill`:
 //!   `hoist_spillable(compile_expr(a))`;
 //! - `calltwice` / `exprthencall` / `ancestor` / `binbad`: `compile_call` twice, `compile_expr` then `compile_call`,
-//!   `compile_expr` of the call's parent, `compile_binary` with `+=` (each an internal error);
+//!   `compile_expr` of the call's parent, `compile_binary` with `+=` (each an internal error); `recvexpr`:
+//!   `compile_expr(call.receiver)`, an internal error where the receiver is compiled already;
 //! - `facts`: a string of source facts: the call's UTF-16 line and character, its width, the callee's declaring
 //!   package, where `./runtime` resolves, the `{@link}` in the tag and what it resolves to, the file's checker
 //!   diagnostics;
@@ -154,6 +155,7 @@ const OPS: &[&str] = &[
     "exprthencall",
     "ancestor",
     "binbad",
+    "recvexpr",
 ];
 const RECEIVER: Tag = Tag(100);
 const CALLEE: Tag = Tag(101);
@@ -482,7 +484,8 @@ impl ProbeInstance {
             }
             "exprthencall" => {
                 cx.compile_expr(call.node)?;
-                let value = cx.compile_call(call, Callee::Original, call.args.iter().map(|&a| Arg::Original(a)).collect())?;
+                let value =
+                    cx.compile_call(call, Callee::Original, call.args.iter().map(|&a| Arg::Original(a)).collect())?;
                 self.claimed(value)
             }
             "ancestor" => {
@@ -495,6 +498,16 @@ impl ProbeInstance {
                     Kind::PlusEqualsToken,
                     arg(0).expect("an argument"),
                     arg(1).expect("two arguments"),
+                )?;
+                self.claimed(value)
+            }
+            "recvexpr" => {
+                // the receiver node itself: compiled already for a call after `?.` (an internal error)
+                let receiver = cx.compile_expr(call.receiver.expect("a receiver"))?;
+                let value = cx.compile_call(
+                    call,
+                    Callee::Method { object: receiver, name: "re".to_owned() },
+                    call.args.iter().map(|&a| Arg::Original(a)).collect(),
                 )?;
                 self.claimed(value)
             }
@@ -612,12 +625,22 @@ impl PluginInstance for ProbeInstance {
     fn expression(&self, cx: &mut Cx<'_>, node: P<Node>, tag: Tag) -> PResult<Claim<LuauExpr>> {
         if tag == EXPRBIN {
             // assignments to `probeTarget`, lowered by the hook itself: as a statement where roblox-ts lowers them as
-            // one (no value), else wrapped
+            // one (the value is `nil`), else wrapped
             if !cx.source_text(node).starts_with("probeTarget") {
                 return Ok(Claim::Decline);
             }
             let value = cx.compile_expr(node)?;
-            return Ok(Claim::Take(if value.is_none() { value } else { create::call(create::id("exprWrap"), vec![value]) }));
+            let statement = matches!(value, LuauExpr::Nil);
+            return Ok(Claim::Take(if statement { value } else { create::call(create::id("exprWrap"), vec![value]) }));
+        }
+        if tag == EXPRCALL
+            && let Some(callee) = node.expression()
+            && cx.source_text(callee).ends_with(".probeExprBase")
+            && let Some(base) = callee.expression()
+        {
+            // the base of a call offered inside a chain is compiled already (an internal error)
+            let value = cx.compile_expr(base)?;
+            return self.claimed(value);
         }
         if tag == EXPRCALL
             && let Some(callee) = node.expression()

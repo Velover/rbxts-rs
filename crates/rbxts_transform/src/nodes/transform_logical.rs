@@ -60,7 +60,11 @@ fn flatten_by_operator(mut node: P<Node>, operator_kind: Kind) -> Vec<P<Node>> {
 
 /// `getLogicalChain`: each operand transformed with its own prerequisites (the operands as
 /// `flattenByOperator` gives them).
-fn get_logical_chain(state: &mut TransformState<'_>, nodes: Vec<P<Node>>, enable_inlining: bool) -> Vec<LogicalChainItem> {
+fn get_logical_chain(
+    state: &mut TransformState<'_>,
+    nodes: Vec<P<Node>>,
+    enable_inlining: bool,
+) -> Vec<LogicalChainItem> {
     let count = nodes.len();
     nodes
         .into_iter()
@@ -168,10 +172,18 @@ pub fn transform_logical_operands(
         Kind::AmpersandAmpersandToken => {
             build_inline_condition_expression(state, prereqs, operands, BinaryOperator::And, Condition::And)
         }
-        Kind::BarBarToken => build_inline_condition_expression(state, prereqs, operands, BinaryOperator::Or, Condition::Or),
+        Kind::BarBarToken => {
+            build_inline_condition_expression(state, prereqs, operands, BinaryOperator::Or, Condition::Or)
+        }
         Kind::QuestionQuestionToken => {
             if !coalesce_possibly_false {
-                return build_inline_condition_expression(state, prereqs, operands, BinaryOperator::Or, Condition::Coalesce);
+                return build_inline_condition_expression(
+                    state,
+                    prereqs,
+                    operands,
+                    BinaryOperator::Or,
+                    Condition::Coalesce,
+                );
             }
             let mut chain = get_logical_chain(state, operands, false);
             let condition_id = temp_id_expr("condition");

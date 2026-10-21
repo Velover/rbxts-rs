@@ -6,10 +6,9 @@ use tsrs_core::P;
 
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
-use crate::plugins::backend::keyed_access;
-use rbxts_plugin::AccessPosition;
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::transform_optional_chain::transform_optional_chain;
+use crate::plugins::backend::keyed_access;
 use crate::shared::diagnostics::errors;
 use crate::util::add_index_diagnostics::add_index_diagnostics;
 use crate::util::add_one_if_array_type::add_one_if_array_type;
@@ -26,6 +25,7 @@ use crate::util::offset::offset;
 use crate::util::traversal::skip_upwards;
 use crate::util::types::{is_definitely_type, is_lua_tuple_type, is_mixed_string_type, is_string_type};
 use crate::util::validate_not_any::validate_not_any_type;
+use rbxts_plugin::AccessPosition;
 
 /// `transformElementAccessExpressionInner`: `expression[argument]` once the receiver is transformed.
 pub fn transform_element_access_expression_inner(

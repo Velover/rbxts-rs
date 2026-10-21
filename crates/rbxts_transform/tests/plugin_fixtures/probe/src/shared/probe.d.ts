@@ -250,3 +250,11 @@ interface ExprChain {
 declare const maybeExprs: ExprChain | undefined;
 /** Assignments the expression hook (probe-exprcall) lowers itself. */
 declare const probeTarget: { x: number };
+/** Misuse (tests only): `compile_expr` of the call's receiver, compiled already for a call after `?.`. */
+interface ReceiverExpr {
+	/** @probe recvexpr */
+	re(a: number): number;
+	probeExprBase(a: number): { value: number };
+}
+declare const maybeRe: ReceiverExpr | undefined;
+declare const plainRe: ReceiverExpr;

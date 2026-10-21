@@ -7,8 +7,8 @@ use rustc_hash::FxHashMap;
 
 use rbxts_luau::{AnyIdentifier, ElseBody, Expr, IfStatement, InterpolatedStringPart, Stmt, TableField, create};
 use rbxts_plugin::PluginDiagnostic;
-use tsrs_core::P;
 use tsrs_ast::Node;
+use tsrs_core::P;
 
 use super::backend::to_diagnostic;
 use super::file_state::declared_locals;

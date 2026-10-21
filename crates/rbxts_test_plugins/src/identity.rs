@@ -19,8 +19,8 @@ use std::sync::Arc;
 
 use rbxts_plugin::ts::{Kind, Node, P, Symbol};
 use rbxts_plugin::{
-    AccessSite, Arg, AssignSite, CallKind, CallSite, Callee, CheckerInfo, Claim, Cx, Fatal, FileIndex, FinishCx, Interest,
-    LuauExpr, ObjectEdits, PResult, Plugin, PluginInfo, PluginInstance, SetupCx, SymbolRole, Tag,
+    AccessSite, Arg, AssignSite, CallKind, CallSite, Callee, CheckerInfo, Claim, Cx, Fatal, FileIndex, FinishCx,
+    Interest, LuauExpr, ObjectEdits, PResult, Plugin, PluginInfo, PluginInstance, SetupCx, SymbolRole, Tag,
 };
 
 /// How `identity` lowers what it claims.
@@ -127,7 +127,13 @@ impl Plugin for Identity {
         IdentityInstance(shared)
     }
 
-    fn finish(&self, _: &IdentityShared, _: &mut (), _: &[(FileIndex, &())], _: &mut FinishCx<'_>) -> Result<(), Fatal> {
+    fn finish(
+        &self,
+        _: &IdentityShared,
+        _: &mut (),
+        _: &[(FileIndex, &())],
+        _: &mut FinishCx<'_>,
+    ) -> Result<(), Fatal> {
         Ok(())
     }
 }
@@ -203,11 +209,7 @@ impl PluginInstance for IdentityInstance {
                 let op = binary.operator_token.kind();
                 let plain = !tsrs_ast::is_assignment_operator(op)
                     && !matches!(op, Kind::EqualsEqualsToken | Kind::ExclamationEqualsToken);
-                if plain {
-                    cx.compile_binary(op, binary.left, binary.right())?
-                } else {
-                    cx.compile_expr(node)?
-                }
+                if plain { cx.compile_binary(op, binary.left, binary.right())? } else { cx.compile_expr(node)? }
             }
             Kind::ObjectLiteralExpression => cx.compile_object_literal(node, ObjectEdits::default())?,
             _ => cx.compile_expr(node)?,

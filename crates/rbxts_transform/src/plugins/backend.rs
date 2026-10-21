@@ -7,7 +7,7 @@ use std::sync::Arc;
 use rbxts_luau::{Effects, Expr, Stmt, create};
 use rbxts_plugin::erased::DynInstance;
 use rbxts_plugin::{
-    AccessPosition, Aborted, Arg, BinOp, CallKind, CallSite, Callee, Cx, CxBackend, FileInfo, JsDocTag, LocalCounts,
+    Aborted, AccessPosition, Arg, BinOp, CallKind, CallSite, Callee, Cx, CxBackend, FileInfo, JsDocTag, LocalCounts,
     LuauIdent, ObjectEdits, PResult, PluginDiagnostic, Utf16Pos, text_literal,
 };
 use rbxts_project::{PackageInfo, ProjectServices, ResolvedModuleInfo};
@@ -307,11 +307,22 @@ impl HookBackend<'_, '_> {
     /// hook's goes through `compile_claimed_call`, which notes it), a second time is an internal error (it would be
     /// lowered twice), and a statement cannot be compiled as an expression.
     fn check_self_compile(&mut self, nodes: &[P<Node>]) -> Result<(), Aborted> {
+        let compiled_base = self.compiled_base();
         for &node in nodes {
             // everything else inside an ancestor would be offered and lowered a second time
             if node != self.anchor && is_ancestor(node, self.anchor) {
                 return Err(self.misuse(
                     "compiled an ancestor of its own node (everything else inside it would be lowered a second time)",
+                ));
+            }
+            // the base the chain lowering (or compile_receiver) compiled already would be evaluated a second time
+            if node != self.anchor
+                && let Some(base) = compiled_base
+                && (node == base || is_ancestor(base, node) || is_ancestor(node, base))
+            {
+                return Err(self.misuse(
+                    "compiled the receiver or callee of its node, which is compiled already (it would be evaluated a \
+                     second time): use compile_receiver, or compile_expr of the node itself",
                 ));
             }
             // roblox-ts lowers the operand of `delete` as the deletion itself, not as a read
@@ -350,6 +361,32 @@ impl HookBackend<'_, '_> {
             return Err(self.misuse("compiled its own node a second time (it would be lowered twice)"));
         }
         Ok(())
+    }
+
+    /// The node of the hook's offer whose value is compiled already, so compiling it (or a node inside or around it)
+    /// again would evaluate it twice: a call's receiver or callee once the chain lowering or `compile_receiver`
+    /// compiled it, an optional call's receiver, and the base of a chain link offered to an expression hook after
+    /// its base was compiled.
+    fn compiled_base(&self) -> Option<P<Node>> {
+        if let Some(context) = self.call.as_deref() {
+            if context.optional.is_some() {
+                return receiver_node(context.shape);
+            }
+            context.base.as_ref()?;
+            return match context.shape {
+                CallShape::Property { .. } | CallShape::Element { .. } => receiver_node(context.shape),
+                CallShape::Call | CallShape::New | CallShape::Decorator { .. } => Some(context.site.callee),
+                CallShape::Super => None,
+            };
+        }
+        if self.hook != HookKind::Expression {
+            return None;
+        }
+        let (_, lowering) = self.state.plugin_file.eager_offers.iter().rev().find(|(n, _)| *n == self.anchor)?;
+        let item = match lowering {
+            EagerLowering::Item { item, .. } | EagerLowering::OptionalCall { item, .. } => item,
+        };
+        chain_base_node(item)
     }
 
     /// A temporary identifier no user local of the file can capture ([`PluginFileState::seam_hint`]).
@@ -518,7 +555,9 @@ impl CxBackend for HookBackend<'_, '_> {
             return Err(self.misuse("compile_call ran a second time on its call (it would be lowered twice)"));
         }
         if frame.self_compiled {
-            return Err(self.misuse("compile_call after the call was lowered with compile_expr (it would be lowered twice)"));
+            return Err(
+                self.misuse("compile_call after the call was lowered with compile_expr (it would be lowered twice)")
+            );
         }
         self.lower_unchecked(|state, prereqs, context| {
             let context = context.expect("checked above");
@@ -679,8 +718,14 @@ impl CxBackend for HookBackend<'_, '_> {
     fn locals(&self) -> LocalCounts {
         let main_chunk = self.state.plugin_file.main_chunk_locals;
         // the innermost function's body: the locals its statements declared at its top level so far
-        let function = match crate::util::traversal::get_ancestor(self.anchor, tsrs_ast::is_function_like) {
-            Some(function) => function.body().and_then(|body| self.state.plugin_file.function_locals.get(&body).copied()).unwrap_or(0),
+        let function = match self
+            .anchor
+            .parent()
+            .and_then(|p| crate::util::traversal::get_ancestor(p, tsrs_ast::is_function_like))
+        {
+            Some(function) => {
+                function.body().and_then(|body| self.state.plugin_file.function_locals.get(&body).copied()).unwrap_or(0)
+            }
             None => main_chunk,
         };
         LocalCounts { function, main_chunk }
@@ -840,10 +885,11 @@ fn compile_node(
 
 /// An expression or assignment hook's own node, lowered as roblox-ts lowers it there: on its compiled base when it
 /// was offered after the base (a link inside an optional chain); as a statement when roblox-ts lowers it as one
-/// (an assignment, `++` / `--` or logical assignment whose value is unused), with no value (`Expr::None`);
+/// (an assignment, `++` / `--` or logical assignment whose value is unused), with no value (`nil`);
 /// else as an expression.
 fn lower_own_node(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Expr {
-    if let Some(lowering) = state.plugin_file.eager_offers.iter().rev().find(|(n, _)| *n == node).map(|(_, l)| l.clone())
+    if let Some(lowering) =
+        state.plugin_file.eager_offers.iter().rev().find(|(n, _)| *n == node).map(|(_, l)| l.clone())
     {
         return match lowering {
             EagerLowering::Item { base, item } => transform_chain_item(state, prereqs, base, &item),
@@ -853,9 +899,13 @@ fn lower_own_node(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P
         };
     }
     if is_statement_form(node) {
+        // no value: `nil`, which the claim point drops when the hook returns it as it is
         let statements = transform_expression_statement_inner(state, node);
         prereqs.push_list(statements);
-        return Expr::None;
+        if let Some(frame) = state.plugin_file.frames.last_mut() {
+            frame.statement_form = true;
+        }
+        return Expr::Nil;
     }
     transform_expression(state, prereqs, node)
 }
@@ -917,8 +967,10 @@ fn compile_claimed_call(
     if let Some(optional) = &context.optional {
         // inside the chain's nil check on the callee: roblox-ts's optional call lowering
         let item = context.item.expect("an optional call is a chain link");
-        return Ok(crate::nodes::transform_optional_chain::transform_optional_call_value(state, prereqs, &item, optional)
-            .unwrap_or(Expr::None));
+        return Ok(crate::nodes::transform_optional_chain::transform_optional_call_value(
+            state, prereqs, &item, optional,
+        )
+        .unwrap_or(Expr::None));
     }
     if let CallShape::Decorator { call } = context.shape {
         // the decorator's expression, its call (offered as this decorator) not asked about again
@@ -1259,5 +1311,19 @@ pub(crate) fn property_key_of(key: &str) -> PropertyKey {
         PropertyKey::Name(key.to_owned())
     } else {
         PropertyKey::Index(text_literal(key))
+    }
+}
+
+/// The node a chain link's base was compiled from: the expression it accesses or calls.
+fn chain_base_node(item: &ChainItem) -> Option<P<Node>> {
+    use crate::nodes::transform_optional_chain::ChainItemKind;
+    match item.kind {
+        ChainItemKind::PropertyAccess { .. } | ChainItemKind::ElementAccess { .. } | ChainItemKind::Call => {
+            item.node.expression()
+        }
+        ChainItemKind::PropertyCall { expression: access, .. } => {
+            Some(access.as_property_access_expression().expression)
+        }
+        ChainItemKind::ElementCall { expression: access, .. } => Some(access.as_element_access_expression().expression),
     }
 }

@@ -53,8 +53,7 @@ pub fn transform_expression_statement_inner(state: &mut TransformState<'_>, expr
     // rbxts-rs: the forms lowered as statements here skip `transform_expression`, so plugins are asked here
     if state.plugins.is_some()
         && is_statement_lowered(expression)
-        && let Some(claimed) =
-            crate::plugins::dispatch::claim_statement_expression(state, &mut prereqs, expression)
+        && let Some(claimed) = crate::plugins::dispatch::claim_statement_expression(state, &mut prereqs, expression)
     {
         let mut statements = prereqs.statements;
         statements.extend(wrap_expression_statement(claimed));
