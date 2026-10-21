@@ -8,15 +8,16 @@ edition = "2024"
 rust-version = "1.99"
 publish = false
 
-# tsrs, pinned: a worktree of the tsrs clone on branch `rbxts-fork` (v0.18.0 plus visibility flips).
+# tsrs, pinned: a worktree of the tsrs clone on branch `rbxts-fork` (v0.18.0 plus visibility flips). Absolute paths,
+# so that worktrees of this repo (under E:/Projects/TS/Flamework/worktrees) resolve them too.
 # Cargo.lock started as a copy of tsrs's lock file so the transitive versions match what tsrs tests with.
 [workspace.dependencies]
-tsrs_core = { path = "../worktrees/tsrs-rbxts-fork/crates/tsrs_core" }
-tsrs_ast = { path = "../worktrees/tsrs-rbxts-fork/crates/tsrs_ast" }
-tsrs_vfs = { path = "../worktrees/tsrs-rbxts-fork/crates/tsrs_vfs" }
-tsrs_tsoptions = { path = "../worktrees/tsrs-rbxts-fork/crates/tsrs_tsoptions" }
-tsrs_compiler = { path = "../worktrees/tsrs-rbxts-fork/crates/tsrs_compiler" }
-tsrs_diagnostics = { path = "../worktrees/tsrs-rbxts-fork/crates/tsrs_diagnostics" }
+tsrs_core = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_core" }
+tsrs_ast = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_ast" }
+tsrs_vfs = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_vfs" }
+tsrs_tsoptions = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_tsoptions" }
+tsrs_compiler = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_compiler" }
+tsrs_diagnostics = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_diagnostics" }
 mimalloc-safe = { version = "0.1.67", features = ["v3", "no_thp"] }
 rbxts_project = { path = "crates/rbxts_project" }
 
