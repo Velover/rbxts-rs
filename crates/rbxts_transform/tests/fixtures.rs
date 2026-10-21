@@ -9,6 +9,8 @@
 //! - `literals`: object and array literals, methods in object literals, spread in objects, arrays and calls, every
 //!   iterable kind an array spread accepts. TypeScript 5 lists exported functions first and TypeScript 7 in source
 //!   order, so the fixture declares its exported functions first.
+//! - `macros`: every call, identifier, constructor and property-call macro, as values and statements, on optional
+//!   chains and with evaluation-order cases.
 
 #![cfg(windows)]
 
@@ -137,4 +139,9 @@ fn check(area: &'static str) {
 #[test]
 fn literals() {
     check("literals");
+}
+
+#[test]
+fn macros() {
+    check("macros");
 }

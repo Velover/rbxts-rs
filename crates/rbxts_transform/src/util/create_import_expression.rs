@@ -53,9 +53,13 @@ pub fn get_source_file_from_module_specifier(
             .multi_transform_state
             .module_resolver
             .get_or_insert_with(|| rbxts_project::ModuleResolver::new(program.options(), program.get_current_directory()));
-        // rbxts-rs: `ts.resolveModuleName` is called without a resolution mode; the file's default mode stands in
-        let mode = program.get_default_resolution_mode_for_file(source_file);
-        if let Some(resolved) = resolver.resolve(module_specifier.text(), source_file.get().file_name(), mode) {
+        // `ts.resolveModuleName` is called without a resolution mode; with no mode tsrs picks the same conditions
+        // (e.g. "import" under bundler) as TypeScript
+        if let Some(resolved) = resolver.resolve(
+            module_specifier.text(),
+            source_file.get().file_name(),
+            tsrs_core::RESOLUTION_MODE_NONE,
+        ) {
             return program.get_source_file(&resolved.file_name);
         }
     }
