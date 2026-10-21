@@ -14,6 +14,8 @@
 //!   `super` calls), methods with unusual names, static members and blocks, `this` in static members, hoisting,
 //!   default exports, and every kind of decorator. TypeScript 5 lists exported functions first and TypeScript 7 in
 //!   source order, so the fixture declares its exported functions first.
+//! - `contextual_this`: function expressions and object literal methods in slots whose signature has a `this`
+//!   parameter (TypeScript 5 gives them its contextual `this`), next to arrows, `this` users and `this: void` slots.
 //! - `jsx`: JSX elements, attributes (string, boolean, namespaced, with prerequisites), spread props (first, later,
 //!   possibly undefined, conditional), fragments, keyed, conditional, mapped and spread children, JSX text whitespace
 //!   and entities, `@jsx` / `@jsxFrag` pragmas, and the JSX factory import kept alive when only JSX uses it.
@@ -158,6 +160,11 @@ fn binding() {
 #[test]
 fn classes() {
     check("classes");
+}
+
+#[test]
+fn contextual_this() {
+    check("contextual_this");
 }
 
 #[test]
