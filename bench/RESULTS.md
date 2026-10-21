@@ -59,3 +59,22 @@ Findings:
 - Memory: ~135 MiB peak for load + check vs ~1.0 GiB for TS5's tsc and ~1.5 GiB for the stock pipeline.
 - The tsrs CLI's own `--extendedDiagnostics` "Check time" (1.1 s for 1 checker) undercounts its 3.0 s wall time;
   use wall time.
+
+## M1 (part): Luau render parity (`rbxts-bench luau-parity`)
+
+`rbxts_luau` renders the trees roblox-ts master (TS 5.9) builds, dumped by `tools/dump-luau-ast.cjs` at
+`renderAST`, and the text is compared with roblox-ts's byte for byte. Render time is `rbxts_luau::render` over every
+file (temporary-identifier solving included, JSON loading excluded), best of 20, profile `measure`. roblox-ts's
+`renderAST` time is summed inside the same TS5 build that made the dump.
+
+| date | corpus | files | identical | Luau | roblox-ts `renderAST` | `rbxts_luau`, 1 thread | 12 threads | load |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-21 | the real project | 605 | 605 | 3.4 MiB | 421-472 ms | 23.5-25.1 ms | 5.6-5.7 ms | busy (CPU ~70%) |
+| 2026-10-21 | roblox-ts tests (`tsconfig.bench.json`, without `src/diagnostics`) | 75 | 75 | 0.5 MiB | 103-138 ms | 5.1 ms | 1.6-1.9 ms | busy |
+| 2026-10-21 | hand-written edge cases (`tools/luau-edge-cases.cjs`, committed fixture) | 12 | 12 | - | - | - | - | - |
+
+The dump script also checks the TypeScript trees for what a parent-free renderer could get wrong: nodes whose
+`parent` is missing or stale (13,133 / 6,316 of 377,527 nodes in the real project, mostly map fields and reused
+identifiers), nodes shared between two places (60), and whether any parent-dependent decision (parentheses,
+temporary-identifier scope edges, long-bracket spacing) would differ under the structural parent. None does, in
+either corpus.

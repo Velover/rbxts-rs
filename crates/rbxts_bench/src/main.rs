@@ -1,7 +1,13 @@
-//! Measurement harness. `rbxts-bench load` (milestone 0): load a project through tsrs in-process, type-check its
-//! files, and report wall time per phase and peak memory.
+//! Measurement harness.
+//! - `rbxts-bench load` (milestone 0): load a project through tsrs in-process, type-check its files, and report wall
+//!   time per phase and peak memory.
+//! - `rbxts-bench luau-parity`: render Luau trees dumped from roblox-ts (`tools/dump-luau-ast.cjs`) with
+//!   `rbxts_luau` and compare the text byte for byte.
 //!
 //! rbxts-bench load [-p tsconfig.json] [--checkers N] [--lazy-dts] [--check project|all|none] [--json]
+//! rbxts-bench luau-parity <dump.jsonl>... [--show N] [--repeat N]
+
+mod luau_parity;
 
 #[global_allocator]
 static GLOBAL: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
@@ -30,7 +36,7 @@ struct Args {
     json: bool,
 }
 
-const USAGE: &str = "usage: rbxts-bench load [-p tsconfig.json] [--checkers N] [--check project|all|none] [--lazy-dts] [--json]";
+const USAGE: &str = "usage: rbxts-bench load [-p tsconfig.json] [--checkers N] [--check project|all|none] [--lazy-dts] [--json]\n       rbxts-bench luau-parity <dump.jsonl>... [--show N] [--repeat N]";
 
 fn parse_args() -> Result<Args, String> {
     let mut args = std::env::args().skip(1);
@@ -219,6 +225,17 @@ fn run(args: &Args) -> i32 {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("luau-parity") {
+        // Deep trees recurse deeply, as checking does.
+        let status = std::thread::Builder::new()
+            .name("luau-parity".into())
+            .stack_size(STACK_SIZE)
+            .spawn(|| luau_parity::run(std::env::args().skip(2)))
+            .expect("spawn the parity thread")
+            .join()
+            .unwrap_or(101);
+        std::process::exit(status);
+    }
     let args = match parse_args() {
         Ok(a) => a,
         Err(e) => {

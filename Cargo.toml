@@ -20,6 +20,7 @@ tsrs_compiler = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/cra
 tsrs_diagnostics = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_diagnostics" }
 mimalloc-safe = { version = "0.1.67", features = ["v3", "no_thp"] }
 rbxts_project = { path = "crates/rbxts_project" }
+rbxts_luau = { path = "crates/rbxts_luau" }
 
 # A debug checker is unusably slow, so even dev builds are optimised (as in tsrs).
 [profile.dev]
