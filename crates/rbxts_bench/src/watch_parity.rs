@@ -6,9 +6,9 @@
 use std::path::PathBuf;
 
 use rbxts_project::ProjectOptionLayer;
-use rbxts_transform::build::parity::{ParityOptions, parse_script, run};
+use rbxts_transform::build::parity::{NodeModules, ParityOptions, parse_script, run};
 
-pub const USAGE: &str = "usage: rbxts-bench watch-parity --source DIR [-p tsconfig.json] --script FILE --scratch DIR\n                         [--copy NAME,NAME…] [--optimizedLoops] [--allowCommentDirectives] [--plugin NAME]...\n                         [--keep-clean] [--report FILE] [--ignore-unknown-plugins] [--node-modules DIR]\n                         [--incremental] [--copy-node-modules] [--no-clean]\n  --source: the project to copy (never written); --copy: the entries copied into the watched copy (default\n  src,include,tsconfig.json,default.project.json,package.json; node_modules is linked); --scratch: where the\n  copies go (emptied first); --keep-clean: keep each step's clean copy; --no-clean: no clean\n  builds (timings and memory only); --incremental: each step is a new\n  incremental build (\"incremental\": true is added to the copy's tsconfig) instead of a watch rebuild.";
+pub const USAGE: &str = "usage: rbxts-bench watch-parity --source DIR [-p tsconfig.json] --script FILE --scratch DIR\n                         [--copy NAME,NAME…] [--optimizedLoops] [--allowCommentDirectives] [--plugin NAME]...\n                         [--keep-clean] [--report FILE] [--ignore-unknown-plugins] [--node-modules DIR]\n                         [--incremental] [--copy-node-modules | --link-packages] [--no-clean]\n  --source: the project to copy (never written); --copy: the entries copied into the watched copy (default\n  src,include,tsconfig.json,default.project.json,package.json; node_modules is linked); --scratch: where the\n  copies go (emptied first); --keep-clean: keep each step's clean copy; --no-clean: no clean\n  builds (timings and memory only); --incremental: each step is a new\n  incremental build (\"incremental\": true is added to the copy's tsconfig) instead of a watch rebuild.";
 
 pub fn main(args: Vec<String>) -> i32 {
     let mut source = None;
@@ -23,7 +23,7 @@ pub fn main(args: Vec<String>) -> i32 {
     let mut ignore_unknown_plugins = false;
     let mut node_modules = None;
     let mut incremental = false;
-    let mut copy_node_modules = false;
+    let mut node_modules_mode = NodeModules::Link;
     let mut no_clean = false;
     let mut report = None;
     let mut args = args.into_iter();
@@ -43,7 +43,8 @@ pub fn main(args: Vec<String>) -> i32 {
                 "--ignore-unknown-plugins" => ignore_unknown_plugins = true,
                 "--node-modules" => node_modules = Some(PathBuf::from(value()?)),
                 "--incremental" => incremental = true,
-                "--copy-node-modules" => copy_node_modules = true,
+                "--copy-node-modules" => node_modules_mode = NodeModules::Copy,
+                "--link-packages" => node_modules_mode = NodeModules::LinkPackages,
                 "--no-clean" => no_clean = true,
                 "--report" => report = Some(value()?),
                 _ => return Err(format!("unknown argument {arg}\n{USAGE}")),
@@ -92,7 +93,7 @@ pub fn main(args: Vec<String>) -> i32 {
         plugins: &plugins,
         ignore_unknown_plugins,
         node_modules,
-        copy_node_modules,
+        node_modules_mode,
         incremental,
         keep_clean_copies: keep,
         check_clean: !no_clean,
@@ -110,7 +111,7 @@ pub fn main(args: Vec<String>) -> i32 {
     for (index, result) in results.iter().enumerate() {
         let verdict = if result.problems.is_empty() { "PASS" } else { "FAIL" };
         out.push_str(&format!(
-            "{verdict} {index:>2} {:<44} {:<5} {:<13} transformed {:>4}{} watch {:>8.1} ms  clean {:>8.1} ms{}\n",
+            "{verdict} {index:>2} {:<44} {:<5} {:<13} transformed {:>4}{} watch {:>8.1} ms  clean {:>8.1} ms  parsed {}\n",
             result.name,
             match result.kind {
                 Some(rbxts_plugin::BuildKind::Clean) => "clean".to_owned(),
@@ -123,7 +124,7 @@ pub fn main(args: Vec<String>) -> i32 {
             if result.all { " (all)" } else { "" },
             result.watch_ms,
             result.clean_ms,
-            if result.reused_program { "  (program reused)" } else { "" },
+            result.parsed,
         ));
         let t = &result.timings;
         let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;

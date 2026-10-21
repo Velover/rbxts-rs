@@ -75,6 +75,10 @@
 		{
 			"name": "a Rojo edit",
 			"do": [{ "patch": { "file": "default.project.json", "find": "\"ServerScriptService\": {", "replace": "\"Extra\": { \"$className\": \"Folder\" },\n\t\t\"ServerScriptService\": {" } }]
+		},
+		{
+			"name": "a case-only rename",
+			"do": [{ "rename": { "from": "src/tests/chain/d.ts", "to": "src/tests/chain/D.ts" } }]
 		}
 	]
 }

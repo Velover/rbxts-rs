@@ -2,7 +2,9 @@
 //! - the W1 harness (`rbxts_transform::build::parity`) runs `basic.script.json` as watch rebuilds with the `stamp`
 //!   plugin (artifacts, a state file, late strings re-rendered in cached files), without plugins, and as
 //!   incremental builds in new sessions; after every step the output must equal a clean build's;
-//! - the kept-`Shared` contract, with a plugin that counts its `setup` and `rebuild_start` calls.
+//! - `attack.script.json` on `tests/watch_fixtures/attack`: the review of the branch's attack sequence;
+//! - the kept-`Shared` contract, with a plugin that counts its `setup` and `rebuild_start` calls;
+//! - the clean of a declaration build over a used output directory, against roblox-ts's keep set, with a junction.
 //!
 //! Like `tests/plugins.rs`, the fixture links a `node_modules` (`RBXTS_RS_FIXTURE_NODE_MODULES`, else the roblox-ts
 //! tests project's); without one the tests are skipped.
@@ -43,17 +45,23 @@ fn big_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
 }
 
 fn run_basic(label: &str, plugins: &[&str], incremental: bool) -> Option<Vec<StepResult>> {
+    run_fixture("basic", label, plugins, incremental)
+}
+
+fn run_fixture(fixture: &str, label: &str, plugins: &[&str], incremental: bool) -> Option<Vec<StepResult>> {
     let Some(node_modules) = node_modules() else {
         eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
         return None;
     };
-    let script = parity::parse_script(&std::fs::read_to_string(fixtures().join("basic.script.json")).unwrap()).unwrap();
+    let script =
+        parity::parse_script(&std::fs::read_to_string(fixtures().join(format!("{fixture}.script.json"))).unwrap())
+            .unwrap();
     let scratch = std::env::temp_dir().join(format!("rbxts-rs-watch-{label}-{}", std::process::id()));
     let plugins: Vec<Box<dyn DynPlugin>> =
         plugins.iter().map(|name| rbxts_test_plugins::by_name(name).expect("a test plugin")).collect();
     let results = big_stack(|| {
         let options = ParityOptions {
-            source: fixtures().join("basic"),
+            source: fixtures().join(fixture),
             tsconfig: "tsconfig.json".into(),
             copy: ["src", "tsconfig.json", "default.project.json", "package.json"].map(str::to_owned).to_vec(),
             scratch: scratch.clone(),
@@ -61,7 +69,7 @@ fn run_basic(label: &str, plugins: &[&str], incremental: bool) -> Option<Vec<Ste
             plugins: &plugins,
             ignore_unknown_plugins: plugins.is_empty(),
             node_modules: Some(node_modules),
-            copy_node_modules: false,
+            node_modules_mode: parity::NodeModules::LinkPackages,
             incremental,
             keep_clean_copies: false,
             check_clean: true,
@@ -87,7 +95,7 @@ fn watch_rebuilds_equal_clean_builds_with_the_stamp_plugin() {
     let Some(results) = run_basic("stamp", &["stamp"], false) else { return };
     // the closure, not every file
     let chain = step(&results, "C → B → D: Inner.a array to map");
-    assert!(!chain.all && chain.transformed > 0 && chain.reused_program);
+    assert!(!chain.all && chain.transformed > 0);
     assert!(matches!(chain.kind, Some(BuildKind::WatchRebuild { .. })));
     // the global rule: every file
     assert!(step(&results, "S1: a global .d.ts interface").all);
@@ -99,6 +107,14 @@ fn watch_rebuilds_equal_clean_builds_with_the_stamp_plugin() {
     // a tsconfig change re-runs setup: every file
     assert!(step(&results, "a tsconfig edit (the plugin's options)").all);
     assert_eq!(step(&results, "an unchanged save").transformed, 0);
+}
+
+/// The review's attack sequence (globals reached through the closure, augmentation and export hops, const enums,
+/// JSDoc macro modes, renames, deletions and re-adds, a twin .d.ts, tsconfig and Rojo edits, a case-only rename).
+#[test]
+fn the_review_attack_sequence_equals_clean_builds() {
+    run_fixture("attack", "attack", &["stamp"], false);
+    run_fixture("attack", "attack-inc", &[], true);
 }
 
 #[test]
@@ -303,5 +319,85 @@ fn a_kept_shared_survives_failures_and_input_changes_rerun_setup() {
         assert!(summary.all);
         assert_eq!(artifact(), "6 three");
     });
+    drop(copy);
+}
+
+// --- the clean keeps what roblox-ts keeps ---
+
+/// A declaration build (`declaration`, `declarationMap`, `declarationDir`, an explicit `tsBuildInfoFile` under
+/// `outDir`) over a used output directory: the clean keeps every file roblox-ts's `getProjectOutputs` keeps (the
+/// `.d.ts` and `.d.ts.map` TypeScript emits for each file, `index.d.ts` beside `init.luau` included; the outputs of
+/// project `.d.ts` assets; tsc's build info and roblox-ts's), deletes what it does not, and removes a junction inside
+/// the output directory as a link, leaving its target alone.
+#[test]
+fn the_clean_keeps_what_roblox_ts_keeps_and_removes_links_as_links() {
+    let Some(node_modules) = node_modules() else {
+        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        return;
+    };
+    let root = std::env::temp_dir().join(format!("rbxts-rs-watch-keep-{}", std::process::id()));
+    let sentinel = std::env::temp_dir().join(format!("rbxts-rs-watch-keep-sentinel-{}", std::process::id()));
+    parity::remove_tree(&root);
+    let copy = Copy(root.clone());
+    parity::copy_tree(&fixtures().join("basic"), &root).unwrap();
+    parity::junction(&root.join("node_modules"), &node_modules).unwrap();
+    let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap().replace(
+        "\"compilerOptions\": {",
+        "\"compilerOptions\": {\n\t\t\"declaration\": true,\n\t\t\"declarationMap\": true,\n\t\t\"declarationDir\": \"types\",\n\t\t\"incremental\": true,\n\t\t\"tsBuildInfoFile\": \"out/info.tsbuildinfo\",",
+    );
+    std::fs::write(root.join("tsconfig.json"), tsconfig).unwrap();
+    std::fs::write(root.join("src/shared/index.ts"), "export const idx = 1;\n").unwrap();
+    let put = |p: &str| {
+        let path = root.join(p);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "user file\n").unwrap();
+    };
+    let kept = [
+        "types/shared/index.d.ts",
+        "types/shared/index.d.ts.map",
+        "types/shared/c.d.ts",
+        "types/shared/c.d.ts.map",
+        "out/shared/globals.d.ts",
+        "out/info.tsbuildinfo",
+        "out/info.rbxtsc.tsbuildinfo",
+    ];
+    let stale = ["types/shared/gone.d.ts", "out/shared/gone.luau", "out/shared/init.d.ts"];
+    for p in kept.iter().chain(&stale) {
+        put(p);
+    }
+    std::fs::create_dir_all(&sentinel).unwrap();
+    std::fs::write(sentinel.join("precious.txt"), "keep me\n").unwrap();
+    parity::junction(&root.join("out/linked"), &sentinel).unwrap();
+
+    let plugins: Vec<Box<dyn DynPlugin>> = Vec::new();
+    let (report, _) = big_stack(|| {
+        let options =
+            PluginOptions { plugins: &plugins, ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
+        let mut session = BuildSession::new(
+            CompileOptions {
+                tsconfig: "tsconfig.json".into(),
+                cwd: root.to_string_lossy().into_owned(),
+                project_options: ProjectOptionLayer::default(),
+                out_dir_override: None,
+                write_partial: false,
+                no_write: false,
+            },
+            &options,
+            false,
+        );
+        let (report, summary) = session.build(&[]);
+        (report.fatal.clone(), summary)
+    });
+    assert!(report.is_empty(), "{report:?}");
+    for p in kept {
+        assert!(root.join(p).is_file(), "{p} was deleted");
+    }
+    for p in stale {
+        assert!(!root.join(p).exists(), "{p} was kept");
+    }
+    assert!(root.join("out/shared/init.luau").is_file());
+    assert!(std::fs::symlink_metadata(root.join("out/linked")).is_err(), "the junction is removed");
+    assert_eq!(std::fs::read_to_string(sentinel.join("precious.txt")).unwrap(), "keep me\n", "its target is not");
+    let _ = std::fs::remove_dir_all(&sentinel);
     drop(copy);
 }

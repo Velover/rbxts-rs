@@ -135,9 +135,8 @@ pub struct ParityOptions<'a> {
     pub ignore_unknown_plugins: bool,
     /// The `node_modules` to link (default: the project's own).
     pub node_modules: Option<PathBuf>,
-    /// Copy `node_modules` into the watched copy instead of linking it (needed when the project imports packages:
-    /// roblox-ts requires package files inside the project's own `node_modules`, and a link resolves outside it).
-    pub copy_node_modules: bool,
+    /// How the copies get their `node_modules`.
+    pub node_modules_mode: NodeModules,
     /// Incremental builds instead of a watcher: the copy's tsconfig gets `"incremental": true`, and each step is a
     /// new session (a new `rbxtsc build`) that reads the incremental state the last one wrote.
     pub incremental: bool,
@@ -149,6 +148,43 @@ pub struct ParityOptions<'a> {
     pub memory: Option<fn() -> Option<usize>>,
 }
 
+/// How a copy gets its `node_modules`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NodeModules {
+    /// A junction to the original (enough for types-only imports).
+    #[default]
+    Link,
+    /// A copy, links followed (needed when the project imports packages: roblox-ts requires package files inside
+    /// the project's own `node_modules`, and a link resolves outside it).
+    Copy,
+    /// Real directories for `node_modules` and its scopes, with a junction per package, so a script can add or
+    /// change packages in the watched copy (`write` under `node_modules/`), and the clean copies get them too.
+    LinkPackages,
+}
+
+/// Makes `to` (a new `node_modules`) from `from`: real directories for it and its `@scope` directories; each
+/// package a junction to where `from`'s entry leads when that is a link, else a copy (a package a script wrote).
+pub fn link_packages(from: &Path, to: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
+    let entries = std::fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let path = entry.path();
+        let is_link = std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
+        let target = to.join(&name);
+        if name.to_string_lossy().starts_with('@') && std::fs::metadata(&path).is_ok_and(|m| m.is_dir()) {
+            link_packages(&path, &target)?;
+        } else if is_link {
+            junction(&target, &path)?;
+        } else if std::fs::metadata(&path).is_ok_and(|m| m.is_dir()) {
+            copy_tree_all(&path, &target).map_err(|e| format!("copying {}: {e}", path.display()))?;
+        } else {
+            std::fs::copy(&path, &target).map_err(|e| format!("copying {}: {e}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
 /// One step's outcome.
 #[derive(Debug, Default)]
 pub struct StepResult {
@@ -158,9 +194,10 @@ pub struct StepResult {
     /// Project files the watcher transformed, and whether that was all of them.
     pub transformed: usize,
     pub all: bool,
+    /// Files the watcher parsed (source cache misses).
+    pub parsed: usize,
     /// The kind of the watcher's build.
     pub kind: Option<rbxts_plugin::BuildKind>,
-    pub reused_program: bool,
     /// The watcher's phase times.
     pub timings: crate::compile::Timings,
     /// The working set after the step, when [`ParityOptions::memory`] is set.
@@ -213,11 +250,15 @@ pub fn remove_tree(dir: &Path) {
             let path = entry.path();
             let is_link = std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
             if entry.file_name() == "node_modules" || is_link {
+                // a link goes on its own (`rmdir` without /S never enters it); a real node_modules (linked
+                // packages) is not empty, so it stays and is walked below
                 let _ = std::process::Command::new("cmd")
                     .args(["/C", "rmdir"])
                     .arg(path.to_string_lossy().replace('/', "\\"))
+                    .stderr(std::process::Stdio::null())
                     .status();
-            } else if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            }
+            if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_dir() && !m.file_type().is_symlink()) {
                 remove_tree(&path);
             }
         }
@@ -322,11 +363,11 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
         Ok(())
     };
     copy_sources(&options.source, &work)?;
-    if options.copy_node_modules {
-        copy_tree_all(&node_modules, &work.join("node_modules"))
-            .map_err(|e| format!("copying {}: {e}", node_modules.display()))?;
-    } else {
-        junction(&work.join("node_modules"), &node_modules)?;
+    match options.node_modules_mode {
+        NodeModules::Copy => copy_tree_all(&node_modules, &work.join("node_modules"))
+            .map_err(|e| format!("copying {}: {e}", node_modules.display()))?,
+        NodeModules::Link => junction(&work.join("node_modules"), &node_modules)?,
+        NodeModules::LinkPackages => link_original_packages(&node_modules, &work.join("node_modules"))?,
     }
     apply(&work, &script.prepare)?;
     if options.incremental {
@@ -388,8 +429,8 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
             ok: !report.has_errors(),
             transformed: report.files.len(),
             all: summary.all,
+            parsed: summary.parsed,
             kind: summary.kind,
-            reused_program: summary.reused_program,
             timings: report.timings,
             watch_ms,
             ..StepResult::default()
@@ -412,7 +453,11 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
         let start = std::time::Instant::now();
         let (clean_report, clean_root, clean_tree) = if in_copy {
             copy_sources(&work, &clean)?;
-            junction(&clean.join("node_modules"), &node_modules)?;
+            match options.node_modules_mode {
+                // the packages the script wrote into the watched copy, the others linked
+                NodeModules::LinkPackages => link_packages(&work.join("node_modules"), &clean.join("node_modules"))?,
+                _ => junction(&clean.join("node_modules"), &node_modules)?,
+            }
             let (report, _) =
                 BuildSession::new(compile_options(&clean, None), &plugin_options, false).with_seed(seed).build(&[]);
             (report, clean.clone(), outputs_of(snapshot(&clean)))
@@ -475,70 +520,114 @@ fn path_is_source(path: &str, copied: &[String]) -> bool {
 
 /// Applies a step's actions in `dir`; the absolute paths touched.
 fn apply(dir: &Path, actions: &[Action]) -> Result<Vec<String>, String> {
-    let mut touched = Vec::new();
-    let abs = |p: &str| dir.join(p);
+    let mut touched = Touched::default();
+    let root = std::fs::canonicalize(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    // every edit stays inside the copy: a path through a linked node_modules would edit the original packages
+    let abs = |p: &str| -> Result<PathBuf, String> {
+        let path = dir.join(p);
+        let mut existing = path.clone();
+        while !existing.exists() {
+            if !existing.pop() {
+                break;
+            }
+        }
+        let real = std::fs::canonicalize(&existing).map_err(|e| format!("{p}: {e}"))?;
+        if real.starts_with(&root) { Ok(path) } else { Err(format!("{p} leads outside the copy (through a link)")) }
+    };
     let text = |p: &PathBuf| p.to_string_lossy().replace('\\', "/");
     for action in actions {
         match action {
             Action::Write { file, text: body } => {
-                let path = abs(file);
+                let path = abs(file)?;
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
                 std::fs::write(&path, body).map_err(|e| format!("{file}: {e}"))?;
-                touched.push(text(&path));
+                touched.add(text(&path));
             }
             Action::Append { file, text: body } => {
-                let path = abs(file);
+                let path = abs(file)?;
                 let mut current = std::fs::read_to_string(&path).map_err(|e| format!("{file}: {e}"))?;
                 current.push_str(body);
                 std::fs::write(&path, current).map_err(|e| format!("{file}: {e}"))?;
-                touched.push(text(&path));
+                touched.add(text(&path));
             }
             Action::Patch { file, find, replace } => {
-                let path = abs(file);
+                let path = abs(file)?;
                 let current = std::fs::read_to_string(&path).map_err(|e| format!("{file}: {e}"))?;
                 if !current.contains(find.as_str()) {
                     return Err(format!("patch: {find:?} is not in {file}"));
                 }
                 std::fs::write(&path, current.replacen(find.as_str(), replace, 1))
                     .map_err(|e| format!("{file}: {e}"))?;
-                touched.push(text(&path));
+                touched.add(text(&path));
             }
             Action::Delete(file) => {
-                let path = abs(file);
+                let path = abs(file)?;
                 if path.is_dir() {
                     std::fs::remove_dir_all(&path).map_err(|e| format!("{file}: {e}"))?;
                 } else {
                     std::fs::remove_file(&path).map_err(|e| format!("{file}: {e}"))?;
                 }
-                touched.push(text(&path));
+                touched.add(text(&path));
             }
             Action::Rename { from, to } => {
-                let (a, b) = (abs(from), abs(to));
+                let (a, b) = (abs(from)?, abs(to)?);
                 if let Some(parent) = b.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
                 std::fs::rename(&a, &b).map_err(|e| format!("{from} → {to}: {e}"))?;
-                touched.push(text(&a));
-                touched.push(text(&b));
+                touched.add(text(&a));
+                touched.add(text(&b));
             }
             Action::Mkdir(d) => {
-                let path = abs(d);
+                let path = abs(d)?;
                 std::fs::create_dir_all(&path).map_err(|e| format!("{d}: {e}"))?;
-                touched.push(text(&path));
+                touched.add(text(&path));
             }
             Action::DeleteOutput(file) => {
                 // not a watched path: the build finds the output missing on its own
-                std::fs::remove_file(abs(file)).map_err(|e| format!("{file}: {e}"))?;
+                std::fs::remove_file(abs(file)?).map_err(|e| format!("{file}: {e}"))?;
             }
             Action::Touch(file) => {
-                let path = abs(file);
+                let path = abs(file)?;
                 let bytes = std::fs::read(&path).map_err(|e| format!("{file}: {e}"))?;
                 std::fs::write(&path, bytes).map_err(|e| format!("{file}: {e}"))?;
-                touched.push(text(&path));
+                touched.add(text(&path));
             }
         }
     }
-    Ok(touched)
+    Ok(touched.0)
+}
+
+/// The paths a step touched, as a watcher reports them: none under `node_modules`, which the watcher does not
+/// watch (a package installed or changed is only picked up by the next rebuild).
+#[derive(Default)]
+struct Touched(Vec<String>);
+
+impl Touched {
+    fn add(&mut self, path: String) {
+        if !path.contains("/node_modules/") {
+            self.0.push(path);
+        }
+    }
+}
+
+/// [`NodeModules::LinkPackages`] from the original `node_modules`: every package is linked (none was written yet).
+fn link_original_packages(from: &Path, to: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
+    let entries = std::fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let path = entry.path();
+        let target = to.join(&name);
+        if name.to_string_lossy().starts_with('@') && std::fs::metadata(&path).is_ok_and(|m| m.is_dir()) {
+            link_original_packages(&path, &target)?;
+        } else if std::fs::metadata(&path).is_ok_and(|m| m.is_dir()) {
+            junction(&target, &path)?;
+        } else {
+            std::fs::copy(&path, &target).map_err(|e| format!("copying {}: {e}", path.display()))?;
+        }
+    }
+    Ok(())
 }

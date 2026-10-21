@@ -2,106 +2,398 @@
 	"steps": [
 		{
 			"name": "C → B → D: Inner.a array to map",
-			"do": [{ "patch": { "file": "src/shared/c.ts", "find": "a: Array<string>", "replace": "a: Map<string, string>" } }]
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/c.ts",
+						"find": "a: Array<string>",
+						"replace": "a: Map<string, string>"
+					}
+				}
+			]
 		},
 		{
 			"name": "C → B → D: back to an array",
-			"do": [{ "patch": { "file": "src/shared/c.ts", "find": "a: Map<string, string>", "replace": "a: Array<string>" } }]
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/c.ts",
+						"find": "a: Map<string, string>",
+						"replace": "a: Array<string>"
+					}
+				}
+			]
 		},
 		{
 			"name": "S1: a global .d.ts interface",
 			"do": [
-				{ "patch": { "file": "src/shared/globals.d.ts", "find": "a: Array<string>", "replace": "a: Map<string, string>" } }
+				{
+					"patch": {
+						"file": "src/shared/globals.d.ts",
+						"find": "a: Array<string>",
+						"replace": "a: Map<string, string>"
+					}
+				}
 			]
 		},
 		{
 			"name": "S1b: declare global in a module",
 			"do": [
-				{ "patch": { "file": "src/shared/declGlobal.ts", "find": "a: Array<string>", "replace": "a: Set<string>" } }
+				{
+					"patch": {
+						"file": "src/shared/declGlobal.ts",
+						"find": "a: Array<string>",
+						"replace": "a: Set<string>"
+					}
+				}
 			]
 		},
 		{
 			"name": "S2: a module augmentation",
-			"do": [{ "patch": { "file": "src/shared/aug.ts", "find": "y: Array<number>", "replace": "y: Map<number, number>" } }]
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/aug.ts",
+						"find": "y: Array<number>",
+						"replace": "y: Map<number, number>"
+					}
+				}
+			]
 		},
 		{
 			"name": "a two-hop export * re-export",
-			"do": [{ "patch": { "file": "src/shared/hop1.ts", "find": "export * from \"./c\";", "replace": "export { Inner } from \"./c\";" } }]
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/hop1.ts",
+						"find": "export * from \"./c\";",
+						"replace": "export { Inner } from \"./c\";"
+					}
+				}
+			]
 		},
 		{
 			"name": "rename a file",
-			"do": [{ "rename": { "from": "src/shared/importer.ts", "to": "src/shared/importer2.ts" } }]
+			"do": [
+				{
+					"rename": {
+						"from": "src/shared/importer.ts",
+						"to": "src/shared/importer2.ts"
+					}
+				}
+			]
 		},
 		{
 			"name": "delete an importer",
-			"do": [{ "delete": "src/shared/importer2.ts" }]
+			"do": [
+				{
+					"delete": "src/shared/importer2.ts"
+				}
+			]
 		},
 		{
 			"name": "an output deleted by hand",
-			"do": [{ "delete-output": "out/shared/d.luau" }]
+			"do": [
+				{
+					"delete-output": "out/shared/d.luau"
+				}
+			]
 		},
 		{
 			"name": "an error",
-			"do": [{ "patch": { "file": "src/shared/d.ts", "find": "return value.x.a.size();", "replace": "return value.x.a.sizee();" } }],
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/d.ts",
+						"find": "return value.x.a.size();",
+						"replace": "return value.x.a.sizee();"
+					}
+				}
+			],
 			"expect": "error"
 		},
 		{
 			"name": "an error in one file, a valid edit in another",
-			"do": [{ "patch": { "file": "src/shared/c.ts", "find": "export const cValue = 1;", "replace": "export const cValue = 2;" } }],
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/c.ts",
+						"find": "export const cValue = 1;",
+						"replace": "export const cValue = 2;"
+					}
+				}
+			],
 			"expect": "error"
 		},
 		{
 			"name": "the fix",
-			"do": [{ "patch": { "file": "src/shared/d.ts", "find": "return value.x.a.sizee();", "replace": "return value.x.a.size();" } }]
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/d.ts",
+						"find": "return value.x.a.sizee();",
+						"replace": "return value.x.a.size();"
+					}
+				}
+			]
 		},
 		{
 			"name": "a burst of three edits to one file",
 			"do": [
-				{ "patch": { "file": "src/shared/useHop.ts", "find": "value.a.size()", "replace": "value.a.size() + 1" } },
-				{ "patch": { "file": "src/shared/useHop.ts", "find": "+ 1", "replace": "+ 2" } },
-				{ "patch": { "file": "src/shared/useHop.ts", "find": "+ 2", "replace": "+ 3" } }
+				{
+					"patch": {
+						"file": "src/shared/useHop.ts",
+						"find": "value.a.size()",
+						"replace": "value.a.size() + 1"
+					}
+				},
+				{
+					"patch": {
+						"file": "src/shared/useHop.ts",
+						"find": "+ 1",
+						"replace": "+ 2"
+					}
+				},
+				{
+					"patch": {
+						"file": "src/shared/useHop.ts",
+						"find": "+ 2",
+						"replace": "+ 3"
+					}
+				}
 			]
 		},
 		{
 			"name": "a new late string renumbers cached files",
 			"do": [
-				{ "patch": { "file": "src/shared/stamped2.ts", "find": "export const second = buildId();", "replace": "export const second = buildId();\nexport const third = buildId();" } }
+				{
+					"patch": {
+						"file": "src/shared/stamped2.ts",
+						"find": "export const second = buildId();",
+						"replace": "export const second = buildId();\nexport const third = buildId();"
+					}
+				}
 			]
 		},
 		{
 			"name": "a new file",
-			"do": [{ "write": { "file": "src/shared/fresh.ts", "text": "import { sizeOf } from \"./d\";\n\nexport const fresh = sizeOf;\n" } }]
+			"do": [
+				{
+					"write": {
+						"file": "src/shared/fresh.ts",
+						"text": "import { sizeOf } from \"./d\";\n\nexport const fresh = sizeOf;\n"
+					}
+				}
+			]
 		},
 		{
 			"name": "an asset edited, one added",
 			"do": [
-				{ "patch": { "file": "src/shared/asset.lua", "find": "return 1", "replace": "return 2" } },
-				{ "write": { "file": "src/shared/asset2.lua", "text": "return 3\n" } }
+				{
+					"patch": {
+						"file": "src/shared/asset.lua",
+						"find": "return 1",
+						"replace": "return 2"
+					}
+				},
+				{
+					"write": {
+						"file": "src/shared/asset2.lua",
+						"text": "return 3\n"
+					}
+				}
 			]
 		},
 		{
 			"name": "an asset deleted",
-			"do": [{ "delete": "src/shared/asset2.lua" }]
+			"do": [
+				{
+					"delete": "src/shared/asset2.lua"
+				}
+			]
 		},
 		{
 			"name": "a file under a new folder",
-			"do": [{ "write": { "file": "src/shared/nested/deep.ts", "text": "export const deep = buildId();\n" } }]
+			"do": [
+				{
+					"write": {
+						"file": "src/shared/nested/deep.ts",
+						"text": "export const deep = buildId();\n"
+					}
+				}
+			]
 		},
 		{
 			"name": "the folder deleted",
-			"do": [{ "delete": "src/shared/nested" }]
+			"do": [
+				{
+					"delete": "src/shared/nested"
+				}
+			]
 		},
 		{
 			"name": "a tsconfig edit (the plugin's options)",
-			"do": [{ "patch": { "file": "tsconfig.json", "find": "\"prefix\": \"watch \"", "replace": "\"prefix\": \"watch2 \"" } }]
+			"do": [
+				{
+					"patch": {
+						"file": "tsconfig.json",
+						"find": "\"prefix\": \"watch \"",
+						"replace": "\"prefix\": \"watch2 \""
+					}
+				}
+			]
 		},
 		{
 			"name": "a Rojo edit",
-			"do": [{ "patch": { "file": "default.project.json", "find": "\"shared\": {", "replace": "\"Extra\": { \"$className\": \"Folder\" },\n\t\t\t\"shared\": {" } }]
+			"do": [
+				{
+					"patch": {
+						"file": "default.project.json",
+						"find": "\"shared\": {",
+						"replace": "\"Extra\": { \"$className\": \"Folder\" },\n\t\t\t\"shared\": {"
+					}
+				}
+			]
 		},
 		{
 			"name": "an unchanged save",
-			"do": [{ "touch": "src/shared/b.ts" }]
+			"do": [
+				{
+					"touch": "src/shared/b.ts"
+				}
+			]
+		},
+		{
+			"name": "B1/A1: a global .d.ts reached through an import() type",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/inner2.ts",
+						"find": "v: Array<string>",
+						"replace": "v: Map<string, string>"
+					}
+				}
+			]
+		},
+		{
+			"name": "B1/A2: declare global reached through an import",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/inner3.ts",
+						"find": "v: Array<string>",
+						"replace": "v: Map<string, string>"
+					}
+				}
+			]
+		},
+		{
+			"name": "B1/A1b: the global hop member renamed",
+			"expect": "error",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/inner2.ts",
+						"find": "v: Map<string, string>",
+						"replace": "vv: Map<string, string>"
+					}
+				}
+			]
+		},
+		{
+			"name": "B1/A1b: the member back",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/inner2.ts",
+						"find": "vv: Map<string, string>",
+						"replace": "v: Map<string, string>"
+					}
+				}
+			]
+		},
+		{
+			"name": "B5: a case-only rename",
+			"do": [
+				{
+					"rename": {
+						"from": "src/shared/useHop.ts",
+						"to": "src/shared/UseHop.ts"
+					}
+				}
+			]
+		},
+		{
+			"name": "B5: and back",
+			"do": [
+				{
+					"rename": {
+						"from": "src/shared/UseHop.ts",
+						"to": "src/shared/useHop.ts"
+					}
+				}
+			]
+		},
+		{
+			"name": "B2: an import of a package not installed",
+			"expect": "error",
+			"do": [
+				{
+					"write": {
+						"file": "src/shared/usePkg.ts",
+						"text": "import { v } from \"@rbxts/vpkg\";\n\nexport const w = v.size();\n"
+					}
+				}
+			]
+		},
+		{
+			"name": "B2: the package installed (no event), the importer saved",
+			"do": [
+				{
+					"write": {
+						"file": "node_modules/@rbxts/vpkg/package.json",
+						"text": "{ \"name\": \"@rbxts/vpkg\", \"version\": \"1.0.0\", \"main\": \"init.lua\", \"types\": \"index.d.ts\" }\n"
+					}
+				},
+				{
+					"write": {
+						"file": "node_modules/@rbxts/vpkg/index.d.ts",
+						"text": "export declare const v: Array<number>;\n"
+					}
+				},
+				{
+					"write": {
+						"file": "node_modules/@rbxts/vpkg/init.lua",
+						"text": "return { v = {} }\n"
+					}
+				},
+				{
+					"touch": "src/shared/usePkg.ts"
+				}
+			]
+		},
+		{
+			"name": "B2: the package upgraded, its types entry moved (no event), the importer saved",
+			"do": [
+				{
+					"write": {
+						"file": "node_modules/@rbxts/vpkg/package.json",
+						"text": "{ \"name\": \"@rbxts/vpkg\", \"version\": \"2.0.0\", \"main\": \"init.lua\", \"types\": \"lib/index.d.ts\" }\n"
+					}
+				},
+				{
+					"write": {
+						"file": "node_modules/@rbxts/vpkg/lib/index.d.ts",
+						"text": "export declare const v: Map<number, number>;\n"
+					}
+				},
+				{
+					"append": {
+						"file": "src/shared/usePkg.ts",
+						"text": "// saved\n"
+					}
+				}
+			]
 		}
 	]
 }
