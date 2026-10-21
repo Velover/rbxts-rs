@@ -1,0 +1,127 @@
+{
+ "tool": "dump-project-services",
+ "cwd": "{root}",
+ "tsconfig": "{root}\\isolated-runtime\\tsconfig.json",
+ "overrides": {},
+ "projects": [
+  {
+   "tsconfig": "{root}\\isolated-runtime\\tsconfig.json",
+   "isRoot": true,
+   "overrides": null,
+   "data": {
+    "projectPath": "{root}\\isolated-runtime",
+    "isPackage": false,
+    "nodeModulesPath": "{root}\\isolated-runtime\\node_modules",
+    "includePath": "{root}\\isolated-runtime\\include",
+    "rojoConfigPath": "{root}\\isolated-runtime\\default.project.json",
+    "type": null,
+    "luau": true
+   },
+   "pathTranslator": {
+    "rootDir": "{root}\\isolated-runtime\\src\\",
+    "outDir": "{root}\\isolated-runtime\\out",
+    "buildInfoOutputPath": null,
+    "declaration": false,
+    "useLuauExtension": true
+   },
+   "setup": {
+    "warnings": [],
+    "diagnostics": [],
+    "fatal": "Runtime library cannot be in an isolated container!",
+    "projectType": "game",
+    "runtimeLibRbxPath": null,
+    "rojo": {
+     "isGame": true,
+     "warnings": [],
+     "partitions": [
+      {
+       "fsPath": "{root}\\isolated-runtime\\out",
+       "rbxPath": [
+        "ReplicatedStorage",
+        "out"
+       ]
+      },
+      {
+       "fsPath": "{root}\\isolated-runtime\\include",
+       "rbxPath": [
+        "PluginDebugService",
+        "rbxts_include"
+       ]
+      }
+     ],
+     "fileMounts": []
+    },
+    "pkgRojo": [
+     {
+      "isGame": false,
+      "warnings": [],
+      "partitions": [
+       {
+        "fsPath": "{root}\\isolated-runtime\\node_modules\\@rbxts",
+        "rbxPath": []
+       }
+      ],
+      "fileMounts": []
+     }
+    ],
+    "nodeModulesPathMapping": []
+   },
+   "files": [
+    {
+     "fileName": "{root_fwd}/isolated-runtime/src/index.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\isolated-runtime\\out\\init.luau",
+     "outputDeclarationPath": "{root}\\isolated-runtime\\out\\index.d.ts",
+     "outputTransformedPath": "{root}\\isolated-runtime\\out\\index.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\isolated-runtime\\src\\init.ts",
+      "{root}\\isolated-runtime\\src\\init.tsx",
+      "{root}\\isolated-runtime\\src\\index.ts",
+      "{root}\\isolated-runtime\\src\\index.tsx",
+      "{root}\\isolated-runtime\\src\\init.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\isolated-runtime\\src\\index.d.ts"
+     ],
+     "importPath": "{root}\\isolated-runtime\\out\\init.luau",
+     "importPathNodeModule": "{root}\\isolated-runtime\\src\\init.luau",
+     "output": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "out"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "out"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null
+    }
+   ],
+   "moduleProbes": [
+    {
+     "from": "{root_fwd}/isolated-runtime/src/index.ts",
+     "specifier": "./does-not-exist",
+     "resolved": null
+    },
+    {
+     "from": "{root_fwd}/isolated-runtime/src/index.ts",
+     "specifier": "@rbxts/not-a-package",
+     "resolved": null
+    }
+   ],
+   "timing": null
+  }
+ ],
+ "error": null,
+ "graphWarnings": []
+}

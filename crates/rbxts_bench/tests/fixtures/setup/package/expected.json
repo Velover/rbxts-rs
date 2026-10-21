@@ -1,0 +1,153 @@
+{
+ "tool": "dump-project-services",
+ "cwd": "{root}",
+ "tsconfig": "{root}\\package\\tsconfig.json",
+ "overrides": {},
+ "projects": [
+  {
+   "tsconfig": "{root}\\package\\tsconfig.json",
+   "isRoot": true,
+   "overrides": null,
+   "data": {
+    "projectPath": "{root}\\package",
+    "isPackage": true,
+    "nodeModulesPath": "{root}\\package\\node_modules",
+    "includePath": "{root}\\package\\vendor\\include",
+    "rojoConfigPath": null,
+    "type": null,
+    "luau": true
+   },
+   "pathTranslator": {
+    "rootDir": "{root}\\package\\src\\",
+    "outDir": "{root}\\package\\out",
+    "buildInfoOutputPath": null,
+    "declaration": false,
+    "useLuauExtension": true
+   },
+   "setup": {
+    "warnings": [],
+    "diagnostics": [
+     {
+      "severity": "error",
+      "message": "Incorrect file name: `init.ts`!\nFull path: {root_fwd}/package/src/util/init.ts\nSuggestion: Change `init.ts` to `index.ts`."
+     }
+    ],
+    "fatal": null,
+    "projectType": "package",
+    "runtimeLibRbxPath": null,
+    "rojo": {
+     "isGame": false,
+     "warnings": [],
+     "partitions": [
+      {
+       "fsPath": "{root}\\package\\out",
+       "rbxPath": []
+      }
+     ],
+     "fileMounts": []
+    },
+    "pkgRojo": [
+     {
+      "isGame": false,
+      "warnings": [],
+      "partitions": [
+       {
+        "fsPath": "{root}\\package\\node_modules\\@rbxts",
+        "rbxPath": []
+       }
+      ],
+      "fileMounts": []
+     }
+    ],
+    "nodeModulesPathMapping": []
+   },
+   "files": [
+    {
+     "fileName": "{root_fwd}/package/src/index.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\package\\out\\init.luau",
+     "outputDeclarationPath": "{root}\\package\\out\\index.d.ts",
+     "outputTransformedPath": "{root}\\package\\out\\index.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\package\\src\\init.ts",
+      "{root}\\package\\src\\init.tsx",
+      "{root}\\package\\src\\index.ts",
+      "{root}\\package\\src\\index.tsx",
+      "{root}\\package\\src\\init.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\package\\src\\index.d.ts"
+     ],
+     "importPath": "{root}\\package\\out\\init.luau",
+     "importPathNodeModule": "{root}\\package\\src\\init.luau",
+     "output": {
+      "rbxPath": [],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": [],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null
+    },
+    {
+     "fileName": "{root_fwd}/package/src/util/init.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\package\\out\\util\\init.luau",
+     "outputDeclarationPath": "{root}\\package\\out\\util\\init.d.ts",
+     "outputTransformedPath": "{root}\\package\\out\\util\\init.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\package\\src\\util\\init.ts",
+      "{root}\\package\\src\\util\\init.tsx",
+      "{root}\\package\\src\\util\\index.ts",
+      "{root}\\package\\src\\util\\index.tsx",
+      "{root}\\package\\src\\util\\init.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\package\\src\\util\\init.d.ts"
+     ],
+     "importPath": "{root}\\package\\out\\util\\init.luau",
+     "importPathNodeModule": "{root}\\package\\src\\util\\init.luau",
+     "output": {
+      "rbxPath": [
+       "util"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": [
+       "util"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null
+    }
+   ],
+   "moduleProbes": [
+    {
+     "from": "{root_fwd}/package/src/index.ts",
+     "specifier": "./does-not-exist",
+     "resolved": null
+    },
+    {
+     "from": "{root_fwd}/package/src/index.ts",
+     "specifier": "@rbxts/not-a-package",
+     "resolved": null
+    }
+   ],
+   "timing": null
+  }
+ ],
+ "error": null,
+ "graphWarnings": []
+}

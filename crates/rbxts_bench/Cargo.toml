@@ -13,7 +13,8 @@ tsrs_compiler.workspace = true
 tsrs_diagnostics.workspace = true
 mimalloc-safe.workspace = true
 rbxts_luau.workspace = true
-# luau-parity only, to read the dumped trees. The versions in tsrs's lock file; unbounded_depth for deep `..` chains.
+# luau-parity and project-parity, to read the dumps. The versions in tsrs's lock file; unbounded_depth for deep `..`
+# chains.
 serde = "1.0.229"
 serde_json = { version = "1.0.154", features = ["unbounded_depth"] }
 

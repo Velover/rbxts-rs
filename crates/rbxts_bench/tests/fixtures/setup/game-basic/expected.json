@@ -1,0 +1,440 @@
+{
+ "tool": "dump-project-services",
+ "cwd": "{root}",
+ "tsconfig": "{root}\\game-basic\\tsconfig.json",
+ "overrides": {},
+ "projects": [
+  {
+   "tsconfig": "{root}\\game-basic\\tsconfig.json",
+   "isRoot": true,
+   "overrides": null,
+   "data": {
+    "projectPath": "{root}\\game-basic",
+    "isPackage": false,
+    "nodeModulesPath": "{root}\\game-basic\\node_modules",
+    "includePath": "{root}\\game-basic\\include",
+    "rojoConfigPath": "{root}\\game-basic\\default.project.json",
+    "type": null,
+    "luau": true
+   },
+   "pathTranslator": {
+    "rootDir": "{root}\\game-basic\\src\\",
+    "outDir": "{root}\\game-basic\\out",
+    "buildInfoOutputPath": null,
+    "declaration": false,
+    "useLuauExtension": true
+   },
+   "setup": {
+    "warnings": [],
+    "diagnostics": [
+     {
+      "severity": "error",
+      "message": "Incorrect file name: `init.client.ts`!\nFull path: {root_fwd}/game-basic/src/client/init.client.ts\nSuggestion: Change `init.client.ts` to `index.client.ts`."
+     }
+    ],
+    "fatal": null,
+    "projectType": "game",
+    "runtimeLibRbxPath": [
+     "ReplicatedStorage",
+     "rbxts_include",
+     "RuntimeLib"
+    ],
+    "rojo": {
+     "isGame": true,
+     "warnings": [],
+     "partitions": [
+      {
+       "fsPath": "{root}\\game-basic\\out\\first",
+       "rbxPath": [
+        "ReplicatedFirst",
+        "first"
+       ]
+      },
+      {
+       "fsPath": "{root}\\game-basic\\out\\client",
+       "rbxPath": [
+        "StarterPlayer",
+        "StarterPlayerScripts",
+        "client"
+       ]
+      },
+      {
+       "fsPath": "{root}\\game-basic\\out\\server",
+       "rbxPath": [
+        "ServerScriptService",
+        "server"
+       ]
+      },
+      {
+       "fsPath": "{root}\\game-basic\\out\\shared",
+       "rbxPath": [
+        "ReplicatedStorage",
+        "shared"
+       ]
+      },
+      {
+       "fsPath": "{root}\\game-basic\\include",
+       "rbxPath": [
+        "ReplicatedStorage",
+        "rbxts_include"
+       ]
+      }
+     ],
+     "fileMounts": []
+    },
+    "pkgRojo": [
+     {
+      "isGame": false,
+      "warnings": [],
+      "partitions": [
+       {
+        "fsPath": "{root}\\game-basic\\node_modules\\@rbxts",
+        "rbxPath": []
+       }
+      ],
+      "fileMounts": []
+     }
+    ],
+    "nodeModulesPathMapping": []
+   },
+   "files": [
+    {
+     "fileName": "{root_fwd}/game-basic/src/notsynced.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\game-basic\\out\\notsynced.luau",
+     "outputDeclarationPath": "{root}\\game-basic\\out\\notsynced.d.ts",
+     "outputTransformedPath": "{root}\\game-basic\\out\\notsynced.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\game-basic\\src\\notsynced.ts",
+      "{root}\\game-basic\\src\\notsynced.tsx",
+      "{root}\\game-basic\\src\\notsynced.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\game-basic\\src\\notsynced.d.ts"
+     ],
+     "importPath": "{root}\\game-basic\\out\\notsynced.luau",
+     "importPathNodeModule": "{root}\\game-basic\\src\\notsynced.luau",
+     "output": {
+      "rbxPath": null,
+      "network": null,
+      "isolated": null
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": null,
+      "network": null,
+      "isolated": null
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null
+    },
+    {
+     "fileName": "{root_fwd}/game-basic/src/client/init.client.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\game-basic\\out\\client\\init.client.luau",
+     "outputDeclarationPath": "{root}\\game-basic\\out\\client\\init.client.d.ts",
+     "outputTransformedPath": "{root}\\game-basic\\out\\client\\init.client.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\game-basic\\src\\client\\init.client.ts",
+      "{root}\\game-basic\\src\\client\\init.client.tsx",
+      "{root}\\game-basic\\src\\client\\index.client.ts",
+      "{root}\\game-basic\\src\\client\\index.client.tsx",
+      "{root}\\game-basic\\src\\client\\init.client.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\game-basic\\src\\client\\init.client.d.ts"
+     ],
+     "importPath": "{root}\\game-basic\\out\\client\\init.client.luau",
+     "importPathNodeModule": "{root}\\game-basic\\src\\client\\init.client.luau",
+     "output": {
+      "rbxPath": [
+       "StarterPlayer",
+       "StarterPlayerScripts",
+       "client"
+      ],
+      "network": "Client",
+      "isolated": true
+     },
+     "rbxType": "LocalScript",
+     "import": {
+      "rbxPath": [
+       "StarterPlayer",
+       "StarterPlayerScripts",
+       "client"
+      ],
+      "network": "Client",
+      "isolated": true
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null,
+     "toRuntimeLib": [
+      "..",
+      "..",
+      "..",
+      "ReplicatedStorage",
+      "rbxts_include",
+      "RuntimeLib"
+     ],
+     "runtimeLibRelation": "InToOut"
+    },
+    {
+     "fileName": "{root_fwd}/game-basic/src/client/ui.tsx",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\game-basic\\out\\client\\ui.luau",
+     "outputDeclarationPath": "{root}\\game-basic\\out\\client\\ui.d.ts",
+     "outputTransformedPath": "{root}\\game-basic\\out\\client\\ui.transformed.tsx",
+     "inputPathsOfOutput": [
+      "{root}\\game-basic\\src\\client\\ui.ts",
+      "{root}\\game-basic\\src\\client\\ui.tsx",
+      "{root}\\game-basic\\src\\client\\ui.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\game-basic\\src\\client\\ui.d.ts"
+     ],
+     "importPath": "{root}\\game-basic\\out\\client\\ui.luau",
+     "importPathNodeModule": "{root}\\game-basic\\src\\client\\ui.luau",
+     "output": {
+      "rbxPath": [
+       "StarterPlayer",
+       "StarterPlayerScripts",
+       "client",
+       "ui"
+      ],
+      "network": "Client",
+      "isolated": true
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": [
+       "StarterPlayer",
+       "StarterPlayerScripts",
+       "client",
+       "ui"
+      ],
+      "network": "Client",
+      "isolated": true
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null,
+     "toRuntimeLib": [
+      "..",
+      "..",
+      "..",
+      "..",
+      "ReplicatedStorage",
+      "rbxts_include",
+      "RuntimeLib"
+     ],
+     "runtimeLibRelation": "InToOut"
+    },
+    {
+     "fileName": "{root_fwd}/game-basic/src/first/boot.client.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\game-basic\\out\\first\\boot.client.luau",
+     "outputDeclarationPath": "{root}\\game-basic\\out\\first\\boot.client.d.ts",
+     "outputTransformedPath": "{root}\\game-basic\\out\\first\\boot.client.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\game-basic\\src\\first\\boot.client.ts",
+      "{root}\\game-basic\\src\\first\\boot.client.tsx",
+      "{root}\\game-basic\\src\\first\\boot.client.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\game-basic\\src\\first\\boot.client.d.ts"
+     ],
+     "importPath": "{root}\\game-basic\\out\\first\\boot.client.luau",
+     "importPathNodeModule": "{root}\\game-basic\\src\\first\\boot.client.luau",
+     "output": {
+      "rbxPath": [
+       "ReplicatedFirst",
+       "first",
+       "boot"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "rbxType": "LocalScript",
+     "import": {
+      "rbxPath": [
+       "ReplicatedFirst",
+       "first",
+       "boot"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null,
+     "toRuntimeLib": [
+      "..",
+      "..",
+      "..",
+      "ReplicatedStorage",
+      "rbxts_include",
+      "RuntimeLib"
+     ],
+     "runtimeLibRelation": "OutToOut"
+    },
+    {
+     "fileName": "{root_fwd}/game-basic/src/server/main.server.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\game-basic\\out\\server\\main.server.luau",
+     "outputDeclarationPath": "{root}\\game-basic\\out\\server\\main.server.d.ts",
+     "outputTransformedPath": "{root}\\game-basic\\out\\server\\main.server.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\game-basic\\src\\server\\main.server.ts",
+      "{root}\\game-basic\\src\\server\\main.server.tsx",
+      "{root}\\game-basic\\src\\server\\main.server.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\game-basic\\src\\server\\main.server.d.ts"
+     ],
+     "importPath": "{root}\\game-basic\\out\\server\\main.server.luau",
+     "importPathNodeModule": "{root}\\game-basic\\src\\server\\main.server.luau",
+     "output": {
+      "rbxPath": [
+       "ServerScriptService",
+       "server",
+       "main"
+      ],
+      "network": "Server",
+      "isolated": false
+     },
+     "rbxType": "Script",
+     "import": {
+      "rbxPath": [
+       "ServerScriptService",
+       "server",
+       "main"
+      ],
+      "network": "Server",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null,
+     "toRuntimeLib": [
+      "..",
+      "..",
+      "..",
+      "ReplicatedStorage",
+      "rbxts_include",
+      "RuntimeLib"
+     ],
+     "runtimeLibRelation": "OutToOut"
+    },
+    {
+     "fileName": "{root_fwd}/game-basic/src/shared/index.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\game-basic\\out\\shared\\init.luau",
+     "outputDeclarationPath": "{root}\\game-basic\\out\\shared\\index.d.ts",
+     "outputTransformedPath": "{root}\\game-basic\\out\\shared\\index.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\game-basic\\src\\shared\\init.ts",
+      "{root}\\game-basic\\src\\shared\\init.tsx",
+      "{root}\\game-basic\\src\\shared\\index.ts",
+      "{root}\\game-basic\\src\\shared\\index.tsx",
+      "{root}\\game-basic\\src\\shared\\init.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\game-basic\\src\\shared\\index.d.ts"
+     ],
+     "importPath": "{root}\\game-basic\\out\\shared\\init.luau",
+     "importPathNodeModule": "{root}\\game-basic\\src\\shared\\init.luau",
+     "output": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "shared"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "shared"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null,
+     "toRuntimeLib": [
+      "..",
+      "rbxts_include",
+      "RuntimeLib"
+     ],
+     "runtimeLibRelation": "OutToOut"
+    },
+    {
+     "fileName": "{root_fwd}/game-basic/src/shared/module.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\game-basic\\out\\shared\\module.luau",
+     "outputDeclarationPath": "{root}\\game-basic\\out\\shared\\module.d.ts",
+     "outputTransformedPath": "{root}\\game-basic\\out\\shared\\module.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\game-basic\\src\\shared\\module.ts",
+      "{root}\\game-basic\\src\\shared\\module.tsx",
+      "{root}\\game-basic\\src\\shared\\module.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\game-basic\\src\\shared\\module.d.ts"
+     ],
+     "importPath": "{root}\\game-basic\\out\\shared\\module.luau",
+     "importPathNodeModule": "{root}\\game-basic\\src\\shared\\module.luau",
+     "output": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "shared",
+       "module"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "shared",
+       "module"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null,
+     "toRuntimeLib": [
+      "..",
+      "..",
+      "rbxts_include",
+      "RuntimeLib"
+     ],
+     "runtimeLibRelation": "OutToOut"
+    }
+   ],
+   "moduleProbes": [
+    {
+     "from": "{root_fwd}/game-basic/src/notsynced.ts",
+     "specifier": "./does-not-exist",
+     "resolved": null
+    },
+    {
+     "from": "{root_fwd}/game-basic/src/notsynced.ts",
+     "specifier": "@rbxts/not-a-package",
+     "resolved": null
+    }
+   ],
+   "timing": null
+  }
+ ],
+ "error": null,
+ "graphWarnings": [
+  "Ignoring unsupported \"rbxts\" option \"unknownOption\" in \"{root_fwd}/game-basic/tsconfig.json\"."
+ ]
+}

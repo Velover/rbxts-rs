@@ -1,0 +1,193 @@
+{
+ "tool": "dump-project-services",
+ "cwd": "{root}",
+ "tsconfig": "{root}\\composite\\tsconfig.json",
+ "overrides": {},
+ "projects": [
+  {
+   "tsconfig": "{root}\\composite\\tsconfig.json",
+   "isRoot": true,
+   "overrides": null,
+   "data": {
+    "projectPath": "{root}\\composite",
+    "isPackage": false,
+    "nodeModulesPath": "{root}\\composite\\node_modules",
+    "includePath": "{root}\\composite\\include",
+    "rojoConfigPath": "{root}\\composite\\default.project.json",
+    "type": null,
+    "luau": false
+   },
+   "pathTranslator": {
+    "rootDir": "{root}\\composite\\",
+    "outDir": "{root}\\composite\\out",
+    "buildInfoOutputPath": "{root}\\composite\\build\\info.rbxtsc.tsbuildinfo",
+    "declaration": true,
+    "useLuauExtension": false
+   },
+   "setup": {
+    "warnings": [],
+    "diagnostics": [],
+    "fatal": null,
+    "projectType": "game",
+    "runtimeLibRbxPath": [
+     "ReplicatedStorage",
+     "rbxts_include",
+     "RuntimeLib"
+    ],
+    "rojo": {
+     "isGame": true,
+     "warnings": [],
+     "partitions": [
+      {
+       "fsPath": "{root}\\composite\\out",
+       "rbxPath": [
+        "ReplicatedStorage",
+        "out"
+       ]
+      },
+      {
+       "fsPath": "{root}\\composite\\include",
+       "rbxPath": [
+        "ReplicatedStorage",
+        "rbxts_include"
+       ]
+      }
+     ],
+     "fileMounts": []
+    },
+    "pkgRojo": [
+     {
+      "isGame": false,
+      "warnings": [],
+      "partitions": [
+       {
+        "fsPath": "{root}\\composite\\node_modules\\@rbxts",
+        "rbxPath": []
+       }
+      ],
+      "fileMounts": []
+     }
+    ],
+    "nodeModulesPathMapping": []
+   },
+   "files": [
+    {
+     "fileName": "{root_fwd}/composite/src/a.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\composite\\out\\src\\a.lua",
+     "outputDeclarationPath": "{root}\\composite\\out\\src\\a.d.ts",
+     "outputTransformedPath": "{root}\\composite\\out\\src\\a.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\composite\\src\\a.ts",
+      "{root}\\composite\\src\\a.tsx",
+      "{root}\\composite\\src\\a.lua"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\composite\\src\\a.ts",
+      "{root}\\composite\\src\\a.tsx",
+      "{root}\\composite\\src\\a.d.ts"
+     ],
+     "importPath": "{root}\\composite\\out\\src\\a.lua",
+     "importPathNodeModule": "{root}\\composite\\src\\a.lua",
+     "output": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "out",
+       "src",
+       "a"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "out",
+       "src",
+       "a"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null,
+     "toRuntimeLib": [
+      "..",
+      "..",
+      "..",
+      "rbxts_include",
+      "RuntimeLib"
+     ],
+     "runtimeLibRelation": "OutToOut"
+    },
+    {
+     "fileName": "{root_fwd}/composite/src/index.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\composite\\out\\src\\init.lua",
+     "outputDeclarationPath": "{root}\\composite\\out\\src\\index.d.ts",
+     "outputTransformedPath": "{root}\\composite\\out\\src\\index.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\composite\\src\\init.ts",
+      "{root}\\composite\\src\\init.tsx",
+      "{root}\\composite\\src\\index.ts",
+      "{root}\\composite\\src\\index.tsx",
+      "{root}\\composite\\src\\init.lua"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\composite\\src\\index.ts",
+      "{root}\\composite\\src\\index.tsx",
+      "{root}\\composite\\src\\index.d.ts"
+     ],
+     "importPath": "{root}\\composite\\out\\src\\init.lua",
+     "importPathNodeModule": "{root}\\composite\\src\\init.lua",
+     "output": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "out",
+       "src"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "out",
+       "src"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null,
+     "toRuntimeLib": [
+      "..",
+      "..",
+      "rbxts_include",
+      "RuntimeLib"
+     ],
+     "runtimeLibRelation": "OutToOut"
+    }
+   ],
+   "moduleProbes": [
+    {
+     "from": "{root_fwd}/composite/src/a.ts",
+     "specifier": "./does-not-exist",
+     "resolved": null
+    },
+    {
+     "from": "{root_fwd}/composite/src/a.ts",
+     "specifier": "@rbxts/not-a-package",
+     "resolved": null
+    }
+   ],
+   "timing": null
+  }
+ ],
+ "error": null,
+ "graphWarnings": []
+}

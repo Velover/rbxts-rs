@@ -1,0 +1,24 @@
+{
+	"compilerOptions": {
+		"allowSyntheticDefaultImports": true,
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"noLib": true,
+		"moduleDetection": "force",
+		"strict": true,
+		"target": "ESNext",
+		"typeRoots": [
+			"node_modules/@rbxts"
+		],
+		"outDir": "out",
+		"rootDirs": [
+			"src",
+			"shared"
+		],
+		"incremental": true
+	},
+	"include": [
+		"src",
+		"shared"
+	]
+}

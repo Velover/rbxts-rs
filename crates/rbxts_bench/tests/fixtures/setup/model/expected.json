@@ -1,0 +1,180 @@
+{
+ "tool": "dump-project-services",
+ "cwd": "{root}",
+ "tsconfig": "{root}\\model\\tsconfig.json",
+ "overrides": {},
+ "projects": [
+  {
+   "tsconfig": "{root}\\model\\tsconfig.json",
+   "isRoot": true,
+   "overrides": null,
+   "data": {
+    "projectPath": "{root}\\model",
+    "isPackage": false,
+    "nodeModulesPath": "{root}\\model\\node_modules",
+    "includePath": "{root}\\model\\include",
+    "rojoConfigPath": "{root}\\model\\default.project.json",
+    "type": null,
+    "luau": true
+   },
+   "pathTranslator": {
+    "rootDir": "{root}\\model\\src\\",
+    "outDir": "{root}\\model\\out",
+    "buildInfoOutputPath": null,
+    "declaration": true,
+    "useLuauExtension": true
+   },
+   "setup": {
+    "warnings": [],
+    "diagnostics": [],
+    "fatal": null,
+    "projectType": "model",
+    "runtimeLibRbxPath": [
+     "include",
+     "RuntimeLib"
+    ],
+    "rojo": {
+     "isGame": false,
+     "warnings": [],
+     "partitions": [
+      {
+       "fsPath": "{root}\\model\\include",
+       "rbxPath": [
+        "include"
+       ]
+      },
+      {
+       "fsPath": "{root}\\model\\out",
+       "rbxPath": [
+        "out"
+       ]
+      }
+     ],
+     "fileMounts": []
+    },
+    "pkgRojo": [
+     {
+      "isGame": false,
+      "warnings": [],
+      "partitions": [
+       {
+        "fsPath": "{root}\\model\\node_modules\\@rbxts",
+        "rbxPath": []
+       }
+      ],
+      "fileMounts": []
+     }
+    ],
+    "nodeModulesPathMapping": []
+   },
+   "files": [
+    {
+     "fileName": "{root_fwd}/model/src/a.server.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\model\\out\\a.server.luau",
+     "outputDeclarationPath": "{root}\\model\\out\\a.server.d.ts",
+     "outputTransformedPath": "{root}\\model\\out\\a.server.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\model\\src\\a.server.ts",
+      "{root}\\model\\src\\a.server.tsx",
+      "{root}\\model\\src\\a.server.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\model\\src\\a.server.ts",
+      "{root}\\model\\src\\a.server.tsx",
+      "{root}\\model\\src\\a.server.d.ts"
+     ],
+     "importPath": "{root}\\model\\out\\a.server.luau",
+     "importPathNodeModule": "{root}\\model\\src\\a.server.luau",
+     "output": {
+      "rbxPath": [
+       "out",
+       "a"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "rbxType": "Script",
+     "import": {
+      "rbxPath": [
+       "out",
+       "a"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null,
+     "toRuntimeLib": [
+      "..",
+      "..",
+      "include",
+      "RuntimeLib"
+     ],
+     "runtimeLibRelation": "OutToOut"
+    },
+    {
+     "fileName": "{root_fwd}/model/src/index.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\model\\out\\init.luau",
+     "outputDeclarationPath": "{root}\\model\\out\\index.d.ts",
+     "outputTransformedPath": "{root}\\model\\out\\index.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\model\\src\\init.ts",
+      "{root}\\model\\src\\init.tsx",
+      "{root}\\model\\src\\index.ts",
+      "{root}\\model\\src\\index.tsx",
+      "{root}\\model\\src\\init.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\model\\src\\index.ts",
+      "{root}\\model\\src\\index.tsx",
+      "{root}\\model\\src\\index.d.ts"
+     ],
+     "importPath": "{root}\\model\\out\\init.luau",
+     "importPathNodeModule": "{root}\\model\\src\\init.luau",
+     "output": {
+      "rbxPath": [
+       "out"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": [
+       "out"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null,
+     "toRuntimeLib": [
+      "..",
+      "include",
+      "RuntimeLib"
+     ],
+     "runtimeLibRelation": "OutToOut"
+    }
+   ],
+   "moduleProbes": [
+    {
+     "from": "{root_fwd}/model/src/a.server.ts",
+     "specifier": "./does-not-exist",
+     "resolved": null
+    },
+    {
+     "from": "{root_fwd}/model/src/a.server.ts",
+     "specifier": "@rbxts/not-a-package",
+     "resolved": null
+    }
+   ],
+   "timing": null
+  }
+ ],
+ "error": null,
+ "graphWarnings": []
+}

@@ -1,0 +1,12 @@
+{
+	"name": "m",
+	"tree": {
+		"$className": "Folder",
+		"out": {
+			"$path": "out"
+		},
+		"include": {
+			"$path": "include"
+		}
+	}
+}

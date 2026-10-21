@@ -1,0 +1,11 @@
+{
+ "tool": "dump-project-services",
+ "cwd": "{root}",
+ "tsconfig": "{root}\\invalid-options\\tsconfig.json",
+ "overrides": {},
+ "projects": [],
+ "error": [
+  "Invalid \"tsconfig.json\" configuration!\nhttps://roblox-ts.com/docs/quick-start#project-folder-setup\n- \"noLib\" must be true\n- \"strict\" must be true\n- \"module\" and \"moduleResolution\" must be commonjs and \"Node\", or preserve and \"bundler\"\n- \"typeRoots\" must contain a node_modules/@rbxts directory, such as {root}\\invalid-options\\node_modules\\@rbxts\n- \"types\" missing were not found. Make sure the path is relative to `typeRoots`\n- \"outDir\" must be defined\n"
+ ],
+ "graphWarnings": []
+}

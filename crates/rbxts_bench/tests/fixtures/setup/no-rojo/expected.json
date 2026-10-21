@@ -1,0 +1,111 @@
+{
+ "tool": "dump-project-services",
+ "cwd": "{root}",
+ "tsconfig": "{root}\\no-rojo\\tsconfig.json",
+ "overrides": {},
+ "projects": [
+  {
+   "tsconfig": "{root}\\no-rojo\\tsconfig.json",
+   "isRoot": true,
+   "overrides": null,
+   "data": {
+    "projectPath": "{root}\\no-rojo",
+    "isPackage": false,
+    "nodeModulesPath": "{root}\\no-rojo\\node_modules",
+    "includePath": "{root}\\no-rojo\\include",
+    "rojoConfigPath": null,
+    "type": null,
+    "luau": true
+   },
+   "pathTranslator": {
+    "rootDir": "{root}\\no-rojo\\src\\",
+    "outDir": "{root}\\no-rojo\\out",
+    "buildInfoOutputPath": null,
+    "declaration": false,
+    "useLuauExtension": true
+   },
+   "setup": {
+    "warnings": [],
+    "diagnostics": [],
+    "fatal": "Non-package projects must have a Rojo project file!",
+    "projectType": "model",
+    "runtimeLibRbxPath": null,
+    "rojo": {
+     "isGame": false,
+     "warnings": [],
+     "partitions": [
+      {
+       "fsPath": "{root}\\no-rojo\\out",
+       "rbxPath": []
+      }
+     ],
+     "fileMounts": []
+    },
+    "pkgRojo": [
+     {
+      "isGame": false,
+      "warnings": [],
+      "partitions": [
+       {
+        "fsPath": "{root}\\no-rojo\\node_modules\\@rbxts",
+        "rbxPath": []
+       }
+      ],
+      "fileMounts": []
+     }
+    ],
+    "nodeModulesPathMapping": []
+   },
+   "files": [
+    {
+     "fileName": "{root_fwd}/no-rojo/src/index.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\no-rojo\\out\\init.luau",
+     "outputDeclarationPath": "{root}\\no-rojo\\out\\index.d.ts",
+     "outputTransformedPath": "{root}\\no-rojo\\out\\index.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\no-rojo\\src\\init.ts",
+      "{root}\\no-rojo\\src\\init.tsx",
+      "{root}\\no-rojo\\src\\index.ts",
+      "{root}\\no-rojo\\src\\index.tsx",
+      "{root}\\no-rojo\\src\\init.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\no-rojo\\src\\index.d.ts"
+     ],
+     "importPath": "{root}\\no-rojo\\out\\init.luau",
+     "importPathNodeModule": "{root}\\no-rojo\\src\\init.luau",
+     "output": {
+      "rbxPath": [],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": [],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null
+    }
+   ],
+   "moduleProbes": [
+    {
+     "from": "{root_fwd}/no-rojo/src/index.ts",
+     "specifier": "./does-not-exist",
+     "resolved": null
+    },
+    {
+     "from": "{root_fwd}/no-rojo/src/index.ts",
+     "specifier": "@rbxts/not-a-package",
+     "resolved": null
+    }
+   ],
+   "timing": null
+  }
+ ],
+ "error": null,
+ "graphWarnings": []
+}

@@ -1,0 +1,6 @@
+{
+	"rbxts": {
+		"includePath": "vendor/include",
+		"optimizedLoops": false
+	}
+}

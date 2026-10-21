@@ -3,11 +3,15 @@
 //!   time per phase and peak memory.
 //! - `rbxts-bench luau-parity`: render Luau trees dumped from roblox-ts (`tools/dump-luau-ast.cjs`) with
 //!   `rbxts_luau` and compare the text byte for byte.
+//! - `rbxts-bench project-parity`: compare rbxts_project's project setup (Rojo resolver, path translator, checks) with
+//!   roblox-ts's on the same project (`tools/dump-project-services.cjs`), value by value.
 //!
 //! rbxts-bench load [-p tsconfig.json] [--checkers N] [--lazy-dts] [--check project|all|none] [--json]
 //! rbxts-bench luau-parity <dump.jsonl>... [--show N] [--repeat N]
+//! rbxts-bench project-parity <dump.json> [--runs N] [--max-diffs N]
 
 mod luau_parity;
+mod project_parity;
 
 #[global_allocator]
 static GLOBAL: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
@@ -225,6 +229,9 @@ fn run(args: &Args) -> i32 {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("project-parity") {
+        std::process::exit(project_parity::main(std::env::args().skip(2).collect()));
+    }
     if std::env::args().nth(1).as_deref() == Some("luau-parity") {
         // Deep trees recurse deeply, as checking does.
         let status = std::thread::Builder::new()

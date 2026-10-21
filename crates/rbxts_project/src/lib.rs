@@ -1,8 +1,23 @@
 //! A roblox-ts project as a tsrs program, loaded in-process: the tsconfig, the program, and type checking of the
-//! project's own files.
+//! project's own files; and the project setup that precedes transforming (`setup`): the Rojo resolver (`rojo`), the
+//! path translator (`path_translator`) and roblox-ts's checks, shared with plugins as `ProjectServices`.
+
+pub mod nodepath;
+pub mod packages;
+pub mod path_translator;
+pub mod rojo;
+pub mod setup;
+
+pub use packages::{ModuleResolver, PackageInfo, PackageJsonCache, ResolvedModuleInfo};
+pub use path_translator::PathTranslator;
+pub use rojo::{FileRelation, NetworkType, Partition, RbxPath, RbxType, RelativeRbxPathPart, RojoError, RojoResolver};
+pub use setup::{
+    FileRojoInfo, InputFile, ProjectData, ProjectDiagnostic, ProjectError, ProjectOptionLayer, ProjectOptions,
+    ProjectServices, ProjectSetup, ProjectType, Severity,
+};
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tsrs_ast::{Diagnostic, SourceFile, is_json_source_file};
@@ -33,6 +48,9 @@ pub struct Project {
     pub config_time: Duration,
     /// `new_program`: reading, parsing, binding and module resolution of every file.
     pub program_time: Duration,
+    /// The working directory the project was loaded from (TypeScript spelling).
+    pub cwd: String,
+    module_resolver: OnceLock<ModuleResolver>,
 }
 
 struct ConfigHost {
@@ -79,7 +97,7 @@ pub fn load(opts: &LoadOptions) -> Result<Project, Vec<P<Diagnostic>>> {
     let program = new_program(ProgramOptions::new(config, compiler_host));
     let program_time = start.elapsed();
 
-    Ok(Project { config, program, checkers: opts.checkers, config_time, program_time })
+    Ok(Project { config, program, checkers: opts.checkers, config_time, program_time, cwd, module_resolver: OnceLock::new() })
 }
 
 impl Project {
@@ -142,5 +160,62 @@ impl Project {
     /// The number of checkers the program really has (tsrs caps the requested count by the file count).
     pub fn checker_count(&self) -> usize {
         self.program.checker_count()
+    }
+
+    /// Where `specifier` resolves when imported from `from` (Flamework's `resolveModule`): the program's own
+    /// resolution when the file imports it, else a resolver with the program's options.
+    pub fn resolve_module(&self, specifier: &str, from: P<SourceFile>) -> Option<ResolvedModuleInfo> {
+        let mode = self.program.get_default_resolution_mode_for_file(from);
+        if let Some(resolved) = self.program.get_resolved_module(from, specifier, mode).filter(|r| r.is_resolved()) {
+            return Some(ResolvedModuleInfo {
+                file_name: resolved.resolved_file_name.to_owned(),
+                is_external_library_import: resolved.is_external_library_import,
+                package_name: (!resolved.package_id.name.is_empty()).then(|| resolved.package_id.name.to_owned()),
+            });
+        }
+        self.module_resolver
+            .get_or_init(|| ModuleResolver::new(self.program.options(), &self.cwd))
+            .resolve(specifier, from.get().file_name(), mode)
+    }
+
+    /// Every program source file in program order, with what setup needs to know of it.
+    pub fn input_files(&self) -> Vec<InputFile<'static>> {
+        self.program
+            .source_files()
+            .iter()
+            .map(|&f| InputFile {
+                file_name: f.get().file_name(),
+                is_declaration: f.is_declaration_file(),
+                is_external_library: self.program.is_source_file_from_external_library(f),
+            })
+            .collect()
+    }
+
+    /// roblox-ts's setup for this project: the `rbxts` options under `overrides` (command-line options), the project
+    /// data, the compiler-option checks, the path translator and the Rojo resolvers, then `compileFiles`'s checks.
+    /// `tsconfig_path` is used as spelled when absolute (roblox-ts's CLI passes it through `path.resolve`), else
+    /// resolved against the current directory; the spelling carries into the project's paths.
+    pub fn setup(&self, tsconfig_path: &str, overrides: &ProjectOptionLayer) -> Result<ProjectSetup, ProjectError> {
+        let tsconfig_path = if nodepath::is_absolute(tsconfig_path) {
+            tsconfig_path.to_owned()
+        } else {
+            nodepath::resolve(&[tsconfig_path])
+        };
+        // as TypeScript's solution builder spells the config path for roblox-ts (forward slashes, in messages)
+        let rbxts = setup::read_project_options(&tspath::normalize_path(&tsconfig_path))?;
+        let options = ProjectOptions::from_layers(&[&rbxts.options, overrides]);
+        let mut data = setup::create_project_data(&tsconfig_path, options)?;
+        data.warnings.splice(0..0, rbxts.warnings);
+        let raw_options = self.program.options();
+        // getParsedCommandLine: a composite project without rootDir gets the tsconfig's directory, before validation
+        // and for everything after it (the build info path was already computed from the raw options)
+        let mut options = (*raw_options).clone();
+        if options.composite.is_true() && options.root_dir.is_empty() {
+            options.root_dir = nodepath::dirname(&tsconfig_path).to_owned();
+        }
+        setup::validate_compiler_options(&options, &data.project_path)?;
+        let case_sensitive = osvfs::fs().use_case_sensitive_file_names();
+        let translator = setup::create_path_translator(&raw_options, self.config.file_names(), &data, case_sensitive);
+        ProjectSetup::new(data, translator, &options, &self.input_files(), case_sensitive)
     }
 }

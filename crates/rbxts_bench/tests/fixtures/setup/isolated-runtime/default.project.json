@@ -1,0 +1,16 @@
+{
+	"name": "fixture",
+	"tree": {
+		"$className": "DataModel",
+		"PluginDebugService": {
+			"rbxts_include": {
+				"$path": "include"
+			}
+		},
+		"ReplicatedStorage": {
+			"out": {
+				"$path": "out"
+			}
+		}
+	}
+}

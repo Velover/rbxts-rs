@@ -21,6 +21,9 @@ tsrs_diagnostics = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/
 mimalloc-safe = { version = "0.1.67", features = ["v3", "no_thp"] }
 rbxts_project = { path = "crates/rbxts_project" }
 rbxts_luau = { path = "crates/rbxts_luau" }
+# preserve_order: Rojo trees iterate children in file order, as JavaScript objects do.
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+tsrs_module = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_module" }
 
 # A debug checker is unusably slow, so even dev builds are optimised (as in tsrs).
 [profile.dev]

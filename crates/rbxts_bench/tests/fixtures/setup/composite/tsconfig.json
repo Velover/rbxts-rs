@@ -1,0 +1,23 @@
+{
+	"compilerOptions": {
+		"allowSyntheticDefaultImports": true,
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"noLib": true,
+		"moduleDetection": "force",
+		"strict": true,
+		"target": "ESNext",
+		"typeRoots": [
+			"node_modules/@rbxts"
+		],
+		"outDir": "out",
+		"composite": true,
+		"tsBuildInfoFile": "build/info.tsbuildinfo"
+	},
+	"include": [
+		"src"
+	],
+	"rbxts": {
+		"luau": false
+	}
+}

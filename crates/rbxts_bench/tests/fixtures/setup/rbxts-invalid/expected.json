@@ -1,0 +1,11 @@
+{
+ "tool": "dump-project-services",
+ "cwd": "{root}",
+ "tsconfig": "{root}\\rbxts-invalid\\tsconfig.json",
+ "overrides": {},
+ "projects": [],
+ "error": [
+  "Invalid \"rbxts\" configuration in \"{root_fwd}/rbxts-invalid/tsconfig.json\": \"type\" must be \"game\", \"model\", or \"package\""
+ ],
+ "graphWarnings": []
+}

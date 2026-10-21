@@ -1,0 +1,137 @@
+{
+ "tool": "dump-project-services",
+ "cwd": "{root}",
+ "tsconfig": "{root}\\rbxts-rojo\\tsconfig.json",
+ "overrides": {},
+ "projects": [
+  {
+   "tsconfig": "{root}\\rbxts-rojo\\tsconfig.json",
+   "isRoot": true,
+   "overrides": null,
+   "data": {
+    "projectPath": "{root}\\rbxts-rojo",
+    "isPackage": false,
+    "nodeModulesPath": "{root}\\rbxts-rojo\\node_modules",
+    "includePath": "{root}\\rbxts-rojo\\runtime",
+    "rojoConfigPath": "{root}\\rbxts-rojo\\config\\game.project.json",
+    "type": "game",
+    "luau": true
+   },
+   "pathTranslator": {
+    "rootDir": "{root}\\rbxts-rojo\\src\\",
+    "outDir": "{root}\\rbxts-rojo\\out",
+    "buildInfoOutputPath": null,
+    "declaration": false,
+    "useLuauExtension": true
+   },
+   "setup": {
+    "warnings": [],
+    "diagnostics": [],
+    "fatal": null,
+    "projectType": "game",
+    "runtimeLibRbxPath": [
+     "ReplicatedStorage",
+     "rt",
+     "RuntimeLib"
+    ],
+    "rojo": {
+     "isGame": true,
+     "warnings": [],
+     "partitions": [
+      {
+       "fsPath": "{root}\\rbxts-rojo\\out",
+       "rbxPath": [
+        "ReplicatedStorage",
+        "out"
+       ]
+      },
+      {
+       "fsPath": "{root}\\rbxts-rojo\\runtime",
+       "rbxPath": [
+        "ReplicatedStorage",
+        "rt"
+       ]
+      }
+     ],
+     "fileMounts": []
+    },
+    "pkgRojo": [
+     {
+      "isGame": false,
+      "warnings": [],
+      "partitions": [
+       {
+        "fsPath": "{root}\\rbxts-rojo\\node_modules\\@rbxts",
+        "rbxPath": []
+       }
+      ],
+      "fileMounts": []
+     }
+    ],
+    "nodeModulesPathMapping": []
+   },
+   "files": [
+    {
+     "fileName": "{root_fwd}/rbxts-rojo/src/index.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\rbxts-rojo\\out\\init.luau",
+     "outputDeclarationPath": "{root}\\rbxts-rojo\\out\\index.d.ts",
+     "outputTransformedPath": "{root}\\rbxts-rojo\\out\\index.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\rbxts-rojo\\src\\init.ts",
+      "{root}\\rbxts-rojo\\src\\init.tsx",
+      "{root}\\rbxts-rojo\\src\\index.ts",
+      "{root}\\rbxts-rojo\\src\\index.tsx",
+      "{root}\\rbxts-rojo\\src\\init.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\rbxts-rojo\\src\\index.d.ts"
+     ],
+     "importPath": "{root}\\rbxts-rojo\\out\\init.luau",
+     "importPathNodeModule": "{root}\\rbxts-rojo\\src\\init.luau",
+     "output": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "out"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "out"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null,
+     "toRuntimeLib": [
+      "..",
+      "rt",
+      "RuntimeLib"
+     ],
+     "runtimeLibRelation": "OutToOut"
+    }
+   ],
+   "moduleProbes": [
+    {
+     "from": "{root_fwd}/rbxts-rojo/src/index.ts",
+     "specifier": "./does-not-exist",
+     "resolved": null
+    },
+    {
+     "from": "{root_fwd}/rbxts-rojo/src/index.ts",
+     "specifier": "@rbxts/not-a-package",
+     "resolved": null
+    }
+   ],
+   "timing": null
+  }
+ ],
+ "error": null,
+ "graphWarnings": []
+}

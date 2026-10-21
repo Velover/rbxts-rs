@@ -1,0 +1,190 @@
+{
+ "tool": "dump-project-services",
+ "cwd": "{root}",
+ "tsconfig": "{root}\\rootdirs\\tsconfig.json",
+ "overrides": {},
+ "projects": [
+  {
+   "tsconfig": "{root}\\rootdirs\\tsconfig.json",
+   "isRoot": true,
+   "overrides": null,
+   "data": {
+    "projectPath": "{root}\\rootdirs",
+    "isPackage": false,
+    "nodeModulesPath": "{root}\\rootdirs\\node_modules",
+    "includePath": "{root}\\rootdirs\\include",
+    "rojoConfigPath": "{root}\\rootdirs\\default.project.json",
+    "type": null,
+    "luau": true
+   },
+   "pathTranslator": {
+    "rootDir": "{root}\\rootdirs\\",
+    "outDir": "{root}\\rootdirs\\out",
+    "buildInfoOutputPath": "{root}\\rootdirs\\out\\tsconfig.rbxtsc.tsbuildinfo",
+    "declaration": false,
+    "useLuauExtension": true
+   },
+   "setup": {
+    "warnings": [],
+    "diagnostics": [],
+    "fatal": null,
+    "projectType": "game",
+    "runtimeLibRbxPath": [
+     "ReplicatedStorage",
+     "rbxts_include",
+     "RuntimeLib"
+    ],
+    "rojo": {
+     "isGame": true,
+     "warnings": [],
+     "partitions": [
+      {
+       "fsPath": "{root}\\rootdirs\\out",
+       "rbxPath": [
+        "ReplicatedStorage",
+        "out"
+       ]
+      },
+      {
+       "fsPath": "{root}\\rootdirs\\include",
+       "rbxPath": [
+        "ReplicatedStorage",
+        "rbxts_include"
+       ]
+      }
+     ],
+     "fileMounts": []
+    },
+    "pkgRojo": [
+     {
+      "isGame": false,
+      "warnings": [],
+      "partitions": [
+       {
+        "fsPath": "{root}\\rootdirs\\node_modules\\@rbxts",
+        "rbxPath": []
+       }
+      ],
+      "fileMounts": []
+     }
+    ],
+    "nodeModulesPathMapping": []
+   },
+   "files": [
+    {
+     "fileName": "{root_fwd}/rootdirs/src/a.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\rootdirs\\out\\src\\a.luau",
+     "outputDeclarationPath": "{root}\\rootdirs\\out\\src\\a.d.ts",
+     "outputTransformedPath": "{root}\\rootdirs\\out\\src\\a.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\rootdirs\\src\\a.ts",
+      "{root}\\rootdirs\\src\\a.tsx",
+      "{root}\\rootdirs\\src\\a.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\rootdirs\\src\\a.d.ts"
+     ],
+     "importPath": "{root}\\rootdirs\\out\\src\\a.luau",
+     "importPathNodeModule": "{root}\\rootdirs\\src\\a.luau",
+     "output": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "out",
+       "src",
+       "a"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "out",
+       "src",
+       "a"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null,
+     "toRuntimeLib": [
+      "..",
+      "..",
+      "..",
+      "rbxts_include",
+      "RuntimeLib"
+     ],
+     "runtimeLibRelation": "OutToOut"
+    },
+    {
+     "fileName": "{root_fwd}/rootdirs/shared/b.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\rootdirs\\out\\shared\\b.luau",
+     "outputDeclarationPath": "{root}\\rootdirs\\out\\shared\\b.d.ts",
+     "outputTransformedPath": "{root}\\rootdirs\\out\\shared\\b.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\rootdirs\\shared\\b.ts",
+      "{root}\\rootdirs\\shared\\b.tsx",
+      "{root}\\rootdirs\\shared\\b.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\rootdirs\\shared\\b.d.ts"
+     ],
+     "importPath": "{root}\\rootdirs\\out\\shared\\b.luau",
+     "importPathNodeModule": "{root}\\rootdirs\\shared\\b.luau",
+     "output": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "out",
+       "shared",
+       "b"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": [
+       "ReplicatedStorage",
+       "out",
+       "shared",
+       "b"
+      ],
+      "network": "Unknown",
+      "isolated": false
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null,
+     "toRuntimeLib": [
+      "..",
+      "..",
+      "..",
+      "rbxts_include",
+      "RuntimeLib"
+     ],
+     "runtimeLibRelation": "OutToOut"
+    }
+   ],
+   "moduleProbes": [
+    {
+     "from": "{root_fwd}/rootdirs/src/a.ts",
+     "specifier": "./does-not-exist",
+     "resolved": null
+    },
+    {
+     "from": "{root_fwd}/rootdirs/src/a.ts",
+     "specifier": "@rbxts/not-a-package",
+     "resolved": null
+    }
+   ],
+   "timing": null
+  }
+ ],
+ "error": null,
+ "graphWarnings": []
+}

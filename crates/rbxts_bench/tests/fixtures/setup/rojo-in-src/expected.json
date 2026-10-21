@@ -1,0 +1,126 @@
+{
+ "tool": "dump-project-services",
+ "cwd": "{root}",
+ "tsconfig": "{root}\\rojo-in-src\\tsconfig.json",
+ "overrides": {},
+ "projects": [
+  {
+   "tsconfig": "{root}\\rojo-in-src\\tsconfig.json",
+   "isRoot": true,
+   "overrides": null,
+   "data": {
+    "projectPath": "{root}\\rojo-in-src",
+    "isPackage": false,
+    "nodeModulesPath": "{root}\\rojo-in-src\\node_modules",
+    "includePath": "{root}\\rojo-in-src\\include",
+    "rojoConfigPath": "{root}\\rojo-in-src\\default.project.json",
+    "type": null,
+    "luau": true
+   },
+   "pathTranslator": {
+    "rootDir": "{root}\\rojo-in-src\\src\\",
+    "outDir": "{root}\\rojo-in-src\\out",
+    "buildInfoOutputPath": null,
+    "declaration": false,
+    "useLuauExtension": true
+   },
+   "setup": {
+    "warnings": [],
+    "diagnostics": [
+     {
+      "severity": "error",
+      "message": "Invalid Rojo configuration. $path fields should be relative to out directory.\nSuggestion: Change the value of $path from \"src\" to \"out\"."
+     }
+    ],
+    "fatal": "Runtime library cannot be in a server-only or client-only container!",
+    "projectType": "game",
+    "runtimeLibRbxPath": null,
+    "rojo": {
+     "isGame": true,
+     "warnings": [],
+     "partitions": [
+      {
+       "fsPath": "{root}\\rojo-in-src\\src",
+       "rbxPath": [
+        "ServerScriptService",
+        "src"
+       ]
+      },
+      {
+       "fsPath": "{root}\\rojo-in-src\\include",
+       "rbxPath": [
+        "ServerScriptService",
+        "rbxts_include"
+       ]
+      }
+     ],
+     "fileMounts": []
+    },
+    "pkgRojo": [
+     {
+      "isGame": false,
+      "warnings": [],
+      "partitions": [
+       {
+        "fsPath": "{root}\\rojo-in-src\\node_modules\\@rbxts",
+        "rbxPath": []
+       }
+      ],
+      "fileMounts": []
+     }
+    ],
+    "nodeModulesPathMapping": []
+   },
+   "files": [
+    {
+     "fileName": "{root_fwd}/rojo-in-src/src/index.ts",
+     "isDeclaration": false,
+     "isExternalLibrary": false,
+     "outputPath": "{root}\\rojo-in-src\\out\\init.luau",
+     "outputDeclarationPath": "{root}\\rojo-in-src\\out\\index.d.ts",
+     "outputTransformedPath": "{root}\\rojo-in-src\\out\\index.transformed.ts",
+     "inputPathsOfOutput": [
+      "{root}\\rojo-in-src\\src\\init.ts",
+      "{root}\\rojo-in-src\\src\\init.tsx",
+      "{root}\\rojo-in-src\\src\\index.ts",
+      "{root}\\rojo-in-src\\src\\index.tsx",
+      "{root}\\rojo-in-src\\src\\init.luau"
+     ],
+     "inputPathsOfDeclaration": [
+      "{root}\\rojo-in-src\\src\\index.d.ts"
+     ],
+     "importPath": "{root}\\rojo-in-src\\out\\init.luau",
+     "importPathNodeModule": "{root}\\rojo-in-src\\src\\init.luau",
+     "output": {
+      "rbxPath": null,
+      "network": null,
+      "isolated": null
+     },
+     "rbxType": "ModuleScript",
+     "import": {
+      "rbxPath": null,
+      "network": null,
+      "isolated": null
+     },
+     "nodeModuleImport": null,
+     "packageRelative": null
+    }
+   ],
+   "moduleProbes": [
+    {
+     "from": "{root_fwd}/rojo-in-src/src/index.ts",
+     "specifier": "./does-not-exist",
+     "resolved": null
+    },
+    {
+     "from": "{root_fwd}/rojo-in-src/src/index.ts",
+     "specifier": "@rbxts/not-a-package",
+     "resolved": null
+    }
+   ],
+   "timing": null
+  }
+ ],
+ "error": null,
+ "graphWarnings": []
+}
