@@ -7,6 +7,7 @@ use tsrs_core::P;
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
 use crate::nodes::transform_logical::transform_logical;
+use crate::nodes::transform_logical_or_coalescing_assignment_expression::transform_logical_or_coalescing_assignment_expression;
 use crate::nodes::transform_writable::transform_writable_assignment;
 use crate::shared::diagnostics::errors;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
@@ -42,7 +43,7 @@ pub fn transform_binary_expression(state: &mut TransformState<'_>, prereqs: &mut
     }
 
     if tsrs_ast::is_logical_or_coalescing_assignment_expression(node) {
-        return state.unsupported_subtree(node, "logical assignment (&&=, ||=, ??=)");
+        return transform_logical_or_coalescing_assignment_expression(state, prereqs, node);
     }
 
     if tsrs_ast::is_assignment_operator(operator_kind) {

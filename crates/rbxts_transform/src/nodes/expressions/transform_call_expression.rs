@@ -8,6 +8,7 @@ use tsrs_core::P;
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
+use crate::nodes::expressions::transform_import_expression::transform_import_expression;
 use crate::nodes::transform_macro_call::{MacroKind, transform_macro_call};
 use crate::nodes::transform_optional_chain::transform_optional_chain;
 use crate::util::add_one_if_array_type::add_one_if_array_type;
@@ -51,7 +52,7 @@ pub fn transform_call_expression_inner(
     node_arguments: &[P<Node>],
 ) -> Expr {
     if tsrs_ast::is_import_call(node) {
-        return state.unsupported(node, "ImportCall");
+        return transform_import_expression(state, node);
     }
 
     let callee = node.expression().expect("a call has a callee");

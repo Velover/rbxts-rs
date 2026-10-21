@@ -7,6 +7,7 @@ use tsrs_core::P;
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
+use crate::nodes::transform_logical_or_coalescing_assignment_expression::transform_logical_or_coalescing_assignment_expression_statement;
 use crate::nodes::transform_writable::{transform_writable_assignment, transform_writable_expression};
 use crate::util::create_binary_from_operator::{
     create_assignment_statement, create_compound_assignment_statement, get_assignable_value,
@@ -38,8 +39,7 @@ pub fn transform_expression_statement_inner(state: &mut TransformState<'_>, expr
         let operator_kind = binary.operator_token.kind();
         let (left, right) = (binary.left, binary.right());
         if tsrs_ast::is_logical_or_coalescing_assignment_expression(expression) {
-            state.unsupported_subtree(expression, "logical assignment (&&=, ||=, ??=)");
-            return Vec::new();
+            return transform_logical_or_coalescing_assignment_expression_statement(state, expression);
         } else if tsrs_ast::is_assignment_operator(operator_kind)
             && left.kind() != Kind::ArrayLiteralExpression
             && left.kind() != Kind::ObjectLiteralExpression

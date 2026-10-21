@@ -11,8 +11,11 @@ use crate::util::evaluation::facts::mark_primitive_value;
 use crate::util::types::{is_boolean_type, is_definitely_type, is_number_type, is_string_type, is_undefined_type};
 use crate::util::validate_method_assignment::validate_method_expression;
 
+use super::transform_await_expression::transform_await_expression;
 use super::transform_binary_expression::transform_binary_expression;
 use super::transform_call_expression::transform_call_expression;
+use super::transform_conditional_expression::transform_conditional_expression;
+use super::transform_delete_expression::transform_delete_expression;
 use super::transform_element_access_expression::transform_element_access_expression;
 use super::transform_function_expression::transform_function_expression;
 use super::transform_identifier::transform_identifier;
@@ -21,11 +24,13 @@ use super::transform_numeric_literal::transform_numeric_literal;
 use super::transform_parenthesized_expression::transform_parenthesized_expression;
 use super::transform_property_access_expression::transform_property_access_expression;
 use super::transform_string_literal::transform_string_literal;
+use super::transform_tagged_template_expression::transform_tagged_template_expression;
 use super::transform_template_expression::transform_template_expression;
 use super::transform_this_expression::transform_this_expression;
 use super::transform_type_expression::transform_type_expression;
 use super::transform_unary_expression::{transform_postfix_unary_expression, transform_prefix_unary_expression};
 use super::transform_void_expression::transform_void_expression;
+use super::transform_yield_expression::transform_yield_expression;
 
 /// The label of a node kind in diagnostics and the parity report (`getKindName`).
 pub fn kind_name(kind: Kind) -> String {
@@ -67,8 +72,11 @@ pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereq
         | Kind::NonNullExpression
         | Kind::SatisfiesExpression
         | Kind::TypeAssertionExpression => transform_type_expression(state, prereqs, node),
+        Kind::AwaitExpression => transform_await_expression(state, prereqs, node),
         Kind::BinaryExpression => transform_binary_expression(state, prereqs, node),
         Kind::CallExpression => transform_call_expression(state, prereqs, node),
+        Kind::ConditionalExpression => transform_conditional_expression(state, prereqs, node),
+        Kind::DeleteExpression => transform_delete_expression(state, prereqs, node),
         Kind::ElementAccessExpression => transform_element_access_expression(state, prereqs, node),
         Kind::FalseKeyword => Expr::False,
         Kind::TrueKeyword => Expr::True,
@@ -82,25 +90,22 @@ pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereq
         Kind::PropertyAccessExpression => transform_property_access_expression(state, prereqs, node),
         Kind::StringLiteral => transform_string_literal(node),
         Kind::SuperKeyword => globals::super_(),
+        Kind::TaggedTemplateExpression => transform_tagged_template_expression(state, prereqs, node),
         Kind::TemplateExpression => transform_template_expression(state, prereqs, node),
         Kind::ThisKeyword => transform_this_expression(state, node),
         Kind::VoidExpression => transform_void_expression(state, prereqs, node),
+        Kind::YieldExpression => transform_yield_expression(state, prereqs, node),
 
         // rbxts-rs: kinds roblox-ts transforms that are not ported yet
         Kind::ArrayLiteralExpression
-        | Kind::AwaitExpression
         | Kind::ClassExpression
-        | Kind::ConditionalExpression
-        | Kind::DeleteExpression
         | Kind::JsxElement
         | Kind::JsxExpression
         | Kind::JsxFragment
         | Kind::JsxSelfClosingElement
         | Kind::NewExpression
         | Kind::ObjectLiteralExpression
-        | Kind::SpreadElement
-        | Kind::TaggedTemplateExpression
-        | Kind::YieldExpression => return state.unsupported_subtree(node, &kind_name(node.kind())),
+        | Kind::SpreadElement => return state.unsupported_subtree(node, &kind_name(node.kind())),
 
         kind => {
             // roblox-ts asserts here; a diagnostic keeps the build going

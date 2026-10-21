@@ -36,10 +36,7 @@ pub fn is_unsupported_expression_kind(kind: Kind) -> bool {
     matches!(
         kind,
         Kind::ArrayLiteralExpression
-            | Kind::AwaitExpression
             | Kind::ClassExpression
-            | Kind::ConditionalExpression
-            | Kind::DeleteExpression
             | Kind::JsxElement
             | Kind::JsxExpression
             | Kind::JsxFragment
@@ -47,8 +44,6 @@ pub fn is_unsupported_expression_kind(kind: Kind) -> bool {
             | Kind::NewExpression
             | Kind::ObjectLiteralExpression
             | Kind::SpreadElement
-            | Kind::TaggedTemplateExpression
-            | Kind::YieldExpression
     )
 }
 
@@ -59,7 +54,7 @@ fn is_binding_pattern(node: P<Node>) -> bool {
 /// The macro a call expands, as the transform labels it.
 fn macro_label(state: &mut TransformState<'_>, call: P<Node>) -> Option<String> {
     if tsrs_ast::is_import_call(call) {
-        return Some("ImportCall".to_owned());
+        return None;
     }
     let callee = call.expression()?;
     if callee.kind() == Kind::SuperKeyword {
@@ -98,9 +93,7 @@ fn classify(state: &mut TransformState<'_>, node: P<Node>) -> Option<String> {
         }
         Kind::BinaryExpression => {
             let binary = node.as_binary_expression();
-            if tsrs_ast::is_logical_or_coalescing_assignment_expression(node) {
-                Some("logical assignment (&&=, ||=, ??=)".to_owned())
-            } else if tsrs_ast::is_assignment_operator(binary.operator_token.kind()) {
+            if tsrs_ast::is_assignment_operator(binary.operator_token.kind()) {
                 match binary.left.kind() {
                     Kind::ArrayLiteralExpression => Some("array destructuring assignment".to_owned()),
                     Kind::ObjectLiteralExpression => Some("object destructuring assignment".to_owned()),
