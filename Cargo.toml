@@ -1,0 +1,40 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+
+# tsrs, pinned: a worktree of the tsrs clone on branch `rbxts-fork` (v0.18.0 plus visibility flips).
+# Cargo.lock started as a copy of tsrs's lock file so the transitive versions match what tsrs tests with.
+[workspace.dependencies]
+tsrs_core = { path = "../worktrees/tsrs-rbxts-fork/crates/tsrs_core" }
+tsrs_ast = { path = "../worktrees/tsrs-rbxts-fork/crates/tsrs_ast" }
+tsrs_vfs = { path = "../worktrees/tsrs-rbxts-fork/crates/tsrs_vfs" }
+tsrs_tsoptions = { path = "../worktrees/tsrs-rbxts-fork/crates/tsrs_tsoptions" }
+tsrs_compiler = { path = "../worktrees/tsrs-rbxts-fork/crates/tsrs_compiler" }
+tsrs_diagnostics = { path = "../worktrees/tsrs-rbxts-fork/crates/tsrs_diagnostics" }
+mimalloc-safe = { version = "0.1.67", features = ["v3", "no_thp"] }
+rbxts_project = { path = "crates/rbxts_project" }
+
+# A debug checker is unusably slow, so even dev builds are optimised (as in tsrs).
+[profile.dev]
+opt-level = 3
+lto = "off"
+codegen-units = 256
+incremental = true
+
+# Measurements: release optimisation without LTO, like tsrs's `ci` profile (the tsrs.exe we compare against).
+[profile.measure]
+inherits = "release"
+lto = "off"
+codegen-units = 16
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "unwind"
