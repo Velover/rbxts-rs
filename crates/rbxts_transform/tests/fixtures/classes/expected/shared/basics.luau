@@ -25,6 +25,7 @@ do
 		self.w = w
 		self.x = 0
 		self.label = "point"
+		-- a comment on the first statement of a constructor without super()
 		self.y = y
 		print("made", self.x, self.y)
 	end

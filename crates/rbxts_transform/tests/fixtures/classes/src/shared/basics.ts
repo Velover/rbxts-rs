@@ -11,6 +11,7 @@ export class Point {
 	private unset?: string;
 
 	constructor(y: number, public readonly z: number, protected w = 3) {
+		// a comment on the first statement of a constructor without super()
 		this.y = y;
 		print("made", this.x, this.y);
 	}
