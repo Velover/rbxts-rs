@@ -2,7 +2,7 @@
 //! `compile_expr(call.node)` ([`IdentityMode::Expr`]) or `compile_call(Callee::Original, all Original)`
 //! ([`IdentityMode::Call`]). Its output must equal a build without plugins: a check of the lowering primitives on a
 //! whole corpus (`rbxts-bench build --plugin identity-expr --parity …`). Calls of the compiler-types (roblox-ts's
-//! macros) are declined, as `compile_call` cannot pass argument slots to a macro; call shapes S1 does not offer
+//! macros) and of `@rbxts/types` (where some of them are declared) are declined, as `compile_call` cannot pass argument slots to a macro; call shapes S1 does not offer
 //! (`o.m?.()`, `super.m()`) are reported as internal errors by the compiler.
 
 use std::sync::Arc;
@@ -57,8 +57,11 @@ impl PluginInstance for IdentityInstance {
     }
 
     fn classify_symbol(&self, cx: &mut Cx<'_>, symbol: P<Symbol>, role: SymbolRole) -> Option<Tag> {
-        let macros =
-            cx.declaring_package(symbol).and_then(|p| p.name.clone()).as_deref() == Some("@rbxts/compiler-types");
+        // roblox-ts's macros are declared in these two packages (`String.gmatch`, `Vector3.mul`, …)
+        let macros = matches!(
+            cx.declaring_package(symbol).and_then(|p| p.name.clone()).as_deref(),
+            Some("@rbxts/compiler-types" | "@rbxts/types")
+        );
         (role == SymbolRole::Callee && !macros).then_some(Tag(0))
     }
 

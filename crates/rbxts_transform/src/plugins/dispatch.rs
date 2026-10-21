@@ -10,7 +10,7 @@ use tsrs_core::P;
 
 use super::HookKind;
 use super::backend::{CallContext, CallShape, access_call_kind, run_classify, run_hook};
-use super::file_state::{ImportOverrides, PluginImport, RootRange, declared_locals};
+use super::file_state::{EffectMark, ImportOverrides, PluginImport, RootRange, declared_locals};
 use super::host::PluginHost;
 use crate::classes::prereqs::{Prereqs, temp_id};
 use crate::classes::transform_state::TransformState;
@@ -146,7 +146,7 @@ fn offer_call(
     context: &mut CallContext,
     candidates: &[(usize, Tag)],
 ) -> Option<Expr> {
-    let start = prereqs.statements.len();
+    let start = state.plugin_file.effect_mark(prereqs.statements.len());
     let site = context.site;
     for (position, &(plugin, tag)) in candidates.iter().enumerate() {
         let result =
@@ -167,26 +167,26 @@ fn offer_call(
     None
 }
 
-/// A declined call must leave nothing behind but a receiver the next plugin or roblox-ts reuses.
+/// A declined call must leave nothing behind (its own effects or those of hooks nested in it, through
+/// `compile_expr` of an argument) but a receiver the next plugin or roblox-ts reuses.
 fn check_decline(
     state: &mut TransformState<'_>,
     host: &PluginHost,
     prereqs: &Prereqs,
     context: &mut CallContext,
     plugin: usize,
-    start: usize,
+    start: EffectMark,
 ) {
     // a receiver compiled first (compile_receiver) stays for the next plugin, or roblox-ts, to reuse
-    let allowed = match (context.base_prereqs_start, context.base_prereqs_end) {
-        (Some(base_start), Some(base_end)) if base_start == start => base_end,
+    let allowed = match context.base_marks {
+        Some((base_start, base_end)) if base_start == start => base_end,
         _ => start,
     };
+    let now = state.plugin_file.effect_mark(prereqs.statements.len());
     let problem = if let Some(what) = context.lowered {
         Some(format!("declined a call after {what}"))
-    } else if prereqs.statements.len() > allowed {
-        Some("declined a call after emitting prerequisites (they would run twice)".to_owned())
     } else {
-        None
+        now.growth_since(&allowed).map(|what| format!("declined a call after {what}"))
     };
     if let Some(problem) = problem {
         let message = format!("plugin `{}` {problem}", host.name(plugin));
@@ -550,21 +550,20 @@ fn claim_expression_slow(state: &mut TransformState<'_>, prereqs: &mut Prereqs, 
     if state.plugin_file.offered_expressions.remove(&node) {
         return None;
     }
-    let start = prereqs.statements.len();
     for &(plugin, tag) in list {
         if !state.plugin_file.begun[plugin] {
             continue;
         }
+        let start = state.plugin_file.effect_mark(prereqs.statements.len());
+        state.plugin_file.hook_lowered = None;
         match run_hook(state, Some(prereqs), None, plugin, HookKind::Expression, node, |instance, cx| {
             instance.expression(cx, node, tag)
         }) {
             Ok(Claim::Take(value)) => return Some(value),
             Ok(Claim::Decline) => {
-                if prereqs.statements.len() > start {
-                    let message = format!(
-                        "plugin `{}` declined an expression after emitting prerequisites (they would run twice)",
-                        host.name(plugin)
-                    );
+                let now = state.plugin_file.effect_mark(prereqs.statements.len());
+                if let Some(what) = state.plugin_file.hook_lowered.take().or_else(|| now.growth_since(&start)) {
+                    let message = format!("plugin `{}` declined an expression after {what}", host.name(plugin));
                     state.internal_error(node, &message);
                 }
             }
@@ -590,6 +589,8 @@ fn claim_statement_slow(state: &mut TransformState<'_>, node: P<Node>) -> Option
             continue;
         }
         let mut prereqs = Prereqs::new();
+        let start = state.plugin_file.effect_mark(0);
+        state.plugin_file.hook_lowered = None;
         match run_hook(state, Some(&mut prereqs), None, plugin, HookKind::Statement, node, |instance, cx| {
             instance.statement(cx, node, tag)
         }) {
@@ -599,11 +600,9 @@ fn claim_statement_slow(state: &mut TransformState<'_>, node: P<Node>) -> Option
                 return Some(out);
             }
             Ok(Claim::Decline) => {
-                if !prereqs.statements.is_empty() {
-                    let message = format!(
-                        "plugin `{}` declined a statement after emitting prerequisites (they are dropped)",
-                        host.name(plugin)
-                    );
+                let now = state.plugin_file.effect_mark(prereqs.statements.len());
+                if let Some(what) = state.plugin_file.hook_lowered.take().or_else(|| now.growth_since(&start)) {
+                    let message = format!("plugin `{}` declined a statement after {what}", host.name(plugin));
                     state.internal_error(node, &message);
                 }
             }
@@ -1000,7 +999,8 @@ pub(crate) fn import_named(
             && !rbxts_luau::is_reserved_identifier(export)
             && !state.plugin_file.identifier_names(file).contains(export)
             && !state.plugin_file.import_names.contains(export);
-        let id: AnyIdentifier = if usable { create::any_id(export) } else { temp_id(export).into() };
+        let id: AnyIdentifier =
+            if usable { create::any_id(export) } else { temp_id(state.plugin_file.seam_hint(file, export)).into() };
         state.plugin_file.import_names.insert(export.to_owned());
         let import = create_import_expression_of_file(state, file, module_file, anchor);
         let statement = create::local(id.clone(), Some(create::computed_index(import, create::string(export))));

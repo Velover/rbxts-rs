@@ -43,6 +43,35 @@ pub struct PluginImport {
     pub statement: Option<Stmt>,
 }
 
+/// The lengths of what a hook, or a hook nested in it, can leave behind besides its value: the prereq scope it
+/// writes to, root insertions (hoists), header statements and plugin imports. A declined node must leave the same.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EffectMark {
+    pub prereqs: usize,
+    pub root_inserts: usize,
+    pub header: usize,
+    pub imports: usize,
+}
+
+impl EffectMark {
+    /// What grew since `earlier`, as the end of a sentence "declined … after …"; `None` when nothing did.
+    pub fn growth_since(&self, earlier: &EffectMark) -> Option<&'static str> {
+        if self.prereqs > earlier.prereqs {
+            Some("emitting prerequisites (they would run twice)")
+        } else if self.root_inserts > earlier.root_inserts {
+            Some(
+                "leaving statements before the root statement behind (a hoist or an insertion, its own or a nested hook's)",
+            )
+        } else if self.header > earlier.header {
+            Some("leaving header statements behind (its own or a nested hook's)")
+        } else if self.imports > earlier.imports {
+            Some("leaving a plugin import behind (its own or a nested hook's)")
+        } else {
+            None
+        }
+    }
+}
+
 /// The per-file plugin state.
 #[derive(Default)]
 pub struct PluginFileState {
@@ -80,6 +109,9 @@ pub struct PluginFileState {
     /// `local` names declared at the top level of the main chunk so far (statements done, root insertions,
     /// imports, header).
     pub main_chunk_locals: u32,
+    /// What an expression or statement hook did that the node can no longer be declined after (`compile_expr` of
+    /// its own node, a hoist, a header, an import): the call path keeps this in its call context.
+    pub hook_lowered: Option<&'static str>,
 }
 
 impl PluginFileState {
@@ -110,6 +142,41 @@ impl PluginFileState {
             walk(file.as_node(), &mut out);
             out
         })
+    }
+
+    /// The effect lengths now, with the prereq scope at `prereqs` statements.
+    pub fn effect_mark(&self, prereqs: usize) -> EffectMark {
+        EffectMark {
+            prereqs,
+            root_inserts: self.root_inserts.len(),
+            header: self.header.len(),
+            imports: self.imports.len(),
+        }
+    }
+
+    /// The hint for a temporary identifier a plugin asks for (`temp_id`, `hoist`, `push_to_var`, the
+    /// `import_named` fallback). The renderer names a temporary `_hint`, `_hint_1`, … against its declaring
+    /// scope and the scopes around it only, which is enough for roblox-ts's own temporaries but not for these: a
+    /// hoist or an import is declared at the top of the file and may be used in any nested function, where a user
+    /// local of that name would capture it. So the hint is changed (`hint2`, `hint3`, …) until no identifier of the
+    /// file is `_hint` or `_hint_<n>`.
+    pub fn seam_hint(&self, file: P<SourceFile>, hint: &str) -> String {
+        let hint = if hint.is_empty() { "seam" } else { hint };
+        let names = self.identifier_names(file);
+        let taken = |base: &str| {
+            let exact = format!("_{base}");
+            let numbered = format!("_{base}_");
+            names.iter().any(|name| {
+                *name == exact
+                    || name
+                        .strip_prefix(numbered.as_str())
+                        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+            })
+        };
+        if !taken(hint) {
+            return hint.to_owned();
+        }
+        (2..).map(|i| format!("{hint}{i}")).find(|candidate| !taken(candidate)).expect("a free name")
     }
 
     /// Records a late key the file's Luau uses.

@@ -20,7 +20,7 @@ use tsrs_diagnostics::{Category, new_ad_hoc_message};
 use super::HookKind;
 use super::dispatch;
 use super::facts;
-use super::file_state::declared_locals;
+use super::file_state::{EffectMark, declared_locals};
 use super::host::PluginHost;
 use crate::classes::prereqs::{Prereqs, temp_id};
 use crate::classes::transform_state::TransformState;
@@ -97,10 +97,9 @@ pub(crate) struct CallContext {
     /// The compiled base: the receiver of a property or element call, else the callee. Given by the chain lowering
     /// (eager), or compiled on first need (lazy).
     pub base: Option<Expr>,
-    /// The prereq counts right before and after a lazily compiled base: a declining plugin may leave those
-    /// statements behind (the next plugin, or roblox-ts, reuses the base), but nothing emitted before them.
-    pub base_prereqs_start: Option<usize>,
-    pub base_prereqs_end: Option<usize>,
+    /// The effect marks right before and after a lazily compiled base: a declining plugin may leave what compiling
+    /// the base left (the next plugin, or roblox-ts, reuses the base), but nothing from before it.
+    pub base_marks: Option<(EffectMark, EffectMark)>,
     /// What a plugin did that the call can no longer be declined after (`compile_call`, `compile_expr` of the call,
     /// a hoist, a root insertion, a header, an import).
     pub lowered: Option<&'static str>,
@@ -110,7 +109,7 @@ pub(crate) struct CallContext {
 
 impl CallContext {
     pub(crate) fn new(site: CallSite, shape: CallShape, base: Option<Expr>) -> CallContext {
-        CallContext { site, shape, base, base_prereqs_start: None, base_prereqs_end: None, lowered: None, item: None }
+        CallContext { site, shape, base, base_marks: None, lowered: None, item: None }
     }
 }
 
@@ -220,14 +219,24 @@ impl HookBackend<'_, '_> {
 
     /// A side effect of a call hook that the call can no longer be declined after.
     fn note_effect(&mut self, what: &'static str) {
-        if let Some(context) = self.call.as_deref_mut() {
-            context.lowered.get_or_insert(what);
+        match self.call.as_deref_mut() {
+            Some(context) => {
+                context.lowered.get_or_insert(what);
+            }
+            None => {
+                self.state.plugin_file.hook_lowered.get_or_insert(what);
+            }
         }
+    }
+
+    /// A temporary identifier no user local of the file can capture ([`PluginFileState::seam_hint`]).
+    fn seam_temp(&self, hint: &str) -> LuauIdent {
+        temp_id(self.state.plugin_file.seam_hint(self.state.source_file, hint))
     }
 
     fn hoist_unchecked(&mut self, value: Expr, hint: &str) -> Expr {
         self.note_effect("calling hoist");
-        let id = temp_id(hint);
+        let id = self.seam_temp(hint);
         self.state.plugin_file.main_chunk_locals += 1;
         self.state.plugin_file.root_inserts.push(create::local(id.clone(), Some(value)));
         Expr::TemporaryIdentifier(id)
@@ -344,6 +353,7 @@ impl CxBackend for HookBackend<'_, '_> {
         }
         if self.hook == HookKind::Expression && node == self.anchor {
             self.state.plugin_file.offered_expressions.insert(node);
+            self.note_effect("lowering it with compile_expr");
         }
         self.lower("compile_expr", |state, prereqs, _| Ok(transform_expression(state, prereqs, node)))
     }
@@ -404,7 +414,12 @@ impl CxBackend for HookBackend<'_, '_> {
         if self.refused("push_to_var", Row::Lowering) {
             return create::nil();
         }
-        self.scope().push_to_var(value, hint)
+        let hint = if hint.is_empty() {
+            String::new()
+        } else {
+            self.state.plugin_file.seam_hint(self.state.source_file, hint)
+        };
+        self.scope().push_to_var(value, &hint)
     }
 
     fn begin_capture(&mut self) {
@@ -491,7 +506,7 @@ impl CxBackend for HookBackend<'_, '_> {
 
     fn temp_id(&mut self, hint: &str) -> LuauIdent {
         self.refused("temp_id", Row::FileLevel);
-        temp_id(hint)
+        self.seam_temp(hint)
     }
 
     /// A valid identifier, not a name roblox-ts's output uses itself (`luau.globals`), not a name a plugin import
@@ -592,10 +607,10 @@ fn compile_receiver(
     if let Some(base) = &context.base {
         return Ok(base.clone());
     }
-    context.base_prereqs_start = Some(prereqs.statements.len());
+    let before = state.plugin_file.effect_mark(prereqs.statements.len());
     let value = transform_expression(state, prereqs, receiver);
     context.base = Some(value.clone());
-    context.base_prereqs_end = Some(prereqs.statements.len());
+    context.base_marks = Some((before, state.plugin_file.effect_mark(prereqs.statements.len())));
     Ok(value)
 }
 
@@ -612,6 +627,14 @@ fn compile_claimed_call(
     }
     context.lowered = Some("lowering it with compile_expr");
     let node = context.site.node;
+    if let CallShape::Decorator { call } = context.shape {
+        // the decorator's expression, its call (offered as this decorator) not asked about again
+        if let Some(call) = call {
+            state.plugin_file.offered.insert(call);
+        }
+        let expression = node.expression().expect("a decorator has an expression");
+        return Ok(transform_expression(state, prereqs, expression));
+    }
     // the call is not offered again on the way down
     state.plugin_file.offered.insert(node);
     match (&context.base, context.item) {

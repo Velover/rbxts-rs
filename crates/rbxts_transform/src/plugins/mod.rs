@@ -26,9 +26,14 @@
 //!
 //! `compile_expr(call.node)` inside the call's own hook lowers the call as roblox-ts does (its macros included),
 //! without asking the plugins again, and on the base already compiled, so a receiver is never evaluated twice. A
-//! hook that lowered the call (`compile_expr` of it, `compile_call`) or left anything behind (a hoist, a root
-//! insertion, a header, an import, prereqs before `compile_receiver`) cannot decline it: that is an internal error,
-//! and the call is not offered again.
+//! hook that lowered the call (`compile_expr` of it, `compile_call`) or left anything behind cannot decline it:
+//! prereqs, a hoist, a root insertion, a header statement or a plugin import, made by the hook itself or by a hook
+//! nested in one of its `compile_*` calls (only what `compile_receiver` left is kept, for reuse). That is an
+//! internal error, and the call is not offered again. The expression and statement fallbacks follow the same rule.
+//!
+//! Temporary identifiers plugins ask for (`temp_id`, `hoist`, `push_to_var`, the `import_named` fallback) are named
+//! so that no identifier of the file can capture them, since a hoist or an import is declared at the top of the
+//! file and may be used in any nested function; roblox-ts's own temporaries keep its naming.
 //!
 //! Not offered yet (`// rbxts-rs: S2`): optional method calls `o.m?.()` / `o[k]?.()` and `super.m()` calls; a
 //! plugin whose interest matches one gets an internal error naming it. The `property_key` / `assignment` hooks are

@@ -15,8 +15,9 @@
 //! - `new` (on a class): `new C(args)` → `compile_call(Original, [Luau("probed"), Original(args)…])`;
 //! - `decorator`: `@d()` → `compile_call(Original, [Luau("probed")])`;
 //! - `self`: `wrap(compile_expr(call.node))`: the claimed call lowered as roblox-ts lowers it;
-//! - `declineafter` / `hoistdecline` / `prereqdecline`: declined after `compile_expr` of the call, a hoist, or a
-//!   prereq (each an internal error);
+//! - `declineafter` / `hoistdecline` / `prereqdecline` / `argdecline`: declined after `compile_expr` of the
+//!   call, a hoist, a prereq, or `compile_expr` of an argument whose own claim hoisted (each an internal error);
+//! - `decoself`: a decorator lowered with `compile_expr(call.node)`;
 //! - `facts`: a string of source facts: the call's UTF-16 line and character, its width, the callee's declaring
 //!   package, where `./runtime` resolves, the `{@link}` in the tag and what it resolves to, the file's checker
 //!   diagnostics;
@@ -106,6 +107,8 @@ const OPS: &[&str] = &[
     "declineafter",
     "hoistdecline",
     "prereqdecline",
+    "argdecline",
+    "decoself",
 ];
 const RECEIVER: Tag = Tag(100);
 const CALLEE: Tag = Tag(101);
@@ -326,6 +329,15 @@ impl ProbeInstance {
                 cx.hoist(create::nil(), "declined");
                 Ok(Claim::Decline)
             }
+            "argdecline" => {
+                // a nested hook (a hoist) runs inside compile_expr of the argument, then the call is declined
+                cx.compile_expr(arg(0).expect("an argument"))?;
+                Ok(Claim::Decline)
+            }
+            "decoself" if call.kind == CallKind::Decorator => {
+                let value = cx.compile_expr(call.node)?;
+                self.claimed(value)
+            }
             "prereqdecline" => {
                 cx.prereq(create::comment(" probe: left behind"));
                 Ok(Claim::Decline)
@@ -414,9 +426,15 @@ impl PluginInstance for ProbeInstance {
     fn expression(&self, cx: &mut Cx<'_>, node: P<Node>, tag: Tag) -> PResult<Claim<LuauExpr>> {
         if tag == VOID
             && let Some(operand) = node.expression()
-            && cx.source_text(operand) == "probeVoid"
         {
-            return self.claimed(text_literal("void claimed"));
+            match cx.source_text(operand) {
+                "probeVoid" => return self.claimed(text_literal("void claimed")),
+                // declined after a hoist: an internal error (used by the tests only)
+                "probeVoidHoist" => {
+                    cx.hoist(create::nil(), "void");
+                }
+                _ => {}
+            }
         }
         Ok(Claim::Decline)
     }

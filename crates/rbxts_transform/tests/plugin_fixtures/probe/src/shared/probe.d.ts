@@ -95,3 +95,16 @@ declare class MarkedBase {
 	readonly __probeMarker: true;
 	probeMethod(value: number): number;
 }
+
+/** Compiles its argument, then declines: an internal error when the argument's own claim hoisted (tests only). */
+/** @probe argdecline */
+declare function probeArgDecline(a: unknown): unknown;
+
+/** `void probeVoidHoist` is declined by the expression fallback after a hoist: an internal error (tests only). */
+declare const probeVoidHoist: number;
+
+/** Decorators lowered with `compile_expr(call.node)`. */
+/** @probe decoself */
+declare function probeDecoSelf(label?: string): (ctor: object) => void;
+/** @probe decoself */
+declare function probeDecoSelfPlain(ctor: object): void;
