@@ -95,6 +95,7 @@
 //! A claimed value whose node is in statement position is evaluated as a statement (`local _ = value` unless it is a
 //! call), so no lowering drops its effects; inside parentheses roblox-ts lowers (a `for` head's `(x = 0)`) it is
 //! returned as it is, and the statement around the parentheses evaluates it (`local _ = (x)`), as without plugins.
+//! A claimed literal that is then indexed or called is rendered in parentheses (`("x"):m()`), as Luau needs.
 //!
 //! `RBXTS_PLUGIN_CLAIMS=all` asks the other matching plugins of call, `new` and decorator offers too (not the other
 //! kinds), in a scratch scope. A build with it either writes the same output as without it or fails: one where such
@@ -106,14 +107,14 @@
 //! any nested function); approved names and import names avoid the seam temporaries made before them in turn.
 //! roblox-ts's own temporaries keep its naming.
 //!
-//! **Luau's local limit** (`spill`). When a plugin added a local to a file (a hoist, a root insertion, the header,
-//! an import, a prereq or `push_to_var`), the file's complete main chunk is checked against Luau's 200 local
-//! registers: every live local counts, those of enclosing blocks included, `local exports` and `local TS` too, but
-//! from -O1 (Roblox's default) a local initialised with a literal and never assigned is folded and takes none
-//! (`--!optimize 0` makes every local count). When the chunk may pass the limit, the `hoist_spillable` locals become
-//! fields of one table local (`_spill`); a chunk that surely still passes it is an error at the statement where it
-//! does, one that may (folding decides) a warning. Other files, and builds without plugins, keep roblox-ts's
-//! behaviour.
+//! **Luau's local limit** (`spill`). Every file a plugin emitted anything into is checked once complete, its main
+//! chunk and each function, against Luau's 200 live local registers (enclosing blocks' locals count, `local exports`
+//! and `local TS` too). Luau folds a `local` statement of constants into no register only from optimisation level 1
+//! (the Studio-testing default; live games run at 2) and only at debug level 1, so two counts are kept: every local
+//! name (conservative), and what takes a register at every level (certain). Past 200, the main chunk's conservative
+//! count spills the `hoist_spillable` locals into one table local (`_spill`); a certain count still past it is an
+//! error, a conservative one a warning (the file loads only where Luau folds its constants). Other files, and builds
+//! without plugins, keep roblox-ts's behaviour.
 
 pub mod backend;
 pub mod dispatch;

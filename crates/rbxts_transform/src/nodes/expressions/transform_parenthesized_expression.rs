@@ -17,5 +17,7 @@ pub fn transform_parenthesized_expression(
 ) -> Expr {
     let inner = node.expression().expect("parentheses have an expression");
     let expression = transform_expression(state, prereqs, skip_downwards(inner));
-    if expression.is_simple() { expression } else { create::paren(expression) }
+    // rbxts-rs: no value (an unused optional chain, `for ((a?.f()); ;)`) stays no value, which a statement drops;
+    // roblox-ts wraps it, and its renderer emits `()`
+    if expression.is_simple() || expression.is_none() { expression } else { create::paren(expression) }
 }

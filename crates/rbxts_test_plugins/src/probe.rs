@@ -156,6 +156,10 @@ const OPS: &[&str] = &[
     "ancestor",
     "binbad",
     "recvexpr",
+    "none",
+    "doprereq",
+    "multiprereq",
+    "fnprereq",
 ];
 const RECEIVER: Tag = Tag(100);
 const CALLEE: Tag = Tag(101);
@@ -510,6 +514,33 @@ impl ProbeInstance {
                     call.args.iter().map(|&a| Arg::Original(a)).collect(),
                 )?;
                 self.claimed(value)
+            }
+            // no value at all (a plugin bug the renderer cannot render: a file error, not a crash)
+            "none" => self.claimed(LuauExpr::None),
+            // prereqs whose locals the main chunk's local limit must count
+            "doprereq" => {
+                let id = cx.temp_id("dz");
+                cx.prereq(create::do_stmt(vec![
+                    create::local(id.clone(), Some(create::map([]))),
+                    create::call_statement(create::call(create::id("use"), vec![id.into()])),
+                ]));
+                self.claimed(create::nil())
+            }
+            "multiprereq" => {
+                let (a, b) = (cx.temp_id("ma"), cx.temp_id("mb"));
+                cx.prereq(create::locals(
+                    vec![a.clone().into(), b.clone().into()],
+                    vec![create::number(1.0), create::call(create::id("mk"), Vec::new())],
+                ));
+                self.claimed(create::call(create::id("use"), vec![a.into(), b.into()]))
+            }
+            "fnprereq" => {
+                // a local function whose body holds 201 locals: a function of its own, past the limit
+                let body: Vec<LuauStmt> =
+                    (0..201).map(|i| create::local(create::any_id(format!("q{i}")), Some(create::map([])))).collect();
+                let name = cx.temp_id("bigfn");
+                cx.prereq(create::function_declaration(true, name.clone().into(), Vec::new(), false, body));
+                self.claimed(create::call(name.into(), Vec::new()))
             }
             "boom" if self.mode == Mode::Panic => panic!("probe: boom"),
             "fail" if self.mode == Mode::Fail => Err(cx.error(call.node, "probe: fail was called")),

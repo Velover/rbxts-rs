@@ -49,7 +49,7 @@ use crate::classes::macro_manager::MacroManager;
 use crate::classes::multi_transform_state::MultiTransformState;
 use crate::compile::{
     CompileOptions, CompileReport, FileOutcome, comment_directive_diagnostics, explain_failures, output_path,
-    panic_message, record_timings, transform_file,
+    panic_message, quietly, record_timings, transform_file,
 };
 use crate::plugins::host::{HookTime, resolve_module_from};
 use crate::plugins::lifecycle::{
@@ -873,7 +873,7 @@ impl<'p> BuildSession<'p> {
                 && (keys.is_empty() || finished)
             {
                 // rbxts-rs: a panic while rendering is this file's internal error, not the build's crash
-                match catch_unwind(AssertUnwindSafe(|| rbxts_luau::render(ast, &late_strings))) {
+                match quietly(|| rbxts_luau::render(ast, &late_strings)) {
                     Ok(luau) => outcome.luau = Some(luau),
                     Err(panic) => {
                         let message = format!("rendering the Luau panicked: {}", panic_message(&*panic));

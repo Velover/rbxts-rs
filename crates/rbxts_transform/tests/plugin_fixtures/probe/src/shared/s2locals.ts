@@ -14,3 +14,5 @@ export function inFunction() {
 for ((probeLocals()); ; ) {
 	break;
 }
+// a claimed literal indexed or called: parenthesized
+export const lit = (probeLocals() as unknown as { p: number }).p;

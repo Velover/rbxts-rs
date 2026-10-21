@@ -187,6 +187,7 @@ fn offer_call_inner(
             });
         match result {
             Ok(Claim::Take(value)) => {
+                state.plugin_file.emitted = true;
                 if host.claims_all {
                     report_double_claims(state, host, context, plugin, &candidates[position + 1..]);
                 }
@@ -747,7 +748,10 @@ fn claim_expression_offer(
                 instance.expression(cx, node, tag)
             });
         match result {
-            Ok(Claim::Take(value)) => return Some(statement_form_value(&frame, value)),
+            Ok(Claim::Take(value)) => {
+                state.plugin_file.emitted = true;
+                return Some(statement_form_value(&frame, value));
+            }
             Ok(Claim::Decline) => {
                 let now = state.plugin_file.effect_mark(prereqs.statements.len());
                 if let Some(what) = decline_problem(&frame, &now, &start, 0) {
@@ -800,6 +804,7 @@ fn claim_statement_offer(
             });
         match result {
             Ok(Claim::Take(statements)) => {
+                state.plugin_file.emitted = true;
                 let mut out = prereqs.statements;
                 out.extend(statements);
                 return Some(out);
@@ -925,7 +930,10 @@ fn property_key_offer(
             });
         match result {
             // the written key lowers the access as written
-            Ok(Claim::Take(new_key)) => return (new_key != key).then_some(new_key),
+            Ok(Claim::Take(new_key)) => {
+                state.plugin_file.emitted |= new_key != key;
+                return (new_key != key).then_some(new_key);
+            }
             Ok(Claim::Decline) => {
                 let now = state.plugin_file.effect_mark(0);
                 if let Some(what) = decline_problem(&frame, &now, &start, 0) {
@@ -1104,6 +1112,7 @@ fn claim_assignment_offer(
             });
         match result {
             Ok(Claim::Take(value)) => {
+                state.plugin_file.emitted = true;
                 return Some(unused_value(prereqs, site.node, statement_form_value(&frame, value), site.value_used));
             }
             Ok(Claim::Decline) => {
@@ -1185,6 +1194,7 @@ fn class_statements_slow(state: &mut TransformState<'_>, node: P<Node>, luau_nam
             })
         {
             out.extend(prereqs.statements);
+            state.plugin_file.emitted |= !statements.is_empty();
             out.extend(statements);
         }
     }
@@ -1565,7 +1575,6 @@ pub(crate) fn import_named(
         let import = create_import_expression_of_file(state, file, module_file, anchor);
         let statement = create::local(id.clone(), Some(create::computed_index(import, create::string(export))));
         state.plugin_file.main_chunk_locals += 1;
-        state.plugin_file.added_locals = true;
         let value: Expr = id.into();
         state.plugin_file.imports.push(PluginImport {
             specifier: specifier.to_owned(),

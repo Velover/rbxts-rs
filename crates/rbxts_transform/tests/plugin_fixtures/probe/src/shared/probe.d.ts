@@ -258,3 +258,15 @@ interface ReceiverExpr {
 }
 declare const maybeRe: ReceiverExpr | undefined;
 declare const plainRe: ReceiverExpr;
+/** Returns no value at all (tests only: rendering it panics). */
+/** @probe none */
+declare function probeNone(): number;
+/** Prereqs with locals: a `do` block, a two-name `local` with a call, a local function of 201 locals. */
+/** @probe doprereq */
+declare function probeDoPrereq(): undefined;
+/** @probe multiprereq */
+declare function probeMultiPrereq(): void;
+/** @probe fnprereq */
+declare function probeFnPrereq(): void;
+declare function mk(): object;
+declare const nx: number | undefined;

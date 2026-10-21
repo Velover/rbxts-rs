@@ -191,6 +191,29 @@ fn file_info(services: &ProjectServices, host: &PluginHost, file: P<SourceFile>)
     }
 }
 
+thread_local! {
+    /// The running code reports its panics itself (`quietly`): the panic hook prints nothing for them.
+    static QUIET_PANICS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f`, catching a panic without the panic hook printing it (the caller reports it as a diagnostic). The
+/// hook stays as it was for every other panic and thread.
+pub(crate) fn quietly<T>(f: impl FnOnce() -> T) -> std::thread::Result<T> {
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if !QUIET_PANICS.with(std::cell::Cell::get) {
+                previous(info);
+            }
+        }));
+    });
+    QUIET_PANICS.with(|quiet| quiet.set(true));
+    let result = catch_unwind(AssertUnwindSafe(f));
+    QUIET_PANICS.with(|quiet| quiet.set(false));
+    result
+}
+
 /// The text of a caught panic.
 pub(crate) fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
     panic
