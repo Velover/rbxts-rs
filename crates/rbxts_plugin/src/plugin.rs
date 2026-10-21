@@ -140,7 +140,9 @@ pub trait PluginInstance: 'static {
         Ok(())
     }
 
-    /// A call, `new` or decorator call that matched a call interest with `tag`. Return the call's Luau value.
+    /// A call, `new` or decorator call that matched a call interest with `tag`. Return the call's Luau value; for
+    /// a decorator it replaces the decorator expression, which is then applied (`Class = value(Class) or Class`).
+    /// Decide whether to take the call before compiling anything: see "Declining" in the crate docs.
     fn call(&self, cx: &mut Cx<'_>, call: &CallSite, tag: Tag) -> PResult<Claim<LuauExpr>> {
         let _ = (cx, call, tag);
         Ok(Claim::Decline)
@@ -192,8 +194,9 @@ pub trait PluginInstance: 'static {
     fn end_file(&self, cx: &mut Cx<'_>) -> PResult<Self::FilePart>;
 
     /// Only for files that failed checking (and so are not transformed): may replace a checker diagnostic with a
-    /// clearer one. Only the program, file, checker and source facts are available here; everything else is
-    /// refused.
+    /// clearer one. The program, file, checker and source facts, `report` (and `Cx::error` / `warning`),
+    /// `is_usable_local_name` and `locals` are available here; the lowering and file-level primitives are refused
+    /// (the phase table on [`crate::CxBackend`]).
     fn explain_checker_diagnostic(
         &self,
         cx: &mut Cx<'_>,

@@ -1,0 +1,9 @@
+{
+	// F1_IDMODE / F1_OBFUSCATE pick the id mode in the end-to-end tests.
+	"transformer": {
+		"idGenerationMode": "${F1_IDMODE:-full}",
+		"obfuscation": "${F1_OBFUSCATE:-false}"
+	},
+	"core": { "profiling": false },
+	"scopes": { "active": "${F1_SCOPES:-}" }
+}

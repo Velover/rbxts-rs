@@ -1,0 +1,1 @@
+{"game":{"src/server/services/hub/*.ts":[["ServerScriptService","TS","services","hub"]],"src/server/services/**/*.ts":[["ServerScriptService","TS","services","alpha"],["ServerScriptService","TS","services","beta"],["ServerScriptService","TS","services","hub"]],"src/server/nothing/*.ts":[]},"packages":{}}

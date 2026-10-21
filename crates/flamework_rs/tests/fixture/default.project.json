@@ -1,0 +1,19 @@
+{
+	"name": "f1-fixture",
+	"tree": {
+		"$className": "DataModel",
+		"ServerScriptService": { "$className": "ServerScriptService", "TS": { "$path": "out/server" } },
+		"ReplicatedStorage": {
+			"$className": "ReplicatedStorage",
+			"rbxts_include": {
+				"$path": "include",
+				"node_modules": {
+					"$className": "Folder",
+					"@rbxts": { "$path": "node_modules/@rbxts" },
+					"@flamework-experimental": { "$path": "node_modules/@flamework-experimental" }
+				}
+			},
+			"TS": { "$path": "out/shared" }
+		}
+	}
+}

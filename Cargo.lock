@@ -117,6 +117,16 @@ name = "flamework_rs"
 version = "0.0.0"
 dependencies = [
  "dragonbox_ecma",
+ "rbxts_luau",
+ "rbxts_plugin",
+ "rbxts_project",
+ "rbxts_transform",
+ "serde_json",
+ "tsrs_ast",
+ "tsrs_checker",
+ "tsrs_compiler",
+ "tsrs_core",
+ "tsrs_diagnostics",
 ]
 
 [[package]]
@@ -353,6 +363,7 @@ dependencies = [
 name = "rbxts_bench"
 version = "0.0.0"
 dependencies = [
+ "flamework_rs",
  "mimalloc-safe",
  "rbxts_luau",
  "rbxts_plugin",

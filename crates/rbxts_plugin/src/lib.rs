@@ -16,6 +16,75 @@
 //!
 //! The crate depends on `rbxts_luau`, `rbxts_project` and tsrs's handle and checker types only, never on the
 //! compiler, so the compiler can depend on it.
+//!
+//! # What the compiler offers, and when
+//!
+//! **Offer kinds.** There are three: calls (with `new` and decorators, [`PluginInstance::call`]); the expression
+//! and statement fallbacks ([`PluginInstance::expression`], [`PluginInstance::statement`]); and the class hook.
+//! Expression hooks are asked first, whatever the registration order; within a kind, plugins are asked in
+//! registration order and the first `Take` wins. So a call can get an expression-kind offer and then, after a
+//! clean decline, a call offer.
+//! - A chain's first call reached through plain accesses only (`f()`, `ns.f()`, `a.b.m()`) is offered before
+//!   anything of it is compiled.
+//! - Any other chain call is offered with its receiver or callee already compiled, and nil-checked only when it is
+//!   inside an optional chain. That includes calls after a `?.` link or after another call, such as `g()()` and
+//!   `f?.()`.
+//! - `new` is offered before constructor macros. Decorators are offered as [`CallKind::Decorator`] before their
+//!   expression is compiled; the returned value replaces the decorator expression, which is then applied
+//!   (`Class = value(Class) or Class`).
+//! - Calls inside a chain (`f()` in `f().m()`) reach expression hooks only when a call plugin compiles the outer
+//!   call itself: [`Interest::expressions`] with `CallExpression` does not see every call yet (S2).
+//! - Optional method calls (`o.m?.()`, `o[k]?.()`) and `super.m()` are not offered yet (S2). A plugin whose interest
+//!   matches one gets an internal error naming it, so an interest (and [`PluginInstance::classify_symbol`]) must
+//!   not match symbols it does not mean.
+//! - Registering [`Interest::accesses_by_marker`] or [`Interest::assignments_by_receiver_symbol`] fails the build
+//!   until S2.
+//!
+//! **Compiling a hook's own node.** While a node's own offer runs, compiling it does not re-offer it to that kind;
+//! the other kinds still see it. An expression hook that compiles its own call lets the call plugins claim that
+//! call, and a call hook that compiles its own call asks the expression hooks about it again, so an expression hook
+//! can be asked twice about one node: answer the same way both times.
+//! - `compile_expr`, `compile_in_order` or an `Arg::Original` slot on the hook's own node lowers it as roblox-ts
+//!   does, macros included. A call is lowered on the receiver or callee already compiled, so a single
+//!   self-compile evaluates nothing twice. A decorator's own node lowers the decorator's expression.
+//! - Lower your own node at most once, by exactly one of `compile_expr` / `compile_in_order` / `Arg::Original` /
+//!   `compile_call`. The compiler refuses a second self-compile and a self-compile after `compile_call`, but not
+//!   yet `compile_call` twice, `compile_expr` then `compile_call`, or a class hook compiling its own class
+//!   expression: those lower it twice, silently.
+//! - A statement hook cannot compile its own statement (`compile_*` takes expressions): an internal error naming
+//!   the plugin.
+//! - Compiling an ancestor of the hook's own node offers and lowers every other node inside that ancestor again.
+//!   Don't.
+//!
+//! **Declining.** A claim hook (`call`, `expression`, `statement`) cannot decline its node after any of these:
+//! - it lowered the node (`compile_expr` / `compile_in_order` of the node, `compile_call`);
+//! - it compiled the receiver inside a `capture`;
+//! - it left anything behind in the scope it writes into or the file, whether its own or a nested hook's:
+//!   prereqs, a hoist, a root insertion, a header statement, a plugin import, a late string, or an import kept
+//!   alive (`mark_import_used`, or a user import `import_named` reused). `request_import_elision` is harmless and
+//!   allowed;
+//! - any plugin hook ran inside it, through its `compile_*` calls: a nested node offered (claimed or declined), or
+//!   a class hook. That hook would run again.
+//!
+//! The one exception is a `compile_receiver` into the hook's own scope that is the first thing to grow that scope.
+//! What it left (statements, and the hooks it ran) is kept for the next plugin, or roblox-ts, to reuse. An earlier
+//! prereq or nested hook voids the exception. A decline that breaks the rule is an internal error naming the
+//! plugin. The offer ends there: no other plugin of any kind, and not roblox-ts, gets the node; it becomes `nil`
+//! (or an empty statement list), and the build fails.
+//!
+//! Plugins interact through this rule: plugin B's interest in a node nested in plugin A's node (even one B
+//! declines cleanly) turns A's compile-then-decline into an error. So a plugin must decide from the AST and types
+//! before compiling anything, as Flamework's TS transformer does.
+//!
+//! **`RBXTS_PLUGIN_CLAIMS=all`** re-asks the other matching plugins of call, `new` and decorator offers, in a
+//! scratch scope; it does not re-ask expression or statement hooks. Two `Take`s are an error. A build with the
+//! switch either writes the same output as without it, or fails. It fails when a re-asked plugin changed compiler
+//! state before declining (any lowering, placement, import, late string, temporary, diagnostic, or an
+//! `is_usable_local_name` approval) or ran a nested hook. A hook's own instance state is out of the compiler's
+//! reach, which is one more reason to decide before doing anything.
+//!
+//! **Placement.** In each file: the `--!` directives, the `-- Compiled with` line, `local TS = require(...)`, plugin
+//! imports, the user's own imports, then header statements ([`Cx::header`]).
 
 mod cx;
 pub mod erased;

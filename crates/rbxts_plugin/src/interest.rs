@@ -76,12 +76,16 @@ impl Interest {
 
     /// Property accesses `obj.k` / `obj["k"]` in any position whose receiver's type carries `marker`. They reach
     /// [`crate::PluginInstance::property_key`].
+    ///
+    /// Not dispatched yet: registering it fails the build until S2.
     pub fn accesses_by_marker(&mut self, marker: &'static str, tag: Tag) {
         self.access_markers.push((marker, tag));
     }
 
     /// Assignments, compound assignments, `++` / `--` and `delete` whose target is a property access; the
     /// property's symbol is classified with role [`crate::SymbolRole::AssignReceiver`].
+    ///
+    /// Not dispatched yet: registering it fails the build until S2.
     pub fn assignments_by_receiver_symbol(&mut self) {
         self.assignments_by_receiver_symbol = true;
     }
@@ -94,7 +98,12 @@ impl Interest {
         };
     }
 
-    /// Every expression of `kind`, for [`crate::PluginInstance::expression`]. Slow: the plugin is asked for each.
+    /// Expressions of `kind`, for [`crate::PluginInstance::expression`]. Slow: the plugin is asked for each one it
+    /// is offered. Expression hooks are asked before the call plugins, whatever the registration order.
+    ///
+    /// Not yet every expression of the kind (S2): calls inside a chain (the `f()` in `f().m()`) are offered only
+    /// when a call plugin compiles the outer call itself, and accesses inside chains are not offered. One node may
+    /// be offered twice (see the crate docs); answer the same way both times.
     pub fn expressions(&mut self, kind: Kind, tag: Tag) {
         self.expressions.push((kind, tag));
     }

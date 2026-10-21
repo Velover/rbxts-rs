@@ -118,7 +118,8 @@ pub enum CallKind {
     Method,
     /// `new C(...)`.
     New,
-    /// `@D` or `@D(...)` on a class or member. `node` is the Decorator; `args` is empty for `@D`.
+    /// `@D` or `@D(...)` on a class or member. `node` is the Decorator; `args` is empty for `@D`. A claim's value
+    /// replaces the decorator expression, which is then applied (`Class = value(Class) or Class`).
     Decorator,
     /// `super(...)` in a constructor.
     SuperCall,
@@ -136,7 +137,8 @@ pub struct CallSite {
     pub args: &'static [P<Node>],
     /// The resolved callee symbol, aliases skipped, as this instance's checker sees it.
     pub symbol: Option<P<Symbol>>,
-    /// For [`CallKind::Method`]: the object expression.
+    /// `Some(object)` for every property or element call (`obj.m(…)`, `obj[k](…)`), whether or not `kind` is
+    /// [`CallKind::Method`]. `None` for other calls, `new`, decorators, `super(…)`, and `f?.()`.
     pub receiver: Option<P<Node>>,
     /// The call is part of an optional chain (`a?.b()`, `a?.()`).
     pub in_optional_chain: bool,
@@ -235,13 +237,16 @@ pub enum Arg {
 /// The callee of [`crate::Cx::compile_call`].
 #[derive(Clone, Debug)]
 pub enum Callee {
-    /// The call's own callee, lowered as roblox-ts would (a method call stays `obj:m(...)`).
+    /// The call's own callee, lowered as roblox-ts would (a method call stays `obj:m(...)`). On a chain-start
+    /// call it is compiled lazily, after any arguments already compiled into `Arg::Luau` (see
+    /// [`crate::CxBackend::compile_call`]).
     Original,
     /// Call this value instead: `f(args)`.
     Function(LuauExpr),
     /// Call a method instead: `object:name(args)`. `name` must be a valid Luau identifier
     /// ([`rbxts_luau::is_valid_identifier`]); the renderer asserts it. For any other key, use
-    /// `Callee::Function(index)` with `object` as the first argument.
+    /// `Callee::Function(index)` with `object` as the first argument, after binding `object` to a local with
+    /// [`crate::Cx::push_to_var`] so that it is evaluated once (the index and the argument both name it).
     Method { object: LuauExpr, name: String },
 }
 

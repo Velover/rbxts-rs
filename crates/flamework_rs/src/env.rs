@@ -182,6 +182,60 @@ fn parse_env_value(rest: &str) -> String {
     .to_owned()
 }
 
+/// The variable names a config text may substitute: every `${NAME` in it, in order, without repeats. It
+/// over-approximates (a name in a comment counts too), which only makes the environment read wider.
+pub fn referenced_names(text: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("${") {
+        rest = &rest[i + 2..];
+        let end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len());
+        let name = &rest[..end];
+        if !name.is_empty() && !names.iter().any(|n| n == name) {
+            names.push(name.to_owned());
+        }
+    }
+    names
+}
+
+/// `hashEnvValue`: what `flamework.build` records of a variable `Flamework.env` inlined, the sha1 (hex) of its
+/// value, or `unset`.
+pub fn hash_env_value(value: Option<&str>) -> String {
+    match value {
+        None => "unset".to_owned(),
+        Some(value) => crate::sha::hex(&crate::sha::sha1(value.as_bytes())),
+    }
+}
+
+/// [`load_env`], reading the files through `inputs` and asking it for the process value of each variable the
+/// files set and each name in `names` (the process environment wins over both files, as in [`load_env`]).
+/// `names` gets the files' names appended.
+pub fn load_env_with(
+    inputs: &mut dyn crate::inputs::Inputs,
+    directory: &str,
+    names: &mut Vec<String>,
+) -> Env {
+    let mut env = Env::new();
+    for file in ENV_FILES {
+        if let Some(text) = inputs.read(&crate::node_path::join(&[directory, file])) {
+            for (k, v) in parse_env_file(&text).iter() {
+                env.set(k, v);
+                if !names.iter().any(|n| n == k) {
+                    names.push(k.to_owned());
+                }
+            }
+        }
+    }
+    for name in names.iter() {
+        if let Some(value) = inputs.env(name) {
+            env.set(name.clone(), value);
+        }
+    }
+    env
+}
+
 /// `.env`, then `.env.local` on top, both from `directory`, with `process_env` on top of both.
 pub fn load_env(directory: &Path, process_env: &Env) -> Env {
     let mut env = Env::new();

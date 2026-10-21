@@ -17,6 +17,7 @@ rbxts_luau.workspace = true
 # `build --plugin <name>`: the test plugins of the plugin seam
 rbxts_plugin.workspace = true
 rbxts_test_plugins.workspace = true
+flamework_rs.workspace = true
 # luau-parity and project-parity, to read the dumps. The versions in tsrs's lock file; unbounded_depth for deep `..`
 # chains.
 serde = "1.0.229"

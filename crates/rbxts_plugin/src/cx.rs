@@ -42,6 +42,7 @@ pub struct Aborted;
 /// | lowering: `compile_*`, `compile_receiver`, `prereq`, `push_to_var`, capture, `insert_before_root_statement`, `hoist`, `hoist_spillable`, `comment` | yes | refused | refused | refused |
 /// | file-level: `header`, `import_named`, `mark_import_used`, `request_import_elision`, `temp_id`, `late_string` | yes | yes | refused | refused |
 /// | `report` (and `Cx::error` / `warning`) | yes | yes | refused | yes |
+/// | `is_usable_local_name`, `locals` | yes | yes | yes | yes |
 ///
 /// A refused call records an internal error naming the plugin (so the build fails) and returns `Err(Aborted)`, or
 /// a placeholder `nil` / does nothing for the primitives without a `Result`.
@@ -71,15 +72,25 @@ pub trait CxBackend {
     // --- lowering original nodes the roblox-ts way ---
 
     /// Compiles an original expression node in the current prereq scope; nested nodes are dispatched to plugins
-    /// as usual.
+    /// as usual. On the hook's own node it lowers the node as roblox-ts does, macros included, without offering
+    /// it to that offer kind again (see "Compiling a hook's own node" in the crate docs); do that at most once.
     fn compile_expr(&mut self, node: P<Node>) -> Result<LuauExpr, Aborted>;
     /// Compiles expressions keeping their evaluation order (`ensureTransformOrder`): earlier values are bound to
     /// locals when a later one has prereqs.
     fn compile_in_order(&mut self, nodes: &[P<Node>]) -> Result<Vec<LuauExpr>, Aborted>;
-    /// The receiver of a [`crate::CallKind::Method`] call, compiled once and, inside an optional chain, already
-    /// nil-checked by the chain lowering (roblox-ts's property-call macro shape).
+    /// The receiver of a property or element call ([`CallSite::receiver`]): already compiled (and nil-checked
+    /// inside an optional chain, by the chain lowering: roblox-ts's property-call macro shape), or compiled now,
+    /// once. On a call without a receiver (a plain call, `f?.()`, `new`, a decorator, `super(…)`) it is an
+    /// internal error naming the plugin.
     fn compile_receiver(&mut self, call: &CallSite) -> Result<LuauExpr, Aborted>;
     /// Compiles the call with another callee and/or argument slots; `Original` slots are compiled in order.
+    ///
+    /// With [`Callee::Original`] the call is lowered with roblox-ts's call lowering; roblox-ts macros are refused
+    /// here. For a chain-start call the callee or receiver is compiled lazily, at `compile_call` time (unless
+    /// `compile_receiver` already compiled it): only the prereqs of arguments the plugin compiled earlier (into
+    /// `Arg::Luau` values) run before it, and a Luau value itself is evaluated at the call, after the lazily
+    /// compiled receiver or callee. For an eagerly offered call (after `?.` or after another call) the callee or
+    /// receiver is already compiled.
     fn compile_call(
         &mut self,
         call: &CallSite,
@@ -112,15 +123,22 @@ pub trait CxBackend {
     fn end_capture(&mut self) -> Vec<LuauStmt>;
     /// Statements placed before the top-level statement that contains the current node.
     fn insert_before_root_statement(&mut self, stmts: Vec<LuauStmt>);
-    /// Statements placed once per file, after the imports, in call order.
+    /// Statements placed once per file, after the file's leading run of imports (plugin imports, then the
+    /// user's), in call order.
     fn header(&mut self, stmts: Vec<LuauStmt>);
     /// A local holding `value`, declared before the current root statement; returns the local.
+    ///
+    /// The value is declared before the root statement, so it must not depend on anything emitted in the current
+    /// scope. That includes prereqs of the hook and of `compile_*` calls (`hoist(compile_expr(x ?? y))` uses a
+    /// temporary declared later). Hoist only values that need no prereqs; the compiler does not detect this yet.
     fn hoist(&mut self, value: LuauExpr, hint: &str) -> LuauExpr;
     /// As `hoist`, but the compiler may turn the local into a field of one spill table when the main chunk would
     /// pass Luau's 200-local limit; returns the expression to use either way.
     fn hoist_spillable(&mut self, value: LuauExpr, hint: &str) -> LuauExpr;
     /// The value of `export` from module `specifier`, imported once per file and placed with roblox-ts's imports
-    /// (reusing a user import of the same export).
+    /// (reusing a user import of the same export). Plugin imports go after the `--!` directives, the
+    /// `-- Compiled with` line and `local TS = require(...)`, ahead of the user's own imports. A reused user
+    /// import is kept alive like a [`CxBackend::mark_import_used`] one, so it counts as left behind for declining.
     fn import_named(&mut self, specifier: &str, export: &str) -> Result<LuauExpr, Aborted>;
     /// Keeps an import alias declaration alive through import elision, though no remaining value use names it.
     fn mark_import_used(&mut self, alias_declaration: P<Node>);
@@ -129,12 +147,22 @@ pub trait CxBackend {
     /// The checker still counts those uses, so without this request the import would stay (a runtime `require` of
     /// a types-only module). The compiler then elides the alias unless the Luau it emits for this file still
     /// needs it: a reference to it that the compiler compiled itself (its own lowering or a plugin's `compile_*`),
-    /// or a [`CxBackend::mark_import_used`] on it. When every alias of a declaration is elided, the whole import
-    /// goes, as roblox-ts elides imports.
+    /// or a [`CxBackend::mark_import_used`] on it, or an `import_named` of any plugin that reused it. When every
+    /// alias of a declaration is elided, the whole import goes, as roblox-ts elides imports.
     fn request_import_elision(&mut self, alias_declaration: P<Node>);
     /// A new temporary local name (`luau.tempId`), unique in its scope at render time.
+    ///
+    /// Temporaries a plugin asks for (`temp_id`, `hoist`, `hoist_spillable`, `push_to_var`, and the local
+    /// `import_named` picks when the export's name is taken) are named so that nothing can capture them: no
+    /// identifier of the file, no name `is_usable_local_name` approved, and no plugin import. Their rendered name
+    /// may differ from the hint (`_hint2`, …).
     fn temp_id(&mut self, hint: &str) -> LuauIdent;
-    /// `name` can be declared as a local here: not reserved, and not shadowing a global the output uses.
+    /// `name` can be declared as a local here: a valid Luau identifier that is not a `luau.globals` name, not any
+    /// identifier text in the file's source, not a plugin import's name, not a seam temporary's name, and not
+    /// already approved.
+    ///
+    /// It is not idempotent: a true answer records the name, so a second call for the same name is false.
+    /// Temporaries made earlier keep a name from being approved, and later ones avoid approved names.
     fn is_usable_local_name(&self, name: &str) -> bool;
     /// Locals declared so far in the current function and in the main chunk. It counts the Luau built so far, so
     /// it is exact only for code already emitted: statements after the current node (and the rest of the current
@@ -164,7 +192,9 @@ pub trait CxBackend {
     fn source_text(&self, node: P<Node>) -> &'static str;
     /// The JSDoc tags of a declaration, with `{@link}` names resolved on this checker. Cached per checker.
     fn jsdoc_tags(&mut self, declaration: P<Node>) -> Rc<[JsDocTag]>;
-    /// The checker's diagnostics of this file (read-only; nothing is checked again).
+    /// The checker's diagnostics of this file (read-only; nothing is checked again). During the transform it holds
+    /// only non-error diagnostics: a file with checker errors is not transformed (it reaches
+    /// [`crate::PluginInstance::explain_checker_diagnostic`] instead).
     fn file_diagnostics(&self) -> &[P<Diagnostic>];
 
     // --- diagnostics ---

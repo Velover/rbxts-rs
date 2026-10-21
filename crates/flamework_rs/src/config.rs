@@ -1,9 +1,9 @@
 //! `flamework.config.json` (the TS transformer's `util/projectConfig.ts`): where it is, how it is read, the tsconfig
 //! entry check, the runtime sections, and the `$schema` line. Error texts are the TS transformer's.
 
-use std::path::Path;
 
 use crate::env::{self, Env};
+use crate::inputs::{FsInputs, Inputs};
 use crate::ids::IdMode;
 use crate::json::{self, JsObject, JsValue};
 use crate::packages::TRANSFORMER_PACKAGE;
@@ -87,9 +87,19 @@ pub fn find_project_config(
     root_directory: &str,
     explicit_path: Option<&str>,
 ) -> Result<Option<String>, ProjectError> {
+    find_project_config_with(&mut FsInputs, project_directory, root_directory, explicit_path)
+}
+
+/// [`find_project_config`], reading through `inputs`.
+pub fn find_project_config_with(
+    inputs: &mut dyn Inputs,
+    project_directory: &str,
+    root_directory: &str,
+    explicit_path: Option<&str>,
+) -> Result<Option<String>, ProjectError> {
     if let Some(explicit) = explicit_path {
         let resolved = node_path::resolve(&[project_directory, explicit]);
-        if !Path::new(&resolved).exists() {
+        if !inputs.exists(&resolved) {
             return Err(ProjectError(format!(
                 "The Flamework config file '{explicit}' does not exist (looked at '{resolved}')."
             )));
@@ -100,7 +110,7 @@ pub fn find_project_config(
     let mut current = node_path::resolve(&[project_directory]);
     loop {
         let candidate = node_path::join(&[&current, PROJECT_CONFIG_NAME]);
-        if Path::new(&candidate).exists() {
+        if inputs.exists(&candidate) {
             return Ok(Some(candidate));
         }
         if node_path::relative(&current, &root).is_empty() {
@@ -120,6 +130,16 @@ pub fn find_project_config(
 pub fn read_project_config(config_path: &str, env: &Env) -> Result<JsValue, ProjectError> {
     let text = std::fs::read_to_string(config_path)
         .map_err(|e| ProjectError(format!("Failed to read {config_path}: {e}")))?;
+    parse_project_config(config_path, &text, env)
+}
+
+/// [`read_project_config`] on a text already read.
+pub fn parse_project_config(
+    config_path: &str,
+    text: &str,
+    env: &Env,
+) -> Result<JsValue, ProjectError> {
+    let text = text.to_owned();
     let parsed = jsonc::parse_config_text(&text)
         .map_err(|e| ProjectError(format!("Failed to parse {config_path}: {e}")))?;
 
@@ -225,6 +245,16 @@ pub fn locate_project_config(
     root_directory: &str,
     entry: &JsObject,
 ) -> Result<Option<String>, ProjectError> {
+    locate_project_config_with(&mut FsInputs, project_directory, root_directory, entry)
+}
+
+/// [`locate_project_config`], reading through `inputs`.
+pub fn locate_project_config_with(
+    inputs: &mut dyn Inputs,
+    project_directory: &str,
+    root_directory: &str,
+    entry: &JsObject,
+) -> Result<Option<String>, ProjectError> {
     let config_file = match entry.get("configFile") {
         None | Some(JsValue::Undefined) => None,
         Some(JsValue::String(s)) => Some(s.as_str()),
@@ -234,7 +264,8 @@ pub fn locate_project_config(
             )));
         }
     };
-    let config_path = find_project_config(project_directory, root_directory, config_file)?;
+    let config_path =
+        find_project_config_with(inputs, project_directory, root_directory, config_file)?;
     let target = match &config_path {
         Some(p) => p.clone(),
         None => node_path::join(&[project_directory, PROJECT_CONFIG_NAME]),
@@ -270,12 +301,37 @@ pub fn load_project_config(
     entry: &JsObject,
     process_env: &Env,
 ) -> Result<LoadedProjectConfig, ProjectError> {
-    let config_path = locate_project_config(project_directory, root_directory, entry)?;
+    load_project_config_with(
+        &mut crate::inputs::FsWithEnv(process_env),
+        project_directory,
+        root_directory,
+        entry,
+    )
+}
+
+/// [`load_project_config`], reading files and the process environment through `inputs`, which is asked only for
+/// the variables that matter: those the `.env` files set and those the config file names (`${NAME` anywhere in
+/// its text).
+pub fn load_project_config_with(
+    inputs: &mut dyn Inputs,
+    project_directory: &str,
+    root_directory: &str,
+    entry: &JsObject,
+) -> Result<LoadedProjectConfig, ProjectError> {
+    let config_path =
+        locate_project_config_with(inputs, project_directory, root_directory, entry)?;
     let env_directory = match &config_path {
         Some(p) => node_path::dirname(p),
         None => project_directory.to_owned(),
     };
-    let env = env::load_env(Path::new(&env_directory), process_env);
+    let config_text = match &config_path {
+        Some(path) => Some(inputs.read(path).ok_or_else(|| {
+            ProjectError(format!("Failed to read {path}: it could not be read"))
+        })?),
+        None => None,
+    };
+    let mut names = env::referenced_names(config_text.as_deref().unwrap_or(""));
+    let env = env::load_env_with(inputs, &env_directory, &mut names);
     let Some(config_path) = config_path else {
         return Ok(LoadedProjectConfig {
             config: JsValue::Object(JsObject::new()),
@@ -284,7 +340,7 @@ pub fn load_project_config(
             env,
         });
     };
-    let project = read_project_config(&config_path, &env)?;
+    let project = parse_project_config(&config_path, config_text.as_deref().unwrap_or(""), &env)?;
     let config = match project.get("transformer") {
         Some(JsValue::Object(t)) => JsValue::Object(t.clone()),
         _ => JsValue::Object(JsObject::new()),
@@ -295,6 +351,56 @@ pub fn load_project_config(
         config_path: Some(config_path),
         env,
     })
+}
+
+/// `fingerprintEmitConfig`: a hash of the options in the config file that shape the code the transformer emits
+/// into each file: the whole `transformer` section, the `serialization` section and `networking.serialization`.
+/// `flamework.build` records it as `inputs.config`; a build that reuses that file refuses another
+/// (`TransformState.refuseChangedInputs`; rbxts-rs: TODO(S2), incremental builds).
+pub fn fingerprint_emit_config(loaded: &LoadedProjectConfig) -> String {
+    let mut snapshot = JsObject::new();
+    snapshot.insert("transformer", loaded.config.clone());
+    snapshot.insert(
+        "serialization",
+        loaded
+            .project
+            .get("serialization")
+            .cloned()
+            .unwrap_or(JsValue::Undefined),
+    );
+    snapshot.insert(
+        "networkingSerialization",
+        loaded
+            .project
+            .get("networking")
+            .and_then(|n| n.get("serialization"))
+            .cloned()
+            .unwrap_or(JsValue::Undefined),
+    );
+    hash_stable(&JsValue::Object(snapshot))
+}
+
+/// `hashStable`: the sha1 (hex) of `JSON.stringify` of the value with every object's keys sorted.
+pub fn hash_stable(value: &JsValue) -> String {
+    fn stable(value: &JsValue) -> JsValue {
+        match value {
+            JsValue::Array(items) => JsValue::Array(items.iter().map(stable).collect()),
+            JsValue::Object(object) => {
+                let mut keys: Vec<&String> = object.keys().collect();
+                // `Object.keys(value).sort()`: by UTF-16 code units. Integer-like keys come first in a
+                // JavaScript object whatever the insertion order, and `JsObject` keeps that rule.
+                keys.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+                let mut out = JsObject::new();
+                for key in keys {
+                    out.insert(key.clone(), stable(object.get(key).expect("a listed key")));
+                }
+                JsValue::Object(out)
+            }
+            other => other.clone(),
+        }
+    }
+    let text = json::stringify(&stable(value), None).unwrap_or_default();
+    crate::sha::hex(&crate::sha::sha1(text.as_bytes()))
 }
 
 /// The runtime sections of a project config, or `None` when it has none (no `config.json` artifact then).

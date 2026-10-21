@@ -4,10 +4,23 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "Flamework's transformer as a compiled-in rbxts-rs plugin. F0: the parts that need no compiler."
+description = "Flamework's transformer as a compiled-in rbxts-rs plugin. F0: the parts that need no compiler; F1: the plugin with ids, decorators, build infos and the include JSON."
 
-# F0 depends on nothing in tsrs and on no other rbxts crate. Every byte-exact library it needs (hashids, uuid v5,
-# sha1/sha256, JSON with JavaScript's property order, minimatch-style globs) is ported in `src/`, with parity
-# tables generated from the node libraries in `tests/data`.
+# Every byte-exact library it needs (hashids, uuid v5, sha1/sha256, JSON with JavaScript's property order,
+# minimatch-style globs) is ported in `src/`, with parity tables generated from the node libraries in `tests/data`.
+# F1 adds the plugin API (`rbxts_plugin`), the Luau tree, the project services and tsrs's AST and checker.
 [dependencies]
 dragonbox_ecma.workspace = true
+rbxts_plugin.workspace = true
+rbxts_luau.workspace = true
+rbxts_project.workspace = true
+tsrs_core.workspace = true
+tsrs_ast.workspace = true
+tsrs_checker.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+# The end-to-end test builds fixtures with the real compiler (`compile_project_with`).
+rbxts_transform.workspace = true
+tsrs_compiler.workspace = true
+tsrs_diagnostics.workspace = true

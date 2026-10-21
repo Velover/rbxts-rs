@@ -1,0 +1,84 @@
+{
+	"version": 1,
+	"flameworkVersion": "2.0.0-alpha.8",
+	"identifiers": {
+		"f1-fixture:out/server/namespaced@Outer.Inner.Deep": "server/namespaced@Outer.Inner.Deep",
+		"f1-fixture:out/server/namespaced@makeProvider.Local": "server/namespaced@makeProvider.Local",
+		"f1-fixture:out/server/reflected@Measured": "server/reflected@Measured",
+		"f1-fixture:out/server/reflected@Shape": "server/reflected@Shape",
+		"f1-fixture:out/server/services/beta@Beta": "server/services/beta@Beta",
+		"f1-fixture:out/server/services/hub/init@Hub": "server/services/hub/init@Hub",
+		"f1-fixture:out/server/services/hub/init@Helper": "server/services/hub/init@Helper",
+		"f1-fixture:out/server/services/alpha@Alpha": "server/services/alpha@Alpha"
+	},
+	"inputs": {
+		"config": "6f77c33bd14b72df5a1b6f49cc4fe4cd3078f1c4"
+	},
+	"idGenerationMode": "full",
+	"metadata": {
+		"paths": {
+			"uses": {
+				"src/server/main.server.ts": [
+					{
+						"path": "src/server/services",
+						"macro": "requireModules",
+						"line": 3,
+						"column": 16,
+						"raises": true
+					},
+					{
+						"path": "src/server/services",
+						"macro": "registerProviders",
+						"line": 6,
+						"column": 3
+					}
+				]
+			}
+		},
+		"globs": {
+			"paths": {
+				"src/server/services/hub/*.ts": [
+					"out/server/services/hub/init.lua"
+				],
+				"src/server/services/**/*.ts": [
+					"out/server/services/alpha.lua",
+					"out/server/services/beta.lua",
+					"out/server/services/hub/init.lua"
+				],
+				"src/server/nothing/*.ts": []
+			},
+			"origins": {
+				"src/server/main.server.ts": [
+					"src/server/services/hub/*.ts",
+					"src/server/services/**/*.ts",
+					"src/server/nothing/*.ts"
+				]
+			},
+			"uses": {
+				"src/server/main.server.ts": [
+					{
+						"glob": "src/server/services/hub/*.ts",
+						"text": "./services/hub/*.ts",
+						"macro": "registerProvidersGlob",
+						"line": 8,
+						"column": 3
+					},
+					{
+						"glob": "src/server/services/**/*.ts",
+						"text": "src/server/services/**/*.ts",
+						"macro": "registerProvidersGlob",
+						"line": 7,
+						"column": 3
+					},
+					{
+						"glob": "src/server/nothing/*.ts",
+						"text": "src/server/nothing/*.ts",
+						"macro": "registerProvidersGlob",
+						"line": 14,
+						"column": 26
+					}
+				]
+			}
+		}
+	}
+}

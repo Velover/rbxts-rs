@@ -6,8 +6,8 @@
 //! included. A fresh build info gets its fields in the order the TS transformer adds them.
 
 use std::collections::HashMap;
-use std::path::Path;
 
+use crate::inputs::{FsInputs, Inputs, strip_bom};
 use crate::json::{self, JsObject, JsValue};
 use crate::packages::{FLAMEWORK_SCOPE, TRANSFORMER_PACKAGE};
 use crate::{ProjectError, VERSION, node_path, schema, uuid};
@@ -104,16 +104,6 @@ pub fn find_problem(text: Option<&str>) -> Option<String> {
     None
 }
 
-/// `ts.sys.readFile`: the text without a UTF-8 byte order mark.
-fn read_text(path: &str) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    Some(
-        text.strip_prefix('\u{feff}')
-            .map(str::to_owned)
-            .unwrap_or(text),
-    )
-}
-
 #[derive(Debug, Clone)]
 pub struct BuildInfo {
     /// Where it is read from and written to.
@@ -163,10 +153,20 @@ impl BuildInfo {
     /// Reads a `flamework.build`, or starts an empty one when there is no file. A file that cannot be used stops the
     /// build, naming it as `name` and saying what is wrong, followed by `remedy`.
     pub fn from_path(file: &str, name: &str, remedy: &[String]) -> Result<Self, ProjectError> {
-        if !Path::new(file).exists() {
+        Self::from_path_with(&mut FsInputs, file, name, remedy)
+    }
+
+    /// [`BuildInfo::from_path`], reading through `inputs`.
+    pub fn from_path_with(
+        inputs: &mut dyn Inputs,
+        file: &str,
+        name: &str,
+        remedy: &[String],
+    ) -> Result<Self, ProjectError> {
+        let Some(text) = inputs.read(file).map(strip_bom) else {
             return Ok(BuildInfo::new(file));
-        }
-        let text = read_text(file);
+        };
+        let text = Some(text);
         if let Some(problem) = find_problem(text.as_deref()) {
             let mut lines = vec![format!("Flamework cannot use {name}: {problem}.")];
             lines.extend(remedy.iter().cloned());
@@ -188,23 +188,33 @@ impl BuildInfo {
         remedy: &[String],
         ceiling: Option<&str>,
     ) -> Result<Option<Self>, ProjectError> {
-        let read = |file: &str| {
+        Self::from_directory_with(&mut FsInputs, directory, remedy, ceiling)
+    }
+
+    /// [`BuildInfo::from_directory`], reading through `inputs`.
+    pub fn from_directory_with(
+        inputs: &mut dyn Inputs,
+        directory: &str,
+        remedy: &[String],
+        ceiling: Option<&str>,
+    ) -> Result<Option<Self>, ProjectError> {
+        let read = |inputs: &mut dyn Inputs, file: &str| {
             let relative = node_path::relative_slash(directory, file);
             let name = if relative.is_empty() {
                 file.to_owned()
             } else {
                 relative
             };
-            BuildInfo::from_path(file, &name, remedy)
+            BuildInfo::from_path_with(inputs, file, &name, remedy)
         };
         let own = node_path::join(&[directory, BUILD_INFO_NAME]);
-        if Path::new(&own).exists() {
-            return read(&own).map(Some);
+        if inputs.exists(&own) {
+            return read(inputs, &own).map(Some);
         }
-        if let Some(package_json) = find_package_json(directory, ceiling) {
+        if let Some(package_json) = find_package_json_with(inputs, directory, ceiling) {
             let candidate = node_path::join(&[&node_path::dirname(&package_json), BUILD_INFO_NAME]);
-            if Path::new(&candidate).exists() {
-                return read(&candidate).map(Some);
+            if inputs.exists(&candidate) {
+                return read(inputs, &candidate).map(Some);
             }
         }
         Ok(None)
@@ -547,6 +557,38 @@ impl BuildInfo {
         self.string_field("idGenerationMode")
     }
 
+    fn inputs_section(&mut self) -> &mut JsObject {
+        self.data
+            .entry_or_insert("inputs", || JsValue::Object(JsObject::new()))
+            .as_object_mut()
+            .expect("inputs is an object")
+    }
+
+    /// `inputs.config`: the hash of the code-shaping options ([`crate::config::fingerprint_emit_config`]).
+    pub fn set_config_input(&mut self, hash: &str) {
+        self.inputs_section()
+            .insert("config", JsValue::String(hash.to_owned()));
+    }
+
+    /// The recorded `inputs.config`, if any.
+    pub fn config_input(&self) -> Option<&str> {
+        self.data.get("inputs")?.get("config")?.as_str()
+    }
+
+    /// Records that `Flamework.env` inlined `name` in the file `origin`, with the hash of its value
+    /// ([`crate::env::hash_env_value`]): `inputs.env[origin][name]`.
+    pub fn add_env_input(&mut self, origin: &str, name: &str, hash: &str) {
+        let env = self
+            .inputs_section()
+            .entry_or_insert("env", || JsValue::Object(JsObject::new()))
+            .as_object_mut()
+            .expect("inputs.env is an object");
+        env.entry_or_insert(origin, || JsValue::Object(JsObject::new()))
+            .as_object_mut()
+            .expect("inputs.env[origin] is an object")
+            .insert(name, JsValue::String(hash.to_owned()));
+    }
+
     /// The whole object, for anything this API does not cover.
     pub fn data(&self) -> &JsObject {
         &self.data
@@ -562,10 +604,19 @@ fn below_ceiling(current: &str, ceiling: Option<&str>) -> bool {
 
 /// The nearest `package.json` from `directory` up (`ts.findPackageJson`), looking no higher than `ceiling`.
 pub fn find_package_json(directory: &str, ceiling: Option<&str>) -> Option<String> {
+    find_package_json_with(&mut FsInputs, directory, ceiling)
+}
+
+/// [`find_package_json`], reading through `inputs`.
+pub fn find_package_json_with(
+    inputs: &mut dyn Inputs,
+    directory: &str,
+    ceiling: Option<&str>,
+) -> Option<String> {
     let mut current = node_path::resolve(&[directory]);
     loop {
         let candidate = node_path::join(&[&current, "package.json"]);
-        if Path::new(&candidate).is_file() {
+        if inputs.exists(&candidate) {
             return Some(candidate);
         }
         let parent = node_path::dirname(&current);
@@ -578,8 +629,17 @@ pub fn find_package_json(directory: &str, ceiling: Option<&str>) -> Option<Strin
 
 /// The name in the `package.json` nearest to `file`, if it names a package.
 pub fn package_name_of(file: &str, ceiling: Option<&str>) -> Option<String> {
-    let package_json = find_package_json(&node_path::dirname(file), ceiling)?;
-    let text = std::fs::read_to_string(package_json).ok()?;
+    package_name_of_with(&mut FsInputs, file, ceiling)
+}
+
+/// [`package_name_of`], reading through `inputs`.
+pub fn package_name_of_with(
+    inputs: &mut dyn Inputs,
+    file: &str,
+    ceiling: Option<&str>,
+) -> Option<String> {
+    let package_json = find_package_json_with(inputs, &node_path::dirname(file), ceiling)?;
+    let text = inputs.read(&package_json)?;
     json::parse(text.strip_prefix('\u{feff}').unwrap_or(&text))
         .ok()?
         .get("name")?
@@ -610,11 +670,21 @@ impl CandidateScan {
 
     /// The first `flamework.build` in `start` or up to `depth` parents of it.
     pub fn find_upper(&mut self, start: &str, depth: u32) -> Option<String> {
+        self.find_upper_with(&mut FsInputs, start, depth)
+    }
+
+    /// [`CandidateScan::find_upper`], reading through `inputs`.
+    pub fn find_upper_with(
+        &mut self,
+        inputs: &mut dyn Inputs,
+        start: &str,
+        depth: u32,
+    ) -> Option<String> {
         let found = match self.cache.get(start) {
             Some(cached) => cached.clone(),
             None => {
                 let candidate = node_path::join(&[start, BUILD_INFO_NAME]);
-                let found = Path::new(&candidate).exists().then_some(candidate);
+                let found = inputs.exists(&candidate).then_some(candidate);
                 self.cache.insert(start.to_owned(), found.clone());
                 found
             }
@@ -624,7 +694,7 @@ impl CandidateScan {
         }
         let parent = node_path::dirname(start);
         if depth > 0 && parent != start && below_ceiling(start, self.ceiling.as_deref()) {
-            return self.find_upper(&parent, depth - 1);
+            return self.find_upper_with(inputs, &parent, depth - 1);
         }
         None
     }
@@ -636,9 +706,19 @@ impl CandidateScan {
         file_directories: impl IntoIterator<Item = &'a str>,
         own_path: &str,
     ) -> Vec<String> {
+        self.candidates_with(&mut FsInputs, file_directories, own_path)
+    }
+
+    /// [`CandidateScan::candidates`], reading through `inputs`.
+    pub fn candidates_with<'a>(
+        &mut self,
+        inputs: &mut dyn Inputs,
+        file_directories: impl IntoIterator<Item = &'a str>,
+        own_path: &str,
+    ) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         for directory in file_directories {
-            let Some(candidate) = self.find_upper(directory, 4) else {
+            let Some(candidate) = self.find_upper_with(inputs, directory, 4) else {
                 continue;
             };
             if !are_paths_equal(&candidate, own_path) && !out.contains(&candidate) {
@@ -660,7 +740,16 @@ pub fn are_paths_equal(a: &str, b: &str) -> bool {
 
 /// What to do when a package's `flamework.build` cannot be used.
 pub fn package_build_info_remedy(file: &str, ceiling: Option<&str>) -> Vec<String> {
-    let owner = match package_name_of(file, ceiling) {
+    package_build_info_remedy_with(&mut FsInputs, file, ceiling)
+}
+
+/// [`package_build_info_remedy`], reading through `inputs`.
+pub fn package_build_info_remedy_with(
+    inputs: &mut dyn Inputs,
+    file: &str,
+    ceiling: Option<&str>,
+) -> Vec<String> {
+    let owner = match package_name_of_with(inputs, file, ceiling) {
         Some(name) => format!("the package {name}"),
         None => "the package it is in".to_owned(),
     };
@@ -721,21 +810,28 @@ pub fn load_package_build_infos(
     current_directory: &str,
     ceiling: Option<&str>,
 ) -> Result<(Vec<BuildInfo>, Vec<String>), ProjectError> {
+    load_package_build_infos_with(&mut FsInputs, candidates, current_directory, ceiling)
+}
+
+/// [`load_package_build_infos`], reading through `inputs`.
+pub fn load_package_build_infos_with(
+    inputs: &mut dyn Inputs,
+    candidates: &[String],
+    current_directory: &str,
+    ceiling: Option<&str>,
+) -> Result<(Vec<BuildInfo>, Vec<String>), ProjectError> {
     let mut infos = Vec::new();
     let mut log = Vec::new();
     let mut mixed = Vec::new();
     for candidate in candidates {
         let relative = node_path::relative_slash(current_directory, candidate);
-        let info = BuildInfo::from_path(
-            candidate,
-            &relative,
-            &package_build_info_remedy(candidate, ceiling),
-        )?;
+        let remedy = package_build_info_remedy_with(inputs, candidate, ceiling);
+        let info = BuildInfo::from_path_with(inputs, candidate, &relative, &remedy)?;
         log.push(format!(
             "Loaded buildInfo at {relative}, next id: {}",
             info.latest_id()
         ));
-        if let Some(name) = package_name_of(candidate, ceiling)
+        if let Some(name) = package_name_of_with(inputs, candidate, ceiling)
             && name.starts_with(&format!("{FLAMEWORK_SCOPE}/"))
             && info.flamework_version() != VERSION
         {
