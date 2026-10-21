@@ -1,5 +1,5 @@
-//! `probe`: a test plugin for the compiler's side of the seam. Every primitive S1 offers is reached from one fixture
-//! (`crates/rbxts_transform/tests/plugin_fixtures/probe`).
+//! `probe`: a test plugin for the compiler's side of the seam. Every primitive the compiler offers is reached from one
+//! fixture (`crates/rbxts_transform/tests/plugin_fixtures/probe`).
 //!
 //! **Calls by symbol**: a function whose JSDoc has `@probe <op>`; `classify_symbol` reads the op:
 //! - `hoist`: `cx.hoist(arg)`, a local before the root statement;
@@ -25,6 +25,15 @@
 //! - `latedecline` / `markdecline`: a late string, or `mark_import_used` of the argument's import, then declined
 //!   (each an internal error);
 //! - `twice`: `compile_expr(call.node)` twice (the second is an internal error);
+//! - `recvarg`: `compile_call(Function(useRecv), [Luau(compile_receiver), Original(args)…])` (on optional and
+//!   non-method calls the receiver is bound to a local); `recvsuper`: `compile_receiver` of `super.m()` (an
+//!   internal error);
+//! - `objedit`: `compile_object_literal` renaming `a`, replacing `b` and appending `e`; `objorder`: appending `w` and
+//!   emitting the fields in another order;
+//! - `binary`: `compile_binary(PlusToken, a, b)`; `locals`: the `locals()` counts as a string; `spill`:
+//!   `hoist_spillable(compile_expr(a))`;
+//! - `calltwice` / `exprthencall` / `ancestor` / `binbad`: `compile_call` twice, `compile_expr` then `compile_call`,
+//!   `compile_expr` of the call's parent, `compile_binary` with `+=` (each an internal error);
 //! - `facts`: a string of source facts: the call's UTF-16 line and character, its width, the callee's declaring
 //!   package, where `./runtime` resolves, the `{@link}` in the tag and what it resolves to, the file's checker
 //!   diagnostics;
@@ -35,7 +44,12 @@
 //! `compile_call(Method { compile_receiver, "probed" }, [Original(x)])`.
 //! **By callee marker**: `f(x)` where `f`'s type has `__probeCallee` → `compile_call(Original, [Original(x),
 //! Luau(1)])`.
-//! **Class hook** (decorated classes): `Class.__probed = "<name>"`.
+//! **Property keys**: accesses whose receiver has `__probeKey` get the key `k_<key>` (`key with space` for `swap`, the
+//! written key for `same`).
+//! **Assignments**: to `this.<p>.key` where `p`'s JSDoc has `@probeattrs`: `self:setAttribute("key", value[, true])`
+//! (compound values with `compile_binary`); `@probeattrsread` compiles the target whatever the operation.
+//! **Class hook** (decorated classes): `Class.__probed = "<name>"`; [`Mode::ClassSelf`] compiles a class expression
+//! itself (an internal error).
 //! **By kind**: `void probeVoid` becomes `"void claimed"` (other `void`s are declined); `debugger` becomes
 //! `print("probe: debugger")`.
 //! **explain_checker_diagnostic**: a checker message naming `probeBroken` is replaced.
@@ -47,12 +61,12 @@
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
-use rbxts_luau::{AssignmentOperator, create};
+use rbxts_luau::{AssignmentOperator, BinaryOperator, create};
 use rbxts_plugin::ts::{Diagnostic, Kind, Node, P, Symbol};
 use rbxts_plugin::{
-    Abort, Arg, CallKind, CallSite, Callee, CheckerInfo, Claim, ClassFilter, ClassSite, Cx, Fatal, FileIndex, FinishCx,
-    Interest, LuauExpr, LuauStmt, PResult, Plugin, PluginDiagnostic, PluginInfo, PluginInstance, SetupCx, SymbolRole,
-    Tag, text_literal,
+    Abort, AccessSite, Arg, AssignOp, AssignSite, CallKind, CallSite, Callee, CheckerInfo, Claim, ClassFilter,
+    ClassSite, Cx, Fatal, FieldOrder, FileIndex, FinishCx, Interest, LuauExpr, LuauStmt, ObjectEdits, PResult, Plugin,
+    PluginDiagnostic, PluginInfo, PluginInstance, SetupCx, SymbolRole, Tag, text_literal,
 };
 
 /// How a probe misbehaves.
@@ -77,8 +91,8 @@ pub enum Mode {
     SetupPanic,
     /// `finish` panics.
     FinishPanic,
-    /// Registers `accesses_by_marker`, which S1 does not dispatch.
-    S2Interest,
+    /// The class hook for every class, compiling a class expression itself (an internal error).
+    ClassSelf,
     /// Only calls by symbol; every call hook takes a temporary id, then declines (for `RBXTS_PLUGIN_CLAIMS=all`).
     DeclineTouched,
     /// Only an expression-kind interest in calls and `new` (`probeExpr…` / `ProbeExpr…` callees): the hook wraps
@@ -129,6 +143,17 @@ const OPS: &[&str] = &[
     "latedecline",
     "markdecline",
     "twice",
+    "recvarg",
+    "recvsuper",
+    "objedit",
+    "objorder",
+    "binary",
+    "locals",
+    "spill",
+    "calltwice",
+    "exprthencall",
+    "ancestor",
+    "binbad",
 ];
 const RECEIVER: Tag = Tag(100);
 const CALLEE: Tag = Tag(101);
@@ -136,6 +161,10 @@ const VOID: Tag = Tag(102);
 const DEBUGGER: Tag = Tag(103);
 const EXPRCALL: Tag = Tag(105);
 const STMTSELF: Tag = Tag(106);
+const KEY: Tag = Tag(107);
+const ATTRS: Tag = Tag(108);
+const ATTRSREAD: Tag = Tag(109);
+const EXPRBIN: Tag = Tag(110);
 
 fn op(tag: Tag) -> &'static str {
     OPS.get(tag.0 as usize).copied().unwrap_or("?")
@@ -399,6 +428,76 @@ impl ProbeInstance {
                 cx.prereq(create::comment(" probe: left behind"));
                 Ok(Claim::Decline)
             }
+            "recvarg" => {
+                // the receiver as an argument: compiled once (a non-method optional call binds it to a local)
+                let receiver = cx.compile_receiver(call)?;
+                let mut args = vec![Arg::Luau(receiver)];
+                args.extend(call.args.iter().map(|&a| Arg::Original(a)));
+                let value = cx.compile_call(call, Callee::Function(create::id("useRecv")), args)?;
+                self.claimed(value)
+            }
+            "recvsuper" => {
+                // `super` is not a value: an internal error
+                let receiver = cx.compile_receiver(call)?;
+                self.claimed(receiver)
+            }
+            "objedit" => {
+                let edits = ObjectEdits {
+                    rename: vec![("a".to_owned(), text_literal("renamed"))],
+                    replace: vec![("b".to_owned(), text_literal("replaced"))],
+                    append: vec![(text_literal("e"), create::number(5.0))],
+                    order: FieldOrder::Source,
+                };
+                let value = cx.compile_object_literal(arg(0).expect("an argument"), edits)?;
+                self.claimed(create::call(create::id("wrap"), vec![value]))
+            }
+            "objorder" => {
+                let edits = ObjectEdits {
+                    append: vec![(text_literal("w"), create::number(4.0))],
+                    order: FieldOrder::Permuted(vec![3, 2, 0, 1]),
+                    ..ObjectEdits::default()
+                };
+                let value = cx.compile_object_literal(arg(0).expect("an argument"), edits)?;
+                self.claimed(value)
+            }
+            "binary" => {
+                let value =
+                    cx.compile_binary(Kind::PlusToken, arg(0).expect("an argument"), arg(1).expect("two arguments"))?;
+                self.claimed(value)
+            }
+            "locals" => {
+                let locals = cx.locals();
+                self.claimed(text_literal(&format!("f{} m{}", locals.function, locals.main_chunk)))
+            }
+            "spill" => {
+                let value = cx.compile_expr(arg(0).expect("an argument"))?;
+                let hoisted = cx.hoist_spillable(value, "spilled");
+                self.claimed(hoisted)
+            }
+            "calltwice" => {
+                let args = || call.args.iter().map(|&a| Arg::Original(a)).collect::<Vec<_>>();
+                cx.compile_call(call, Callee::Original, args())?;
+                let value = cx.compile_call(call, Callee::Original, args())?;
+                self.claimed(value)
+            }
+            "exprthencall" => {
+                cx.compile_expr(call.node)?;
+                let value = cx.compile_call(call, Callee::Original, call.args.iter().map(|&a| Arg::Original(a)).collect())?;
+                self.claimed(value)
+            }
+            "ancestor" => {
+                let parent = call.node.parent().expect("a call has a parent");
+                let value = cx.compile_expr(parent)?;
+                self.claimed(value)
+            }
+            "binbad" => {
+                let value = cx.compile_binary(
+                    Kind::PlusEqualsToken,
+                    arg(0).expect("an argument"),
+                    arg(1).expect("two arguments"),
+                )?;
+                self.claimed(value)
+            }
             "boom" if self.mode == Mode::Panic => panic!("probe: boom"),
             "fail" if self.mode == Mode::Fail => Err(cx.error(call.node, "probe: fail was called")),
             "err" if self.mode == Mode::ErrWithoutError => {
@@ -424,7 +523,13 @@ impl PluginInstance for ProbeInstance {
         if self.mode == Mode::ExprCall {
             interest.expressions(Kind::CallExpression, EXPRCALL);
             interest.expressions(Kind::NewExpression, EXPRCALL);
+            interest.expressions(Kind::BinaryExpression, EXPRBIN);
+            interest.expressions(Kind::PostfixUnaryExpression, EXPRBIN);
             interest.statements(Kind::ExpressionStatement, STMTSELF);
+            return;
+        }
+        if self.mode == Mode::ClassSelf {
+            interest.classes(ClassFilter::All);
             return;
         }
         interest.calls_by_symbol();
@@ -436,18 +541,21 @@ impl PluginInstance for ProbeInstance {
         interest.classes(ClassFilter::Decorated);
         interest.expressions(Kind::VoidExpression, VOID);
         interest.statements(Kind::DebuggerStatement, DEBUGGER);
-        if self.mode == Mode::S2Interest {
-            // not dispatched in S1: the build fails
-            interest.accesses_by_marker("__probeKey", Tag(104));
-        }
+        interest.accesses_by_marker("__probeKey", KEY);
+        interest.assignments_by_receiver_symbol();
     }
 
     fn classify_symbol(&self, cx: &mut Cx<'_>, symbol: P<Symbol>, role: SymbolRole) -> Option<Tag> {
         if self.mode == Mode::Refuse {
             cx.late_string("refused in classify_symbol");
         }
-        if role != SymbolRole::Callee {
-            return None;
+        if role == SymbolRole::AssignReceiver {
+            let tags = cx.symbol_jsdoc_tags(symbol);
+            return tags.iter().find_map(|t| match t.name {
+                "probeattrs" => Some(ATTRS),
+                "probeattrsread" => Some(ATTRSREAD),
+                _ => None,
+            });
         }
         let tag = cx.symbol_jsdoc_tags(symbol).into_iter().find(|t| t.name == "probe")?;
         let op = tag.comment.split_whitespace().next().unwrap_or("");
@@ -486,7 +594,14 @@ impl PluginInstance for ProbeInstance {
         }
     }
 
-    fn class(&self, _cx: &mut Cx<'_>, class: &ClassSite) -> PResult<Vec<LuauStmt>> {
+    fn class(&self, cx: &mut Cx<'_>, class: &ClassSite) -> PResult<Vec<LuauStmt>> {
+        if self.mode == Mode::ClassSelf {
+            // a class expression compiled by its own class hook: an internal error
+            if class.node.kind() == Kind::ClassExpression {
+                cx.compile_expr(class.node)?;
+            }
+            return Ok(Vec::new());
+        }
         Ok(vec![create::assignment(
             create::property(class.luau_name.clone(), "__probed"),
             AssignmentOperator::Assign,
@@ -495,9 +610,27 @@ impl PluginInstance for ProbeInstance {
     }
 
     fn expression(&self, cx: &mut Cx<'_>, node: P<Node>, tag: Tag) -> PResult<Claim<LuauExpr>> {
+        if tag == EXPRBIN {
+            // assignments to `probeTarget`, lowered by the hook itself: as a statement where roblox-ts lowers them as
+            // one (no value), else wrapped
+            if !cx.source_text(node).starts_with("probeTarget") {
+                return Ok(Claim::Decline);
+            }
+            let value = cx.compile_expr(node)?;
+            return Ok(Claim::Take(if value.is_none() { value } else { create::call(create::id("exprWrap"), vec![value]) }));
+        }
         if tag == EXPRCALL
             && let Some(callee) = node.expression()
-            && (cx.source_text(callee).starts_with("probeExpr") || cx.source_text(callee).starts_with("ProbeExpr"))
+            && cx.source_text(callee).starts_with("probeAskOnce")
+        {
+            cx.warning(node, "probe-exprcall: asked about probeAskOnce");
+            return Ok(Claim::Decline);
+        }
+        if tag == EXPRCALL
+            && let Some(callee) = node.expression()
+            && (cx.source_text(callee).starts_with("probeExpr")
+                || cx.source_text(callee).starts_with("ProbeExpr")
+                || cx.source_text(callee).contains(".probeExpr"))
         {
             let value = cx.compile_expr(node)?;
             return self.claimed(create::call(create::id("exprWrap"), vec![value]));
@@ -537,6 +670,50 @@ impl PluginInstance for ProbeInstance {
         self.claims.set(self.claims.get() + 1);
         let print = create::call(create::id("print"), vec![text_literal("probe: debugger")]);
         Ok(Claim::Take(vec![create::call_statement(print)]))
+    }
+
+    fn property_key(&self, _: &mut Cx<'_>, access: &AccessSite, tag: Tag) -> PResult<Claim<String>> {
+        if tag != KEY {
+            return Ok(Claim::Decline);
+        }
+        Ok(Claim::Take(match access.key {
+            "swap" => "key with space".to_owned(),
+            "same" => "same".to_owned(),
+            key => format!("k_{key}"),
+        }))
+    }
+
+    fn assignment(&self, cx: &mut Cx<'_>, site: &AssignSite, tag: Tag) -> PResult<Claim<LuauExpr>> {
+        // `this.attrs.key op= value` → `self:setAttribute("key", value[, true])`, as Flamework's attribute setter
+        let Some(this) = (site.receiver.kind() == Kind::PropertyAccessExpression)
+            .then(|| site.receiver.as_property_access_expression().expression)
+        else {
+            return Err(cx.error(site.target, "probe: an attribute assignment needs `this.attrs.key`"));
+        };
+        let object = cx.compile_expr(this)?;
+        let one = || create::number(1.0);
+        let value = match (site.op, tag) {
+            (_, ATTRSREAD) => {
+                // reads the target, whatever the operation (a `delete` operand is refused)
+                let target = cx.compile_expr(site.target)?;
+                create::call(create::id("read"), vec![target])
+            }
+            (AssignOp::Assign, _) => cx.compile_expr(site.value.expect("an assignment has a value"))?,
+            (AssignOp::Compound(op), _) => cx.compile_binary(op, site.target, site.value.expect("a value"))?,
+            (AssignOp::PreInc | AssignOp::PostInc, _) => {
+                create::binary(cx.compile_expr(site.target)?, BinaryOperator::Add, one())
+            }
+            (AssignOp::PreDec | AssignOp::PostDec, _) => {
+                create::binary(cx.compile_expr(site.target)?, BinaryOperator::Sub, one())
+            }
+            (AssignOp::Delete, _) => create::nil(),
+        };
+        let mut args = vec![text_literal(site.key), value];
+        if matches!(site.op, AssignOp::PostInc | AssignOp::PostDec) && site.value_used {
+            args.push(create::bool(true));
+        }
+        self.claims.set(self.claims.get() + 1);
+        Ok(Claim::Take(create::method_call(object, "setAttribute", args)))
     }
 
     fn explain_checker_diagnostic(&self, cx: &mut Cx<'_>, diagnostic: P<Diagnostic>) -> Option<PluginDiagnostic> {

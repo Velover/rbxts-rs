@@ -542,7 +542,9 @@ version = "0.0.0"
 dependencies = [
  "rbxts_luau",
  "rbxts_plugin",
+ "rustc-hash",
  "serde_json",
+ "tsrs_ast",
 ]
 
 [[package]]

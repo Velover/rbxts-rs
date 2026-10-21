@@ -55,6 +55,8 @@ pub(crate) struct HostPlugin {
     pub receivers: Vec<ReceiverInterest>,
     pub callee_markers: Vec<(&'static str, Tag)>,
     pub class_filter: Option<ClassFilter>,
+    /// `assignments_by_receiver_symbol` was registered.
+    pub assignments: bool,
     /// The `(symbol, role)` classification memo: `classify_symbol` is asked at most once for each.
     pub memo: RefCell<ClassifyMemo>,
 }
@@ -89,11 +91,17 @@ pub struct PluginHost {
     /// Every method name of a receiver interest, for a quick test.
     pub(crate) receiver_methods: FxHashSet<&'static str>,
     pub(crate) any_classes: bool,
+    /// Every `accesses_by_marker` registration: (plugin, marker, tag), in plugin then registration order.
+    pub(crate) access_markers: Vec<(usize, &'static str, Tag)>,
+    /// The same by marker name, for receivers checked against many markers (indices into `access_markers`).
+    pub(crate) access_marker_index: FxHashMap<&'static str, Vec<usize>>,
+    /// Some plugin registered `assignments_by_receiver_symbol`.
+    pub(crate) any_assignments: bool,
     pub(crate) expressions: FxHashMap<Kind, Vec<(usize, Tag)>>,
     pub(crate) statements: FxHashMap<Kind, Vec<(usize, Tag)>>,
     /// `RBXTS_PLUGIN_CLAIMS=all`: ask every matching plugin, and report a double claim.
     pub(crate) claims_all: bool,
-    /// Interests registered that this compiler does not dispatch yet (S2); the build fails with these.
+    /// Interests registered that this compiler does not dispatch; the build fails with these (none at present).
     pub unsupported_interests: Vec<String>,
     /// The checker's diagnostics of each file (all of them warnings or suggestions: an error stops the build first).
     pub(crate) file_diagnostics: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>>,
@@ -124,6 +132,9 @@ impl PluginHost {
             any_symbol: false,
             receiver_methods: FxHashSet::default(),
             any_classes: false,
+            access_markers: Vec::new(),
+            access_marker_index: FxHashMap::default(),
+            any_assignments: false,
             expressions: FxHashMap::default(),
             statements: FxHashMap::default(),
             claims_all,
@@ -140,22 +151,11 @@ impl PluginHost {
             let instance = plugin.plugin.instance(shared, checker);
             let mut interest = Interest::new();
             instance.interest(&mut interest);
-            // rbxts-rs: S2 — `accesses_by_marker` (property_key) and `assignments_by_receiver_symbol` (assignment)
-            // are not dispatched yet: registering them fails the build rather than being ignored
-            for (registered, what) in [
-                (!interest.access_markers().is_empty(), "accesses_by_marker (the property_key hook)"),
-                (
-                    interest.wants_assignments_by_receiver_symbol(),
-                    "assignments_by_receiver_symbol (the assignment hook)",
-                ),
-            ] {
-                if registered {
-                    host.unsupported_interests.push(format!(
-                        "rbxts-rs internal error: plugin `{}` registered {what}, which is not supported until S2",
-                        plugin.info.name
-                    ));
-                }
+            for &(marker, tag) in interest.access_markers() {
+                host.access_marker_index.entry(marker).or_default().push(host.access_markers.len());
+                host.access_markers.push((index, marker, tag));
             }
+            host.any_assignments |= interest.wants_assignments_by_receiver_symbol();
             for &(kind, tag) in interest.expression_kinds() {
                 host.expressions.entry(kind).or_default().push((index, tag));
             }
@@ -175,6 +175,7 @@ impl PluginHost {
                 receivers: interest.receiver_calls().to_vec(),
                 callee_markers: interest.callee_markers().to_vec(),
                 class_filter: interest.class_filter(),
+                assignments: interest.wants_assignments_by_receiver_symbol(),
                 memo: RefCell::default(),
             });
         }

@@ -162,3 +162,91 @@ declare function probeTwice(a: number): number;
 
 /** `probeStmtSelf;`: a statement hook compiles its own statement (tests only). */
 declare const probeStmtSelf: number;
+
+// --- S2 ---
+
+/** Optional and non-method calls claimed by symbol: `compile_call(Function(useRecv), [receiver, args…])`. */
+interface Holder {
+	/** @probe recvarg */
+	fn?: (a: number) => number;
+	/** @probe self */
+	sf?: (a: number) => number;
+	/** @probe recvarg */
+	mm?(a: number): number;
+	inner: Holder;
+}
+declare const holder: Holder;
+declare const maybeHolder: Holder | undefined;
+declare function getHolder(): Holder;
+declare function useRecv(...args: Array<unknown>): number;
+
+/** `super.m()` calls claimed by symbol. */
+declare class SelfBase {
+	/** @probe self */
+	m(v: number): number;
+	/** @probe inject */
+	n?(v: number, extra?: string, more?: unknown): number;
+	/** @probe recvsuper */
+	r(v: number): number;
+}
+
+/** Accesses whose receiver has `__probeKey`: `property_key` answers `k_<key>` (`key with space` for `swap`, the key
+ * itself for `same`). */
+interface Keyed {
+	readonly __probeKey: true;
+	a: number;
+	b: number;
+	s: string;
+	opt?: number;
+	swap: number;
+	same: number;
+	m(x: number): number;
+	f: (x: number) => number;
+	inner: Keyed;
+}
+declare const keyed: Keyed;
+declare const maybeKeyed: Keyed | undefined;
+declare function getKeyed(): Keyed;
+
+/** Object literals compiled with edits. */
+/** @probe objedit */
+declare function probeObject<T>(value: T): T;
+/** @probe objorder */
+declare function probeObjectOrder<T>(value: T): T;
+declare const extra: { e: number };
+
+/** `compile_binary(PlusToken, a, b)`. */
+/** @probe binary */
+declare function probeBinary(a: unknown, b: unknown): unknown;
+
+/** The locals so far: `"f<function> m<main chunk>"`. */
+/** @probe locals */
+declare function probeLocals(): string;
+
+/** `hoist_spillable(compile_expr(a), "spilled")`. */
+/** @probe spill */
+declare function probeSpill<T>(a: T): T;
+
+/** Misuse (tests only): `compile_call` twice; `compile_expr` then `compile_call`; an ancestor compiled;
+ * `compile_binary` with an assignment operator. */
+/** @probe calltwice */
+declare function probeCallTwice(a: number): number;
+/** @probe exprthencall */
+declare function probeExprThenCall(a: number): number;
+/** @probe ancestor */
+declare function probeAncestor(): number;
+/** @probe binbad */
+declare function probeBinBad(a: number, b: number): number;
+
+/** An expression hook (probe-exprcall) declines these; the call hook then compiles the call itself. */
+/** @probe self */
+declare function probeAskOnce(a: number): number;
+
+/** Chain-inner calls for the expression hook (probe-exprcall). */
+declare function probeExprChain(a: number): { value: number };
+interface ExprChain {
+	probeExprM(a: number): { value: number };
+}
+declare const maybeExprs: ExprChain | undefined;
+/** Assignments the expression hook (probe-exprcall) lowers itself. */
+declare const probeTarget: { x: number };

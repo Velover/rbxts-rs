@@ -6,6 +6,8 @@ use tsrs_core::P;
 
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
+use crate::plugins::backend::keyed_access;
+use rbxts_plugin::AccessPosition;
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::transform_optional_chain::transform_optional_chain;
 use crate::shared::diagnostics::errors;
@@ -89,7 +91,19 @@ pub fn transform_element_access_expression_inner(
         return create::paren(expression);
     }
 
-    if skip_upwards(node).parent().is_some_and(|p| p.kind() == Kind::DeleteExpression) {
+    let delete = skip_upwards(node).parent().is_some_and(|p| p.kind() == Kind::DeleteExpression);
+    // rbxts-rs: a plugin's `property_key` for a string literal key (DESIGN §11.5)
+    let position = if delete { AccessPosition::Delete } else { AccessPosition::Read };
+    if let Some(key) = crate::plugins::dispatch::rewritten_key(state, node, position) {
+        let target = keyed_access(expression, &key);
+        if delete {
+            prereqs.push(create::assignment(target, AssignmentOperator::Assign, Expr::Nil));
+            return Expr::None;
+        }
+        return target;
+    }
+
+    if delete {
         let index = add_one_if_array_type(state, receiver_type, index);
         prereqs.push(create::assignment(
             create::computed_index(convert_to_indexable_expression(expression), index),

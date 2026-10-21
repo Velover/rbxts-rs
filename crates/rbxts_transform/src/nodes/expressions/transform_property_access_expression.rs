@@ -6,6 +6,8 @@ use tsrs_core::P;
 
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
+use crate::plugins::backend::keyed_access;
+use rbxts_plugin::AccessPosition;
 use crate::nodes::transform_optional_chain::transform_optional_chain;
 use crate::util::add_index_diagnostics::add_index_diagnostics;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
@@ -31,15 +33,23 @@ pub fn transform_property_access_expression_inner(
     let receiver_type = state.get_type(receiver);
     add_index_diagnostics(state, node, member_type, receiver_type);
 
-    if skip_upwards(node).parent().is_some_and(|p| p.kind() == Kind::DeleteExpression) {
-        prereqs.push(create::assignment(
-            create::property(convert_to_indexable_expression(expression), name),
-            AssignmentOperator::Assign,
-            Expr::Nil,
-        ));
+    let delete = skip_upwards(node).parent().is_some_and(|p| p.kind() == Kind::DeleteExpression);
+    // rbxts-rs: a plugin's `property_key` (DESIGN §11.5)
+    let position = if delete { AccessPosition::Delete } else { AccessPosition::Read };
+    let rewritten = crate::plugins::dispatch::rewritten_key(state, node, position);
+
+    if delete {
+        let target = match &rewritten {
+            Some(key) => keyed_access(expression, key),
+            None => create::property(convert_to_indexable_expression(expression), name),
+        };
+        prereqs.push(create::assignment(target, AssignmentOperator::Assign, Expr::Nil));
         return Expr::None;
     }
 
+    if let Some(key) = rewritten {
+        return keyed_access(expression, &key);
+    }
     let mut property = create::property(convert_to_indexable_expression(expression), name);
     try_mark_builtin_member(state, node, &mut property);
     property

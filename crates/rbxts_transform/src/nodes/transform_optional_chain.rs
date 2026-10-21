@@ -7,6 +7,8 @@ use tsrs_core::P;
 
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
+use crate::plugins::backend::{OptionalCall, OptionalReceiver};
+use rbxts_plugin::AccessPosition;
 use crate::nodes::expressions::transform_call_expression::{
     transform_call_expression_inner, transform_element_call_expression_inner, transform_property_call_expression_inner,
 };
@@ -24,7 +26,7 @@ use crate::util::types::get_first_defined_symbol;
 use crate::util::wrap_return_if_lua_tuple::wrap_return_if_lua_tuple;
 
 /// One link of a chain (`ChainItem`).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum ChainItemKind {
     PropertyAccess { name: &'static str },
     ElementAccess { expression: P<Node> },
@@ -34,7 +36,7 @@ pub enum ChainItemKind {
 }
 
 /// `ChainItem`
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ChainItem {
     pub kind: ChainItemKind,
     pub node: P<Node>,
@@ -141,14 +143,15 @@ pub fn flatten_optional_chain(mut expression: P<Node>) -> (Vec<ChainItem>, P<Nod
     (chain, expression)
 }
 
-/// One chain link on its compiled base. Calls are offered to plugins first (rbxts-rs: DESIGN §11.5).
+/// One chain link on its compiled base. The link is offered to plugins first (rbxts-rs: DESIGN §11.5): the
+/// expression hooks of its kind, then, for a call, the call plugins.
 pub(crate) fn transform_chain_item(
     state: &mut TransformState<'_>,
     prereqs: &mut Prereqs,
     base_expression: Expr,
     item: &ChainItem,
 ) -> Expr {
-    let base_expression = match crate::plugins::dispatch::claim_chain_call(state, prereqs, item, base_expression) {
+    let base_expression = match crate::plugins::dispatch::claim_chain_item(state, prereqs, item, base_expression) {
         Ok(claimed) => return claimed,
         Err(base_expression) => base_expression,
     };
@@ -179,6 +182,50 @@ pub(crate) fn transform_chain_item(
             item.args(),
         ),
     }
+}
+
+/// The callee of an optional call, read from its receiver into the chain's temporary.
+enum CalleeKey {
+    /// `receiver.name`
+    Name(&'static str),
+    /// `receiver[index]`, the index compiled already.
+    Index(Expr),
+    /// A plugin's `property_key` answer.
+    Rewritten(String),
+}
+
+impl CalleeKey {
+    fn read(self, receiver: Expr) -> Expr {
+        match self {
+            CalleeKey::Name(name) => create::property(convert_to_indexable_expression(receiver), name),
+            CalleeKey::Index(index) => create::computed_index(convert_to_indexable_expression(receiver), index),
+            CalleeKey::Rewritten(key) => crate::plugins::backend::keyed_access(receiver, &key),
+        }
+    }
+}
+
+/// An optional call's value inside the nil check on its callee (roblox-ts's lowering): `function(self?, args)`, or
+/// `None` after the error for a macro, which cannot be called optionally.
+pub(crate) fn transform_optional_call_value(
+    state: &mut TransformState<'_>,
+    prereqs: &mut Prereqs,
+    item: &ChainItem,
+    call: &OptionalCall,
+) -> Option<Expr> {
+    let callee = item.node.expression().expect("a call has a callee");
+    let callee_type = state.get_type(callee);
+    let exp_type = state.checker.get_non_optional_type(callee_type);
+    let symbol = get_first_defined_symbol(state, exp_type);
+    let r#macro = symbol.and_then(|s| state.macro_manager.get_property_call_macro(state.checker, s));
+    if r#macro.is_some() {
+        state.add_diagnostic(errors::no_optional_macro_call(item.node));
+        return None;
+    }
+    let mut args = ensure_transform_order(state, prereqs, item.args());
+    if let Some(self_arg) = &call.self_arg {
+        args.insert(0, self_arg.clone());
+    }
+    Some(wrap_return_if_lua_tuple(state, item.node, create::call(call.function.clone(), args)))
 }
 
 fn temp_name_for(node: P<Node>) -> String {
@@ -227,6 +274,9 @@ fn transform_optional_chain_inner(
         let mut is_method_call = false;
         let mut is_super_call = false;
         let mut self_param: Option<Expr> = None;
+        // rbxts-rs: an optional call's callee is read from its receiver into the temporary after the call was
+        // offered to plugins, so that a receiver `compile_receiver` binds is declared before that read
+        let mut callee_read: Option<(Expr, CalleeKey)> = None;
 
         if item.is_compound_call() {
             is_method_call = is_method(state, item.access());
@@ -245,50 +295,52 @@ fn transform_optional_chain_inner(
             }
 
             if item.call_optional() {
-                match item.kind {
-                    ChainItemKind::PropertyCall { name, .. } => {
-                        base_expression = create::property(convert_to_indexable_expression(base_expression), name);
-                    }
-                    ChainItemKind::ElementCall { expression, argument_expression, .. } => {
+                // rbxts-rs: a plugin's `property_key` for the callee
+                let rewritten = crate::plugins::dispatch::rewritten_key(state, item.access(), AccessPosition::Callee);
+                let key = match (item.kind, rewritten) {
+                    (_, Some(key)) => CalleeKey::Rewritten(key),
+                    (ChainItemKind::PropertyCall { name, .. }, None) => CalleeKey::Name(name),
+                    (ChainItemKind::ElementCall { expression, argument_expression, .. }, None) => {
                         let exp_type = state.get_type(expression.as_element_access_expression().expression);
                         let argument = transform_expression(state, prereqs, argument_expression);
-                        let index = add_one_if_array_type(state, exp_type, argument);
-                        base_expression =
-                            create::computed_index(convert_to_indexable_expression(base_expression), index);
+                        CalleeKey::Index(add_one_if_array_type(state, exp_type, argument))
                     }
                     _ => unreachable!(),
-                }
+                };
+                callee_read = Some((base_expression, key));
+                base_expression = Expr::None;
             }
         }
 
         // receiver initialization may need its own nil check before the optional call
         let mut receiver_prereqs = Prereqs::new();
-        let temp = create_or_set_temp_id(&mut receiver_prereqs, temp_id.take(), base_expression, last_node);
+        // (an optional call's callee read is placed after the call is lowered, below)
+        let (temp, declared) = match &callee_read {
+            Some(_) => match temp_id.take() {
+                Some(temp) => (temp, false),
+                None => (Expr::TemporaryIdentifier(crate::classes::prereqs::temp_id(temp_name_for(last_node))), true),
+            },
+            None => (create_or_set_temp_id(&mut receiver_prereqs, temp_id.take(), base_expression, last_node), false),
+        };
         temp_id = Some(temp.clone());
 
         let mut branch_prereqs = Prereqs::new();
-        let new_expression: Option<Expr> = if item.is_compound_call() && item.call_optional() {
-            // rbxts-rs: not offered to plugins yet (S2); a matching plugin interest is an internal error
-            crate::plugins::dispatch::check_unoffered_call(state, item);
-            let callee = item.node.expression().expect("a call has a callee");
-            let callee_type = state.get_type(callee);
-            let exp_type = state.checker.get_non_optional_type(callee_type);
-            let symbol = get_first_defined_symbol(state, exp_type);
-            let r#macro = symbol.and_then(|s| state.macro_manager.get_property_call_macro(state.checker, s));
-            if r#macro.is_some() {
-                state.add_diagnostic(errors::no_optional_macro_call(item.node));
-                None
-            } else {
-                let mut args = ensure_transform_order(state, &mut branch_prereqs, item.args());
-                if is_method_call {
-                    if is_super_call {
-                        args.insert(0, globals::self_());
-                    } else {
-                        args.insert(0, self_param.clone().expect("a method call has a self parameter"));
-                    }
-                }
-                Some(wrap_return_if_lua_tuple(state, item.node, create::call(temp.clone(), args)))
-            }
+        let new_expression: Option<Expr> = if let Some((receiver, _)) = &callee_read {
+            let call = OptionalCall {
+                function: temp.clone(),
+                self_arg: match (is_method_call, is_super_call) {
+                    (true, true) => Some(globals::self_()),
+                    (true, false) => Some(self_param.clone().expect("a method call has a self parameter")),
+                    (false, _) => None,
+                },
+                receiver: match (is_super_call, &self_param) {
+                    (true, _) => OptionalReceiver::Super,
+                    (false, Some(param)) => OptionalReceiver::Bound(param.clone()),
+                    (false, None) => OptionalReceiver::Unbound(receiver.clone()),
+                },
+            };
+            // rbxts-rs: offered to plugins inside the nil check on the callee (DESIGN §11.5)
+            crate::plugins::dispatch::lower_optional_call(state, &mut branch_prereqs, item, &call)
         } else {
             Some(transform_chain_item(state, &mut branch_prereqs, temp.clone(), item))
         };
@@ -302,6 +354,21 @@ fn transform_optional_chain_inner(
             branch_prereqs.push(create::assignment(temp.clone(), AssignmentOperator::Assign, new_value));
         } else if new_value.is_call() {
             branch_prereqs.push(create::call_statement(new_value));
+        }
+
+        if let Some((mut receiver, key)) = callee_read {
+            // a receiver bound by `compile_receiver` is declared first, and the callee read from it
+            if let Some((bound, binding)) = state.plugin_file.optional_receivers.remove(&item.node) {
+                receiver_prereqs.push(binding);
+                receiver = bound;
+            }
+            let callee = key.read(receiver);
+            if declared {
+                let Expr::TemporaryIdentifier(id) = &temp else { unreachable!("a new temporary") };
+                receiver_prereqs.push(create::local(id.clone(), Some(callee)));
+            } else {
+                receiver_prereqs.push(create::assignment(temp.clone(), AssignmentOperator::Assign, callee));
+            }
         }
 
         receiver_prereqs.push(create_nil_check(temp.clone(), branch_prereqs.statements));
@@ -322,8 +389,9 @@ fn transform_optional_chain_inner(
 /// `transformOptionalChain`
 pub fn transform_optional_chain(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Expr {
     let (chain, expression) = flatten_optional_chain(node);
-    // rbxts-rs: a plugin may claim the chain's first call before its callee is compiled (DESIGN §11.5)
-    if let Some((index, value)) = crate::plugins::dispatch::claim_chain_start(state, prereqs, &chain) {
+    // rbxts-rs: plugins may claim a link before anything of the chain is compiled (DESIGN §11.5): the expression
+    // hooks any link before the first `?.`, the call plugins the chain's first call
+    if let Some((index, value)) = crate::plugins::dispatch::claim_chain_lazy(state, prereqs, &chain) {
         return transform_optional_chain_inner(state, prereqs, &chain, value, None, index);
     }
     let base = transform_expression(state, prereqs, expression);

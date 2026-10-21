@@ -8,8 +8,9 @@
 //!   `new` and decorator claims, `compile_call` slots, prereqs, hoists, captures, imports and import elision, the
 //!   class hook, the by-kind fallbacks, late strings, artifacts, and (in its failure modes) the phase guards,
 //!   panics and the contracts the compiler enforces.
-//! - [`identity`]: claims every call and lowers it as roblox-ts would (`compile_expr` or `compile_call`): its output
-//!   must equal a build without plugins.
+//! - [`identity`]: claims calls, accesses (`property_key`), assignments or most expression kinds, and lowers them as
+//!   roblox-ts would (`compile_expr`, `compile_call`, `compile_binary`, `compile_object_literal`): its output must
+//!   equal a build without plugins.
 
 #[path = "../../rbxts_plugin/tests/support/stamp.rs"]
 pub mod stamp;
@@ -33,11 +34,14 @@ pub const NAMES: &[&str] = &[
     "probe-artifact-sneaky",
     "probe-setup-panic",
     "probe-finish-panic",
-    "probe-s2-interest",
+    "probe-classself",
     "probe-touched",
     "probe-exprcall",
     "identity-expr",
     "identity-call",
+    "identity-key",
+    "identity-assign",
+    "identity-fallback",
 ];
 
 /// A test plugin by name (`rbxts-bench build --plugin <name>`).
@@ -56,11 +60,14 @@ pub fn by_name(name: &str) -> Option<Box<dyn DynPlugin>> {
         "probe-artifact-sneaky" => erase(Probe::new("probe", Mode::ArtifactSneaky)),
         "probe-setup-panic" => erase(Probe::new("probe", Mode::SetupPanic)),
         "probe-finish-panic" => erase(Probe::new("probe", Mode::FinishPanic)),
-        "probe-s2-interest" => erase(Probe::new("probe", Mode::S2Interest)),
+        "probe-classself" => erase(Probe::new("probe", Mode::ClassSelf)),
         "probe-touched" => erase(Probe::new("probe-touched", Mode::DeclineTouched)),
         "probe-exprcall" => erase(Probe::new("probe-exprcall", Mode::ExprCall)),
         "identity-expr" => erase(identity::Identity(identity::IdentityMode::Expr)),
         "identity-call" => erase(identity::Identity(identity::IdentityMode::Call)),
+        "identity-key" => erase(identity::Identity(identity::IdentityMode::Key)),
+        "identity-assign" => erase(identity::Identity(identity::IdentityMode::Assign)),
+        "identity-fallback" => erase(identity::Identity(identity::IdentityMode::Fallback)),
         _ => return None,
     })
 }

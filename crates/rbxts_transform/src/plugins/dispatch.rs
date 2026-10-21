@@ -4,12 +4,17 @@
 use rustc_hash::FxHashSet;
 
 use rbxts_luau::{AnyIdentifier, Expr, Stmt, create};
-use rbxts_plugin::{CallKind, CallSite, Claim, ClassFilter, ClassSite, SymbolRole, Tag};
+use rbxts_plugin::{
+    AccessPosition, AccessSite, AssignOp, AssignSite, CallKind, CallSite, Claim, ClassFilter, ClassSite, SymbolRole, Tag,
+};
 use tsrs_ast::{Kind, ModifierFlags, Node, SourceFile, Symbol, SymbolFlags};
 use tsrs_core::P;
 
 use super::HookKind;
-use super::backend::{CallContext, CallShape, access_call_kind, run_classify, run_hook, run_hook_framed};
+use super::backend::{
+    CallContext, CallShape, EagerLowering, OptionalCall, access_call_kind, is_delete_operand, run_classify, run_hook,
+    run_hook_framed,
+};
 // (run_hook: the broadcast hooks; run_hook_framed: the claim hooks, whose frame decides a decline)
 use super::file_state::{EffectMark, HookFrame, ImportOverrides, PluginImport, RootRange, declared_locals};
 use super::host::PluginHost;
@@ -20,7 +25,8 @@ use crate::nodes::statements::transform_import_equals_declaration::transform_imp
 use crate::nodes::transform_optional_chain::{ChainItem, ChainItemKind, transform_chain_item};
 use crate::util::create_import_expression::{create_import_expression_of_file, get_source_file_from_module_specifier};
 use crate::util::symbols::is_used_as_statement;
-use crate::util::traversal::{has_syntactic_modifier, skip_downwards};
+use crate::util::traversal::{has_syntactic_modifier, skip_downwards, skip_upwards};
+use crate::util::wrap_expression_statement::wrap_expression_statement;
 
 // --- imports seen by the compiler ---
 
@@ -84,6 +90,9 @@ fn classify(
     if let Some(&tag) = host.plugins[plugin].memo.borrow().get(&(symbol, role)) {
         return tag;
     }
+    // anchored at the symbol's declaration, not at the first site that asked: which site is first depends on the
+    // checker count and the file order, so a diagnostic there (a refused primitive) would move with them
+    let anchor = symbol.value_declaration().or_else(|| symbol.declarations().first().copied()).unwrap_or(anchor);
     let tag = run_classify(state, plugin, anchor, |instance, cx| instance.classify_symbol(cx, symbol, role));
     host.plugins[plugin].memo.borrow_mut().insert((symbol, role), tag);
     tag
@@ -148,12 +157,16 @@ fn offer_call(
     candidates: &[(usize, Tag)],
 ) -> Option<Expr> {
     let site = context.site;
-    // the node is offered once: a dispatch of it while this offer runs lowers it without asking again
-    if !state.plugin_file.in_offer.insert(site.node) {
+    // the node is offered once: a dispatch of it while this offer runs, or after every plugin declined it, lowers it
+    // without asking again
+    if state.plugin_file.call_declined.contains(&site.node) || !state.plugin_file.in_offer.insert(site.node) {
         return None;
     }
     let value = offer_call_inner(state, host, prereqs, context, candidates);
     state.plugin_file.in_offer.remove(&site.node);
+    if value.is_none() {
+        state.plugin_file.call_declined.insert(site.node);
+    }
     value
 }
 
@@ -176,7 +189,7 @@ fn offer_call_inner(
                 if host.claims_all {
                     report_double_claims(state, host, context, plugin, &candidates[position + 1..]);
                 }
-                return Some(value);
+                return Some(unused_value(prereqs, value, site.value_used));
             }
             Ok(Claim::Decline) => {
                 if check_decline(state, host, prereqs, &mut *context, plugin, start, frame) {
@@ -188,6 +201,17 @@ fn offer_call_inner(
         }
     }
     None
+}
+
+/// A claimed value whose node's value is unused (statement position): evaluated as a statement now (a call
+/// statement, or `local _ = value`), and `Expr::None` returned, so that no lowering that drops unused values
+/// (the optional chain's) drops its effects. Used values, calls and temporaries are returned as they are.
+fn unused_value(prereqs: &mut Prereqs, value: Expr, value_used: bool) -> Expr {
+    if value_used || value.is_none() || matches!(value, Expr::Call(_) | Expr::MethodCall(_) | Expr::TemporaryIdentifier(_)) {
+        return value;
+    }
+    prereqs.push_list(wrap_expression_statement(value));
+    Expr::None
 }
 
 /// What makes a decline wrong, from the declining hook's frame and the effect marks: the hook lowered the node or
@@ -280,20 +304,31 @@ fn report_double_claims(
     }
 }
 
-/// The string text of an element access key, for receiver interests and symbols.
+/// The string text of an element access key, for receiver interests, symbols and `property_key`.
 fn literal_key(argument: P<Node>) -> Option<&'static str> {
     matches!(argument.kind(), Kind::StringLiteral | Kind::NoSubstitutionTemplateLiteral).then(|| argument.text())
 }
 
-/// The call site of a chain call: the site (kind still `Call` for property calls), its shape, the method name for
-/// receiver interests, and why it is not offered yet when it is one of the S2 shapes. `None` for links that are not
-/// calls, and for `import()`.
+/// A property or element access link (not a call).
+fn is_access(item: &ChainItem) -> bool {
+    matches!(item.kind, ChainItemKind::PropertyAccess { .. } | ChainItemKind::ElementAccess { .. })
+}
+
+/// An optional call `o.m?.()` / `o[k]?.()` (its callee is nil-checked by the chain lowering).
+fn is_optional_call(item: &ChainItem) -> bool {
+    matches!(
+        item.kind,
+        ChainItemKind::PropertyCall { call_optional: true, .. } | ChainItemKind::ElementCall { call_optional: true, .. }
+    )
+}
+
+/// The call site of a chain call: the site (kind still `Call` for property calls) with its shape, and the method
+/// name for receiver interests. `None` for links that are not calls, and for `import()`.
 fn chain_site(
     state: &mut TransformState<'_>,
     host: &PluginHost,
     item: &ChainItem,
-) -> Option<(CallContext, Option<&'static str>, Option<&'static str>)> {
-    let mut unsupported = None;
+) -> Option<(CallContext, Option<&'static str>)> {
     let node = item.node;
     let (shape, callee, symbol_node, receiver, method) = match item.kind {
         ChainItemKind::Call => {
@@ -305,15 +340,11 @@ fn chain_site(
             let shape = if inner.kind() == Kind::SuperKeyword { CallShape::Super } else { CallShape::Call };
             (shape, callee, Some(inner), None, None)
         }
-        ChainItemKind::PropertyCall { expression: access, name, call_optional } => {
-            // rbxts-rs: S2 — optional method calls (`o.m?.()`) and `super.m()` are not offered yet; a plugin
-            // whose interest matches one gets an internal error (`report_unoffered`)
-            unsupported = unoffered_reason(access, call_optional);
+        ChainItemKind::PropertyCall { expression: access, name, .. } => {
             let receiver = access.as_property_access_expression().expression;
             (CallShape::Property { access, name }, access, Some(access), Some(receiver), Some(name))
         }
-        ChainItemKind::ElementCall { expression: access, argument_expression, call_optional } => {
-            unsupported = unoffered_reason(access, call_optional);
+        ChainItemKind::ElementCall { expression: access, argument_expression, .. } => {
             let receiver = access.as_element_access_expression().expression;
             let key = literal_key(argument_expression);
             let shape = CallShape::Element { access, argument: argument_expression };
@@ -335,61 +366,7 @@ fn chain_site(
     };
     let mut context = CallContext::new(site, shape, None);
     context.item = Some(*item);
-    Some((context, method, unsupported))
-}
-
-/// Why a property or element call is not offered yet (S2).
-fn unoffered_reason(access: P<Node>, call_optional: bool) -> Option<&'static str> {
-    if tsrs_ast::is_super_property(access) {
-        Some("`super.m()` calls")
-    } else if call_optional {
-        Some("optional method calls (`o.m?.()`, `o[k]?.()`)")
-    } else {
-        None
-    }
-}
-
-/// A call of a shape S2 offers matched a plugin's interest: an internal error naming each such plugin, so the gap
-/// is never silent.
-fn report_unoffered(
-    state: &mut TransformState<'_>,
-    host: &PluginHost,
-    context: &CallContext,
-    method: Option<&str>,
-    reason: &str,
-) {
-    let candidates = call_candidates(state, host, &context.site, method);
-    let mut named = Vec::new();
-    for (plugin, _) in candidates {
-        if !named.contains(&plugin) {
-            named.push(plugin);
-            let message = format!(
-                "plugin `{}`: this call matches its interest, but {reason} are not offered to plugins until S2",
-                host.name(plugin)
-            );
-            state.internal_error(context.site.node, &message);
-        }
-    }
-}
-
-/// An optional method call (`o.m?.()`), which the chain lowering builds itself: not offered yet, so a plugin
-/// whose interest matches it gets an internal error.
-#[inline]
-pub fn check_unoffered_call(state: &mut TransformState<'_>, item: &ChainItem) {
-    if state.plugins.is_some() {
-        check_unoffered_call_slow(state, item);
-    }
-}
-
-#[inline(never)]
-fn check_unoffered_call_slow(state: &mut TransformState<'_>, item: &ChainItem) {
-    let Some(host) = state.plugins else { return };
-    if !host.any_calls {
-        return;
-    }
-    if let Some((context, method, Some(reason))) = chain_site(state, host, item) {
-        report_unoffered(state, host, &context, method, reason);
-    }
+    Some((context, method))
 }
 
 /// Fills in the method-call kind of a property or element call, once some plugin wants the call.
@@ -399,37 +376,55 @@ fn finish_kind(state: &mut TransformState<'_>, context: &mut CallContext) {
     }
 }
 
-/// The first call of a chain whose callee is reached through plain accesses only (`f()`, `ns.f()`, `a.b.m()`): it is
-/// offered before anything of the chain is compiled. Returns the chain index to continue from and the value so far
-/// (the claimed value, or the call lowered as usual when a plugin compiled its receiver and then declined); `None`
-/// to lower the chain as usual (the call is then not offered again).
+/// The offers made before anything of a chain is compiled, in the order a recursive lowering would make them: from
+/// the outermost link in, each link up to the first `?.` link or optional call (which mean the same lowered on
+/// their own) to the expression hooks of its kind, and the chain's first call reached through plain accesses
+/// only (`f()`, `ns.f()`, `a.b.m()`) to the call plugins, after the expression hooks. Returns the chain index to
+/// continue from and the value so far (a claimed value, or the first call lowered as usual when a plugin compiled
+/// its receiver and then declined); `None` to lower the chain as usual (the links offered here are not offered
+/// again).
 #[inline]
-pub fn claim_chain_start(
-    state: &mut TransformState<'_>,
-    prereqs: &mut Prereqs,
-    chain: &[ChainItem],
-) -> Option<(usize, Expr)> {
+pub fn claim_chain_lazy(state: &mut TransformState<'_>, prereqs: &mut Prereqs, chain: &[ChainItem]) -> Option<(usize, Expr)> {
     state.plugins?;
-    claim_chain_start_slow(state, prereqs, chain)
+    claim_chain_lazy_slow(state, prereqs, chain)
 }
 
 #[inline(never)]
-fn claim_chain_start_slow(
+fn claim_chain_lazy_slow(
     state: &mut TransformState<'_>,
     prereqs: &mut Prereqs,
     chain: &[ChainItem],
 ) -> Option<(usize, Expr)> {
     let host = state.plugins?;
-    if !host.any_calls {
+    let lazy_end = chain.iter().position(|item| item.optional || is_optional_call(item)).unwrap_or(chain.len());
+    let start = if host.any_calls { chain.iter().position(|item| !is_access(item)).filter(|&k| k < lazy_end) } else { None };
+    let any_fallback = chain[..lazy_end].iter().any(|item| host.expressions.contains_key(&item.node.kind()));
+    if !any_fallback && start.is_none() {
         return None;
     }
-    let k = chain.iter().position(|item| {
-        !matches!(item.kind, ChainItemKind::PropertyAccess { .. } | ChainItemKind::ElementAccess { .. })
-    })?;
-    if chain[..=k].iter().any(|item| item.optional) {
-        return None;
+    for i in (0..lazy_end).rev() {
+        let item = &chain[i];
+        if any_fallback && let Some(value) = claim_expression(state, prereqs, item.node) {
+            return Some((i + 1, value));
+        }
+        if start == Some(i)
+            && let Some(value) = claim_chain_start(state, host, prereqs, item)
+        {
+            return Some((i + 1, value));
+        }
     }
-    let item = &chain[k];
+    None
+}
+
+/// The chain's first call, offered to the call plugins before its callee is compiled. The claimed value, or the
+/// call lowered as usual when a plugin compiled its receiver and then declined; `None` to lower it as usual (it is
+/// then not offered again).
+fn claim_chain_start(
+    state: &mut TransformState<'_>,
+    host: &PluginHost,
+    prereqs: &mut Prereqs,
+    item: &ChainItem,
+) -> Option<Expr> {
     if state.plugin_file.in_offer.contains(&item.node) {
         return None;
     }
@@ -437,11 +432,7 @@ fn claim_chain_start_slow(
         // `compile_expr` of the claimed call itself: the item lowering skips it
         return None;
     }
-    let (mut context, method, unsupported) = chain_site(state, host, item)?;
-    if unsupported.is_some() {
-        // the chain lowering reports it
-        return None;
-    }
+    let (mut context, method) = chain_site(state, host, item)?;
     let candidates = call_candidates(state, host, &context.site, method);
     // asked now or never: the chain lowering does not ask again
     state.plugin_file.offered.insert(item.node);
@@ -451,7 +442,7 @@ fn claim_chain_start_slow(
     finish_kind(state, &mut context);
     if let Some(value) = offer_call(state, host, prereqs, &mut context, &candidates) {
         state.plugin_file.offered.remove(&item.node);
-        return Some((k + 1, value));
+        return Some(value);
     }
     // (an erroneous decline returned nil above, so the node is not lowered or offered again)
     // declined: a `compile_expr` of the call in a hook consumed the mark, which keeps it from being offered again
@@ -461,13 +452,14 @@ fn claim_chain_start_slow(
         return None;
     }
     let base = context.base.take()?;
-    Some((k + 1, transform_chain_item(state, prereqs, base, item)))
+    Some(transform_chain_item(state, prereqs, base, item))
 }
 
-/// A chain call reached by the chain lowering, its receiver (or callee) compiled as `base` and nil-checked inside
-/// an optional chain. `Ok` with the claimed value, or `Err(base)` to lower it as usual.
+/// A chain link reached by the chain lowering, its base (receiver or callee) compiled and nil-checked inside an
+/// optional chain: offered to the expression hooks of its kind (a hook compiling its own node lowers it on that
+/// base), then, for a call, to the call plugins. `Ok` with the claimed value, or `Err(base)` to lower it as usual.
 #[inline]
-pub fn claim_chain_call(
+pub fn claim_chain_item(
     state: &mut TransformState<'_>,
     prereqs: &mut Prereqs,
     item: &ChainItem,
@@ -476,30 +468,41 @@ pub fn claim_chain_call(
     if state.plugins.is_none() {
         return Err(base);
     }
-    claim_chain_call_slow(state, prereqs, item, base)
+    claim_chain_item_slow(state, prereqs, item, base)
 }
 
 #[inline(never)]
-fn claim_chain_call_slow(
+fn claim_chain_item_slow(
     state: &mut TransformState<'_>,
     prereqs: &mut Prereqs,
     item: &ChainItem,
     base: Expr,
 ) -> Result<Expr, Expr> {
     let Some(host) = state.plugins else { return Err(base) };
-    if !host.any_calls
-        || matches!(item.kind, ChainItemKind::PropertyAccess { .. } | ChainItemKind::ElementAccess { .. })
-    {
+    if wants_expression_offer(state, host, item.node) {
+        let lowering = EagerLowering::Item { base: base.clone(), item: *item };
+        if let Some(value) = claim_expression_eager(state, prereqs, item.node, lowering) {
+            return Ok(value);
+        }
+    }
+    claim_chain_call(state, host, prereqs, item, base)
+}
+
+/// A chain call offered to the call plugins with its base compiled (`claim_chain_item`).
+fn claim_chain_call(
+    state: &mut TransformState<'_>,
+    host: &PluginHost,
+    prereqs: &mut Prereqs,
+    item: &ChainItem,
+    base: Expr,
+) -> Result<Expr, Expr> {
+    if !host.any_calls || is_access(item) {
         return Err(base);
     }
     if state.plugin_file.in_offer.contains(&item.node) || state.plugin_file.offered.remove(&item.node) {
         return Err(base);
     }
-    let Some((mut context, method, unsupported)) = chain_site(state, host, item) else { return Err(base) };
-    if let Some(reason) = unsupported {
-        report_unoffered(state, host, &context, method, reason);
-        return Err(base);
-    }
+    let Some((mut context, method)) = chain_site(state, host, item) else { return Err(base) };
     let candidates = call_candidates(state, host, &context.site, method);
     if candidates.is_empty() {
         return Err(base);
@@ -510,6 +513,47 @@ fn claim_chain_call_slow(
         Some(value) => Ok(value),
         None => Err(context.base.take().expect("the chain's base")),
     }
+}
+
+/// An optional call (`o.m?.()`, `o[k]?.()`), offered inside the chain's nil check on its callee: to the expression
+/// hooks of its kind, then to the call plugins, then lowered as roblox-ts lowers it (`None` after roblox-ts's error
+/// for a macro).
+pub(crate) fn lower_optional_call(
+    state: &mut TransformState<'_>,
+    prereqs: &mut Prereqs,
+    item: &ChainItem,
+    call: &OptionalCall,
+) -> Option<Expr> {
+    if let Some(value) = claim_optional_call(state, prereqs, item, call) {
+        return Some(value);
+    }
+    crate::nodes::transform_optional_chain::transform_optional_call_value(state, prereqs, item, call)
+}
+
+fn claim_optional_call(
+    state: &mut TransformState<'_>,
+    prereqs: &mut Prereqs,
+    item: &ChainItem,
+    call: &OptionalCall,
+) -> Option<Expr> {
+    let host = state.plugins?;
+    if wants_expression_offer(state, host, item.node) {
+        let lowering = EagerLowering::OptionalCall { call: call.clone(), item: *item };
+        if let Some(value) = claim_expression_eager(state, prereqs, item.node, lowering) {
+            return Some(value);
+        }
+    }
+    if !host.any_calls || state.plugin_file.in_offer.contains(&item.node) {
+        return None;
+    }
+    let (mut context, method) = chain_site(state, host, item)?;
+    let candidates = call_candidates(state, host, &context.site, method);
+    if candidates.is_empty() {
+        return None;
+    }
+    finish_kind(state, &mut context);
+    context.optional = Some(call.clone());
+    offer_call(state, host, prereqs, &mut context, &candidates)
 }
 
 /// `new C(…)`, before constructor macros.
@@ -608,11 +652,42 @@ pub fn claim_expression(state: &mut TransformState<'_>, prereqs: &mut Prereqs, n
 fn claim_expression_slow(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Option<Expr> {
     let host = state.plugins?;
     let list = host.expressions.get(&node.kind())?;
+    // asked once per node; a `delete` operand is lowered as the deletion, not as a value
+    if state.plugin_file.fallback_declined.contains(&node) || is_delete_operand(node) {
+        return None;
+    }
     if !state.plugin_file.in_fallback_offer.insert(node) {
         return None;
     }
     let value = claim_expression_offer(state, host, prereqs, node, list);
     state.plugin_file.in_fallback_offer.remove(&node);
+    match value {
+        Some(value) => Some(unused_value(prereqs, value, !is_used_as_statement(node))),
+        None => {
+            state.plugin_file.fallback_declined.insert(node);
+            None
+        }
+    }
+}
+
+/// Whether the expression hooks would be asked about `node` now (so its eager lowering is worth preparing).
+fn wants_expression_offer(state: &TransformState<'_>, host: &PluginHost, node: P<Node>) -> bool {
+    host.expressions.contains_key(&node.kind())
+        && !state.plugin_file.fallback_declined.contains(&node)
+        && !state.plugin_file.in_fallback_offer.contains(&node)
+}
+
+/// The expression hooks' offer of a chain link whose base is compiled: a hook compiling its own node lowers it
+/// with `lowering`.
+fn claim_expression_eager(
+    state: &mut TransformState<'_>,
+    prereqs: &mut Prereqs,
+    node: P<Node>,
+    lowering: EagerLowering,
+) -> Option<Expr> {
+    state.plugin_file.eager_offers.push((node, lowering));
+    let value = claim_expression(state, prereqs, node);
+    state.plugin_file.eager_offers.pop();
     value
 }
 
@@ -702,6 +777,315 @@ fn claim_statement_offer(
         }
     }
     None
+}
+
+// --- property keys ---
+
+/// Above this many `accesses_by_marker` registrations, a receiver's members are matched against the markers
+/// (one lookup per member) instead of each marker against the receiver (one lookup per marker).
+const MARKER_SCAN_LIMIT: usize = 16;
+
+/// The plugins whose access interests match an access on `receiver`, with their tags, in plugin then registration
+/// order.
+fn access_candidates(state: &mut TransformState<'_>, host: &PluginHost, receiver: P<Node>) -> Vec<(usize, Tag)> {
+    let t = state.get_type(receiver);
+    let t = state.checker.get_non_nullable_type(t);
+    let apparent = state.checker.get_apparent_type(t);
+    let mut matched: Vec<usize> = if host.access_markers.len() <= MARKER_SCAN_LIMIT {
+        (0..host.access_markers.len())
+            .filter(|&i| state.checker.get_property_of_type_exported(apparent, host.access_markers[i].1).is_some())
+            .collect()
+    } else {
+        let mut matched = Vec::new();
+        for &member in state.checker.get_properties_of_type_exported(apparent) {
+            if let Some(indices) = host.access_marker_index.get(member.name()) {
+                matched.extend(indices.iter().copied());
+            }
+        }
+        matched.sort_unstable();
+        matched.dedup();
+        // each confirmed as a single-marker check would find it
+        matched.retain(|&i| state.checker.get_property_of_type_exported(apparent, host.access_markers[i].1).is_some());
+        matched
+    };
+    matched.retain(|&i| state.plugin_file.begun[host.access_markers[i].0]);
+    matched.into_iter().map(|i| (host.access_markers[i].0, host.access_markers[i].2)).collect()
+}
+
+/// The key a plugin's `property_key` gave the access `access` (a PropertyAccessExpression, or an
+/// ElementAccessExpression with a string literal key), when it differs from the written one. `None` lowers the
+/// access as written. Asked once per access node; every lowering of it (a read, a write, a callee) gets the same
+/// answer.
+#[inline]
+pub fn rewritten_key(state: &mut TransformState<'_>, access: P<Node>, position: AccessPosition) -> Option<String> {
+    let host = state.plugins?;
+    if host.access_markers.is_empty() {
+        return None;
+    }
+    rewritten_key_slow(state, host, access, position)
+}
+
+#[inline(never)]
+fn rewritten_key_slow(
+    state: &mut TransformState<'_>,
+    host: &PluginHost,
+    access: P<Node>,
+    position: AccessPosition,
+) -> Option<String> {
+    if let Some(answer) = state.plugin_file.key_answers.get(&access) {
+        return answer.clone();
+    }
+    let answer = property_key_offer(state, host, access, position);
+    state.plugin_file.key_answers.insert(access, answer.clone());
+    answer
+}
+
+fn property_key_offer(
+    state: &mut TransformState<'_>,
+    host: &PluginHost,
+    access: P<Node>,
+    position: AccessPosition,
+) -> Option<String> {
+    let (receiver, key) = match access.kind() {
+        Kind::PropertyAccessExpression => {
+            let property = access.as_property_access_expression();
+            (property.expression, Some(property.name.text()))
+        }
+        Kind::ElementAccessExpression => {
+            let element = access.as_element_access_expression();
+            (element.expression, literal_key(element.argument_expression))
+        }
+        _ => return None,
+    };
+    let candidates = access_candidates(state, host, receiver);
+    if candidates.is_empty() {
+        return None;
+    }
+    let Some(key) = key else {
+        // never silent: the plugin would see the access lowered with its written key
+        let mut named = Vec::new();
+        for (plugin, _) in candidates {
+            if !named.contains(&plugin) {
+                named.push(plugin);
+                let message = format!(
+                    "plugin `{}`: this access matches its accesses_by_marker interest, but its key is computed \
+                     (`obj[k]`), which AccessSite cannot carry, so it is not offered",
+                    host.name(plugin)
+                );
+                state.internal_error(access, &message);
+            }
+        }
+        return None;
+    };
+    let site = AccessSite { node: access, receiver, key, position };
+    for (plugin, tag) in candidates {
+        let start = state.plugin_file.effect_mark(0);
+        let (result, frame) = run_hook_framed(state, None, None, plugin, HookKind::PropertyKey, access, |instance, cx| {
+            instance.property_key(cx, &site, tag)
+        });
+        match result {
+            // the written key lowers the access as written
+            Ok(Claim::Take(new_key)) => return (new_key != key).then_some(new_key),
+            Ok(Claim::Decline) => {
+                let now = state.plugin_file.effect_mark(0);
+                if let Some(what) = decline_problem(&frame, &now, &start, 0) {
+                    let message = format!("plugin `{}` declined a property key after {what}", host.name(plugin));
+                    state.internal_error(access, &message);
+                    return None;
+                }
+            }
+            Err(()) => return None,
+        }
+    }
+    None
+}
+
+/// The position of an access as roblox-ts lowers it for a write: the target of `=` (or of a destructuring or a
+/// `for … of` head), or of a compound assignment, `++` or `--`.
+pub fn write_position(access: P<Node>) -> AccessPosition {
+    match tsrs_ast::get_assignment_target(skip_upwards(access)) {
+        Some(target) if target.kind() == Kind::BinaryExpression => {
+            if target.as_binary_expression().operator_token.kind() == Kind::EqualsToken {
+                AccessPosition::Write
+            } else {
+                AccessPosition::ReadWrite
+            }
+        }
+        Some(target) if matches!(target.kind(), Kind::PrefixUnaryExpression | Kind::PostfixUnaryExpression) => {
+            AccessPosition::ReadWrite
+        }
+        _ => AccessPosition::Write,
+    }
+}
+
+// --- assignments ---
+
+/// `op=` as the binary operator it applies (`+=` is `PlusToken`).
+fn compound_operator(kind: Kind) -> Option<Kind> {
+    Some(match kind {
+        Kind::PlusEqualsToken => Kind::PlusToken,
+        Kind::MinusEqualsToken => Kind::MinusToken,
+        Kind::AsteriskEqualsToken => Kind::AsteriskToken,
+        Kind::AsteriskAsteriskEqualsToken => Kind::AsteriskAsteriskToken,
+        Kind::SlashEqualsToken => Kind::SlashToken,
+        Kind::PercentEqualsToken => Kind::PercentToken,
+        Kind::LessThanLessThanEqualsToken => Kind::LessThanLessThanToken,
+        Kind::GreaterThanGreaterThanEqualsToken => Kind::GreaterThanGreaterThanToken,
+        Kind::GreaterThanGreaterThanGreaterThanEqualsToken => Kind::GreaterThanGreaterThanGreaterThanToken,
+        Kind::AmpersandEqualsToken => Kind::AmpersandToken,
+        Kind::BarEqualsToken => Kind::BarToken,
+        Kind::CaretEqualsToken => Kind::CaretToken,
+        Kind::BarBarEqualsToken => Kind::BarBarToken,
+        Kind::AmpersandAmpersandEqualsToken => Kind::AmpersandAmpersandToken,
+        Kind::QuestionQuestionEqualsToken => Kind::QuestionQuestionToken,
+        _ => return None,
+    })
+}
+
+/// The target, operation and value of an assignment, update or `delete` whose target is a property or element
+/// access (destructuring assignments are not: their targets are pattern elements).
+fn assignment_parts(node: P<Node>) -> Option<(P<Node>, AssignOp, Option<P<Node>>)> {
+    let (target, op, value) = match node.kind() {
+        Kind::BinaryExpression => {
+            let binary = node.as_binary_expression();
+            let operator = binary.operator_token.kind();
+            let op = if operator == Kind::EqualsToken {
+                AssignOp::Assign
+            } else {
+                AssignOp::Compound(compound_operator(operator)?)
+            };
+            (binary.left, op, Some(binary.right()))
+        }
+        Kind::PrefixUnaryExpression => {
+            let unary = node.as_prefix_unary_expression();
+            let op = match unary.operator {
+                Kind::PlusPlusToken => AssignOp::PreInc,
+                Kind::MinusMinusToken => AssignOp::PreDec,
+                _ => return None,
+            };
+            (unary.operand, op, None)
+        }
+        Kind::PostfixUnaryExpression => {
+            let unary = node.as_postfix_unary_expression();
+            let op = match unary.operator {
+                Kind::PlusPlusToken => AssignOp::PostInc,
+                Kind::MinusMinusToken => AssignOp::PostDec,
+                _ => return None,
+            };
+            (unary.operand, op, None)
+        }
+        Kind::DeleteExpression => (node.expression()?, AssignOp::Delete, None),
+        _ => return None,
+    };
+    let target = skip_downwards(target);
+    matches!(target.kind(), Kind::PropertyAccessExpression | Kind::ElementAccessExpression)
+        .then_some((target, op, value))
+}
+
+/// The `assignment` hook: an assignment, compound or logical assignment, `++` / `--` or `delete` whose target is
+/// `receiver.key` (or `receiver["key"]`) and whose receiver's symbol a plugin classified (role `AssignReceiver`).
+/// Offered once, before roblox-ts lowers the node, after the expression hooks.
+#[inline]
+pub fn claim_assignment(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Option<Expr> {
+    let host = state.plugins?;
+    if !host.any_assignments {
+        return None;
+    }
+    claim_assignment_slow(state, host, prereqs, node)
+}
+
+#[inline(never)]
+fn claim_assignment_slow(
+    state: &mut TransformState<'_>,
+    host: &PluginHost,
+    prereqs: &mut Prereqs,
+    node: P<Node>,
+) -> Option<Expr> {
+    if state.plugin_file.in_assign_offer.contains(&node) || state.plugin_file.assign_declined.contains(&node) {
+        return None;
+    }
+    let (target, op, value) = assignment_parts(node)?;
+    let (receiver, key) = match target.kind() {
+        Kind::PropertyAccessExpression => {
+            let property = target.as_property_access_expression();
+            (property.expression, Some(property.name.text()))
+        }
+        _ => {
+            let element = target.as_element_access_expression();
+            (element.expression, literal_key(element.argument_expression))
+        }
+    };
+    let symbol = callee_symbol(state, Some(skip_downwards(receiver)))?;
+    let mut candidates = Vec::new();
+    for (plugin, entry) in host.plugins.iter().enumerate() {
+        if entry.assignments
+            && state.plugin_file.begun[plugin]
+            && let Some(tag) = classify(state, host, plugin, symbol, SymbolRole::AssignReceiver, node)
+        {
+            candidates.push((plugin, tag));
+        }
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+    let Some(key) = key else {
+        for &(plugin, _) in &candidates {
+            let message = format!(
+                "plugin `{}`: this assignment's receiver matches its assignments_by_receiver_symbol interest, but its \
+                 key is computed (`obj[k]`), which AssignSite cannot carry, so it is not offered",
+                host.name(plugin)
+            );
+            state.internal_error(node, &message);
+        }
+        return None;
+    };
+    let site = AssignSite { node, target, receiver, key, op, value, value_used: !is_used_as_statement(node) };
+    state.plugin_file.in_assign_offer.insert(node);
+    let value = claim_assignment_offer(state, host, prereqs, &site, &candidates);
+    state.plugin_file.in_assign_offer.remove(&node);
+    if value.is_none() {
+        state.plugin_file.assign_declined.insert(node);
+    }
+    value
+}
+
+fn claim_assignment_offer(
+    state: &mut TransformState<'_>,
+    host: &PluginHost,
+    prereqs: &mut Prereqs,
+    site: &AssignSite,
+    candidates: &[(usize, Tag)],
+) -> Option<Expr> {
+    for &(plugin, tag) in candidates {
+        let start = state.plugin_file.effect_mark(prereqs.statements.len());
+        let (result, frame) =
+            run_hook_framed(state, Some(prereqs), None, plugin, HookKind::Assignment, site.node, |instance, cx| {
+                instance.assignment(cx, site, tag)
+            });
+        match result {
+            Ok(Claim::Take(value)) => return Some(unused_value(prereqs, value, site.value_used)),
+            Ok(Claim::Decline) => {
+                let now = state.plugin_file.effect_mark(prereqs.statements.len());
+                if let Some(what) = decline_problem(&frame, &now, &start, 0) {
+                    let message = format!("plugin `{}` declined an assignment after {what}", host.name(plugin));
+                    state.internal_error(site.node, &message);
+                    // already an error: no other plugin, and not roblox-ts, gets the node
+                    return Some(create::nil());
+                }
+            }
+            Err(()) => return Some(create::nil()),
+        }
+    }
+    None
+}
+
+/// An expression statement's expression that roblox-ts lowers as a statement of its own (an assignment, logical
+/// assignment, `++` or `--`): offered to the expression hooks of its kind, then to the assignment hook, since it
+/// does not go through the expression lowering. The claimed value is evaluated as a statement.
+#[inline]
+pub fn claim_statement_expression(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Option<Expr> {
+    state.plugins?;
+    claim_expression(state, prereqs, node).or_else(|| claim_assignment(state, prereqs, node))
 }
 
 // --- classes ---
@@ -811,6 +1195,7 @@ fn end_file_slow(state: &mut TransformState<'_>, statements: &mut Vec<Stmt>) {
         statements.append(&mut state.plugin_file.root_inserts);
     }
     apply_import_decisions(state, statements);
+    super::spill::check_main_chunk(state, statements);
     place_imports_and_header(state, statements);
 }
 
@@ -854,6 +1239,22 @@ pub fn root_statement_end(
         runtime_lib_uses: state.runtime_lib_uses - mark.runtime_lib_uses,
     };
     state.plugin_file.root_ranges.push(range);
+}
+
+/// `parent` when it is the body of a function-like node and the build has plugins (its locals are counted for
+/// `locals().function`).
+#[inline]
+pub fn function_body_of(state: &TransformState<'_>, parent: Option<P<Node>>) -> Option<P<Node>> {
+    state.plugins?;
+    let body = parent?;
+    let function = body.parent()?;
+    (tsrs_ast::is_function_like(function) && function.body() == Some(body)).then_some(body)
+}
+
+/// Adds the locals a statement of a function body declared (`statements`, its Luau) to the body's count.
+pub fn count_function_locals(state: &mut TransformState<'_>, body: P<Node>, statements: &[Stmt]) {
+    let count: u32 = statements.iter().map(declared_locals).sum();
+    *state.plugin_file.function_locals.entry(body).or_default() += count;
 }
 
 /// The alias declarations of an import statement.

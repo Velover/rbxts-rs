@@ -6,6 +6,7 @@ use tsrs_core::P;
 
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
+use crate::plugins::backend::keyed_access;
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::shared::diagnostics::errors;
 use crate::util::add_one_if_array_type::add_one_if_array_type;
@@ -36,7 +37,11 @@ pub fn transform_writable_expression(
             } else {
                 convert_to_indexable_expression(expression)
             };
-            create::property(base, access.name.text())
+            // rbxts-rs: a plugin's `property_key` (DESIGN §11.5)
+            match crate::plugins::dispatch::rewritten_key(state, node, crate::plugins::dispatch::write_position(node)) {
+                Some(key) => keyed_access(base, &key),
+                None => create::property(base, access.name.text()),
+            }
         }
         Kind::ElementAccessExpression => {
             let access = node.as_element_access_expression();
@@ -46,6 +51,16 @@ pub fn transform_writable_expression(
             let index = ordered.next().expect("index");
             if is_late_read(&expression) && !effects_commute(&get_effects(&expression), &get_effects(&index)) {
                 expression = prereqs.push_to_var(expression, "exp");
+            }
+            // rbxts-rs: a plugin's `property_key` for a string literal key (DESIGN §11.5)
+            let position = crate::plugins::dispatch::write_position(node);
+            if let Some(key) = crate::plugins::dispatch::rewritten_key(state, node, position) {
+                let base = if read_after_write {
+                    prereqs.push_to_var_if_non_id(expression, "exp")
+                } else {
+                    convert_to_indexable_expression(expression)
+                };
+                return keyed_access(base, &key);
             }
             let receiver_type = state.get_type(access.expression);
             let index_exp = add_one_if_array_type(state, receiver_type, index);

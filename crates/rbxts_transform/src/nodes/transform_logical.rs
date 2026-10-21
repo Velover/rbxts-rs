@@ -58,14 +58,9 @@ fn flatten_by_operator(mut node: P<Node>, operator_kind: Kind) -> Vec<P<Node>> {
     result
 }
 
-/// `getLogicalChain`: each operand transformed with its own prerequisites.
-fn get_logical_chain(
-    state: &mut TransformState<'_>,
-    binary_exp: P<Node>,
-    operator_kind: Kind,
-    enable_inlining: bool,
-) -> Vec<LogicalChainItem> {
-    let nodes = flatten_by_operator(binary_exp, operator_kind);
+/// `getLogicalChain`: each operand transformed with its own prerequisites (the operands as
+/// `flattenByOperator` gives them).
+fn get_logical_chain(state: &mut TransformState<'_>, nodes: Vec<P<Node>>, enable_inlining: bool) -> Vec<LogicalChainItem> {
     let count = nodes.len();
     nodes
         .into_iter()
@@ -131,12 +126,11 @@ fn merge_inline_expressions(chain: &mut Vec<LogicalChainItem>, binary_operator: 
 fn build_inline_condition_expression(
     state: &mut TransformState<'_>,
     prereqs: &mut Prereqs,
-    node: P<Node>,
-    ts_operator: Kind,
+    operands: Vec<P<Node>>,
     luau_operator: BinaryOperator,
     condition: Condition,
 ) -> Expr {
-    let mut chain = get_logical_chain(state, node, ts_operator, true);
+    let mut chain = get_logical_chain(state, operands, true);
 
     merge_inline_expressions(&mut chain, luau_operator);
 
@@ -153,30 +147,42 @@ fn build_inline_condition_expression(
 /// `transformLogical`
 pub fn transform_logical(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Expr {
     let operator = node.as_binary_expression().operator_token.kind();
+    let coalesce_possibly_false = operator == Kind::QuestionQuestionToken && {
+        let t = state.get_type(node);
+        is_possibly_type(state, t, &[&is_boolean_literal_type(false)])
+    };
+    let operands = flatten_by_operator(node, operator);
+    transform_logical_operands(state, prereqs, operator, operands, coalesce_possibly_false)
+}
+
+/// `transformLogical` on operands already flattened (`a && b && c` is `[a, b, c]`). For `??`,
+/// `coalesce_possibly_false` says the whole expression's type may be `false` (then no operand is inlined).
+pub fn transform_logical_operands(
+    state: &mut TransformState<'_>,
+    prereqs: &mut Prereqs,
+    operator: Kind,
+    operands: Vec<P<Node>>,
+    coalesce_possibly_false: bool,
+) -> Expr {
     match operator {
         Kind::AmpersandAmpersandToken => {
-            build_inline_condition_expression(state, prereqs, node, operator, BinaryOperator::And, Condition::And)
+            build_inline_condition_expression(state, prereqs, operands, BinaryOperator::And, Condition::And)
         }
-        Kind::BarBarToken => {
-            build_inline_condition_expression(state, prereqs, node, operator, BinaryOperator::Or, Condition::Or)
-        }
+        Kind::BarBarToken => build_inline_condition_expression(state, prereqs, operands, BinaryOperator::Or, Condition::Or),
         Kind::QuestionQuestionToken => {
-            let t = state.get_type(node);
-            if !is_possibly_type(state, t, &[&is_boolean_literal_type(false)]) {
-                return build_inline_condition_expression(
-                    state,
-                    prereqs,
-                    node,
-                    operator,
-                    BinaryOperator::Or,
-                    Condition::Coalesce,
-                );
+            if !coalesce_possibly_false {
+                return build_inline_condition_expression(state, prereqs, operands, BinaryOperator::Or, Condition::Coalesce);
             }
-            let mut chain = get_logical_chain(state, node, Kind::QuestionQuestionToken, false);
+            let mut chain = get_logical_chain(state, operands, false);
             let condition_id = temp_id_expr("condition");
             build_logical_chain_prereqs(state, prereqs, &mut chain, &condition_id, Condition::Coalesce, 0);
             condition_id
         }
         other => panic!("Operator not implemented: {other:?}"),
     }
+}
+
+/// `flattenByOperator` for a public caller: `a && b && c` → `[a, b, c]`.
+pub fn flatten_logical_operands(node: P<Node>, operator_kind: Kind) -> Vec<P<Node>> {
+    flatten_by_operator(node, operator_kind)
 }

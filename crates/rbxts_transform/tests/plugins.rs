@@ -9,7 +9,11 @@
 //! fallbacks; late strings; source facts (UTF-16 positions, `{@link}`, `declaring_package`, `resolve_module`); the
 //! artifact and state-file commit; claim order and `RBXTS_PLUGIN_CLAIMS=all`; the phase-guard refusals; a
 //! panicking hook; `Err` without an error; an unresolved late string; an artifact path outside the project;
-//! `explain_checker_diagnostic`; and tsconfig activation.
+//! `explain_checker_diagnostic`; and tsconfig activation. From S2: optional method calls and `super.m()` (with
+//! `compile_receiver` binding a non-method optional call's receiver); `property_key` in every position; the
+//! `assignment` hook with `compile_binary`; `compile_object_literal` (edits and a permuted order); `locals()`;
+//! `hoist_spillable` and the main chunk's local limit; expression hooks on chain links and statement assignments,
+//! asked once; and the misuse the compiler refuses.
 //!
 //! Like `tests/fixtures.rs`, the fixture is copied to a temporary directory with a `node_modules` junction
 //! (`RBXTS_RS_FIXTURE_NODE_MODULES`, else the roblox-ts tests project's); without one the tests are skipped.
@@ -203,7 +207,11 @@ fn probe_and_stamp_match_the_expected_luau() {
     // the unknown @stamp mode is a warning from the hook, per call
     assert_eq!(
         diagnostics(&report),
-        vec!["warning calls.ts: `mystery` has an unknown @stamp mode; the call is left as it is"]
+        vec![
+            "warning calls.ts: `mystery` has an unknown @stamp mode; the call is left as it is",
+            // asked once: the call hook compiling the call itself does not ask the expression hook again
+            "warning s2chains.ts: probe-exprcall: asked about probeAskOnce",
+        ]
     );
     assert_expected(&report);
     // every output was written, then the artifacts and the state file
@@ -219,10 +227,16 @@ fn probe_and_stamp_match_the_expected_luau() {
          {\"file\":\"src/shared/elide.ts\",\"claims\":3},{\"file\":\"src/shared/elideAll.ts\",\"claims\":1},\
          {\"file\":\"src/shared/elideKept.ts\",\"claims\":1},{\"file\":\"src/shared/exprcall.ts\",\"claims\":3},{\"file\":\"src/shared/facts.ts\",\"claims\":1},\
          {\"file\":\"src/shared/fallbacks.ts\",\"claims\":2},{\"file\":\"src/shared/inorder.ts\",\"claims\":5},{\"file\":\"src/shared/receivers.ts\",\"claims\":3},\
-         {\"file\":\"src/shared/reuse.ts\",\"claims\":1},{\"file\":\"src/shared/selfcalls.ts\",\"claims\":5},\
+         {\"file\":\"src/shared/reuse.ts\",\"claims\":1},{\"file\":\"src/shared/s2assign.ts\",\"claims\":11},\
+         {\"file\":\"src/shared/s2calls.ts\",\"claims\":11},{\"file\":\"src/shared/s2chains.ts\",\"claims\":1},\
+         {\"file\":\"src/shared/s2locals.ts\",\"claims\":2},{\"file\":\"src/shared/s2objects.ts\",\"claims\":4},\
+         {\"file\":\"src/shared/s2spill.ts\",\"claims\":6},{\"file\":\"src/shared/selfcalls.ts\",\"claims\":5},\
          {\"file\":\"src/shared/shadow.ts\",\"claims\":3}]\n"
     );
-    assert_eq!(read("probe-exprcall-report.json"), "[{\"file\":\"src/shared/exprcall.ts\",\"claims\":3}]\n");
+    assert_eq!(
+        read("probe-exprcall-report.json"),
+        "[{\"file\":\"src/shared/exprcall.ts\",\"claims\":3},{\"file\":\"src/shared/s2chains.ts\",\"claims\":2}]\n"
+    );
     assert_eq!(report.artifacts_written.len(), 4, "{:?}", report.artifacts_written);
     // a second build changes no Luau and no artifact (write if changed); the stamp state counts the clean build anew
     let again = project.build(&["stamp", "probe", "probe-exprcall"], |_| {});
@@ -247,7 +261,10 @@ fn the_first_plugin_to_take_a_call_wins_and_double_claims_are_reported_on_reques
     let report = project.build(&["stamp", "probe", "probe-b"], |_| {});
     assert_eq!(errors(&report), Vec::<String>::new());
     // `probe` takes every node it is asked about first; `probe-b` gets only what `probe` declined (nothing here)
-    assert_expected_except(&report, &["shared/classes.luau", "shared/decorators.luau", "shared/exprcall.luau"]);
+    assert_expected_except(
+        &report,
+        &["shared/classes.luau", "shared/decorators.luau", "shared/exprcall.luau", "shared/s2chains.luau"],
+    );
     let read = |name: &str| std::fs::read_to_string(project.root.join(name)).unwrap();
     assert_eq!(
         read("probe-b-report.json"),
@@ -313,11 +330,18 @@ fn refused_primitives_are_internal_errors_naming_the_plugin() {
     let errors = errors(&report);
     for expected in [
         "error calls.ts: rbxts-rs internal error: plugin `probe` called prereq in begin_file",
-        "error calls.ts: rbxts-rs internal error: plugin `probe` called late_string in classify_symbol",
         "error calls.ts: rbxts-rs internal error: plugin `probe` called hoist in end_file",
     ] {
         assert!(errors.iter().any(|e| e == expected), "{expected}\nin {errors:?}");
     }
+    // classify_symbol's diagnostics are anchored at the symbol's declaration, not at the first site that asked
+    // (which moves with the checker count and file order): `probeHoist` is declared in probe.d.ts
+    let classify: Vec<&String> = errors.iter().filter(|e| e.contains("in classify_symbol")).collect();
+    assert!(
+        classify.iter().any(|e| *e == "error probe.d.ts: rbxts-rs internal error: plugin `probe` called late_string in classify_symbol"),
+        "{classify:?}"
+    );
+    assert!(classify.iter().all(|e| !e.starts_with("error failures.ts")), "{classify:?}");
     assert!(!project.out_exists());
 }
 
@@ -408,7 +432,7 @@ fn claims_all_never_changes_the_output() {
     // without the switch: probe-touched is only asked where probe declined, and changes nothing
     let report = project.build(&["stamp", "probe", "probe-touched"], |_| {});
     assert_eq!(errors(&report), Vec::<String>::new());
-    assert_expected_except(&report, &["shared/exprcall.luau"]);
+    assert_expected_except(&report, &["shared/exprcall.luau", "shared/s2chains.luau"]);
     // with it: probe-touched is asked about calls probe took, and its hook changes compiler state before declining,
     // so the build fails instead of writing different output
     std::fs::remove_dir_all(project.root.join("out")).unwrap();
@@ -423,39 +447,110 @@ fn claims_all_never_changes_the_output() {
 }
 
 #[test]
-fn call_shapes_and_interests_s1_does_not_dispatch_fail_clearly() {
-    let Some(project) = Project::new("s2") else { return };
+fn seam_misuse_is_refused_naming_the_plugin() {
+    let Some(project) = Project::new("misuse") else { return };
     project.write(
-        "src/shared/s2.ts",
-        "export const o = marked.probeMethod?.(1);\n\
-         export class Sub extends MarkedBase {\n\
-         \tprobeMethod(value: number) {\n\
-         \t\treturn super.probeMethod(value);\n\
+        "src/shared/misuse.ts",
+        "export const a = probeCallTwice(1);\n\
+         export const b = probeExprThenCall(2);\n\
+         export const c = 1 + probeAncestor();\n\
+         export const d = probeBinBad(1, 2);\n\
+         export class R extends SelfBase {\n\
+         \tr(v: number) {\n\
+         \t\treturn super.r(v);\n\
+         \t}\n\
+         }\n\
+         const k = \"a\";\n\
+         export const e = keyed[k];\n\
+         interface Reads {\n\
+         \tcount: number;\n\
+         \topt?: number;\n\
+         }\n\
+         export class C {\n\
+         \t/** @probeattrsread */\n\
+         \treads: Reads = { count: 0 };\n\
+         \trun(i: string) {\n\
+         \t\tthis.reads.count *= 2;\n\
+         \t\tdelete this.reads.opt;\n\
+         \t\t(this.reads as unknown as Record<string, number>)[i] = 1;\n\
          \t}\n\
          }\n",
     );
     let report = project.build(&["stamp", "probe"], |_| {});
+    let prefix = "error misuse.ts: rbxts-rs internal error: plugin `probe`";
     assert_eq!(
         errors(&report),
         vec![
-            "error s2.ts: rbxts-rs internal error: plugin `probe`: this call matches its interest, but optional method \
-             calls (`o.m?.()`, `o[k]?.()`) are not offered to plugins until S2",
-            "error s2.ts: rbxts-rs internal error: plugin `probe`: this call matches its interest, but `super.m()` calls are \
-             not offered to plugins until S2",
+            format!("{prefix}: compile_call ran a second time on its call (it would be lowered twice)"),
+            format!("{prefix}: compile_call after the call was lowered with compile_expr (it would be lowered twice)"),
+            format!(
+                "{prefix}: compiled an ancestor of its own node (everything else inside it would be lowered a second \
+                 time)"
+            ),
+            format!(
+                "{prefix}: compile_binary: PlusEqualsToken is an assignment operator; pass the operator it applies \
+                 (`+=` is PlusToken)"
+            ),
+            format!(
+                "{prefix}: compile_receiver: `super` is not a value (roblox-ts calls `super.m(self, …)`); lower the \
+                 call with compile_expr or compile_call, or pass `self` yourself"
+            ),
+            format!(
+                "{prefix}: this access matches its accesses_by_marker interest, but its key is computed (`obj[k]`), \
+                 which AccessSite cannot carry, so it is not offered"
+            ),
+            format!(
+                "{prefix}: compiled the operand of `delete`, which roblox-ts lowers as the deletion (it would delete \
+                 it, not read it)"
+            ),
+            format!(
+                "{prefix}: this assignment's receiver matches its assignments_by_receiver_symbol interest, but its key \
+                 is computed (`obj[k]`), which AssignSite cannot carry, so it is not offered"
+            ),
         ]
     );
     assert!(!project.out_exists());
 
-    std::fs::remove_file(project.root.join("src/shared/s2.ts")).unwrap();
-    let report = project.build(&["stamp", "probe-s2-interest"], |_| {});
+    // a class hook compiling its own class expression would lower it twice
+    std::fs::remove_file(project.root.join("src/shared/misuse.ts")).unwrap();
+    project.write("src/shared/classself.ts", "export const K = class Named {};\n");
+    let report = project.build(&["stamp", "probe-classself"], |_| {});
+    // (without the probe's statement hook, `debugger` in fallbacks.ts is roblox-ts's error)
+    let errors: Vec<String> = errors(&report).into_iter().filter(|e| e.contains("classself.ts")).collect();
     assert_eq!(
-        report.fatal,
+        errors,
         vec![
-            "rbxts-rs internal error: plugin `probe` registered accesses_by_marker (the property_key hook), which is not \
-             supported until S2"
+            "error classself.ts: rbxts-rs internal error: plugin `probe`: a class hook cannot compile its own class \
+             (roblox-ts lowers it already; it would be lowered twice)"
         ]
     );
     assert!(!project.out_exists());
+}
+
+#[test]
+fn a_main_chunk_past_luau_limit_is_spilled_or_an_error() {
+    let Some(project) = Project::new("locals") else { return };
+    // 205 locals and 2 spillable hoists: 208 after spilling, still past the limit
+    let mut source = String::new();
+    for i in 1..=205 {
+        source.push_str(&format!("export const v{i} = {i};\n"));
+    }
+    source.push_str("export const s1 = probeSpill(v1);\nexport const s2 = probeSpill(v2);\n");
+    project.write("src/shared/big.ts", &source);
+    let report = project.build(&["stamp", "probe"], |_| {});
+    assert_eq!(
+        errors(&report),
+        vec![
+            "error big.ts: This file declares 208 locals in its main chunk, and Luau allows at most 200 there: it \
+             would build, then fail to load (\"Out of local registers\"). The count passes the limit here."
+        ]
+    );
+    assert!(!project.out_exists());
+    // the error is at the statement where the count passes the limit
+    let file = report.files.iter().find(|f| f.file_name.ends_with("big.ts")).unwrap();
+    let start = file.diagnostics[0].pos().expect("a position");
+    let text = std::fs::read_to_string(project.root.join("src/shared/big.ts")).unwrap();
+    assert!(text[start as usize..].trim_start().starts_with("export const v201 = 201;"), "{}", &text[start as usize..]);
 }
 
 #[test]

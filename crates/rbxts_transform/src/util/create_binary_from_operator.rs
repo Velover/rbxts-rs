@@ -154,13 +154,25 @@ pub fn create_bitwise_from_operator(
     node: P<Node>,
 ) -> Expr {
     let binary = node.as_binary_expression();
+    create_bitwise_from_operands(state, prereqs, operator_kind, binary.left, binary.right())
+}
+
+/// `createBitwiseFromOperator` on the operands of `left op right` (a left operand of the same logical bitwise
+/// operator is flattened into the call).
+pub fn create_bitwise_from_operands(
+    state: &mut TransformState<'_>,
+    prereqs: &mut Prereqs,
+    operator_kind: Kind,
+    left: P<Node>,
+    right: P<Node>,
+) -> Expr {
     let mut flattened = Vec::new();
     if bitwise_logical_name(operator_kind).is_some() {
-        flatten_bitwise_segment_into(&mut flattened, operator_kind, binary.left);
-        flattened.push(binary.right());
+        flatten_bitwise_segment_into(&mut flattened, operator_kind, left);
+        flattened.push(right);
     } else {
-        flattened.push(binary.left);
-        flattened.push(binary.right());
+        flattened.push(left);
+        flattened.push(right);
     }
     let expressions = ensure_transform_order(state, prereqs, &flattened);
     create_bitwise_call(operator_kind, expressions)

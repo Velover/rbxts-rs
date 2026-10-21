@@ -4,39 +4,73 @@
 //! - [`host`]: [`PluginHost`], one per checker: the instances, the dispatch tables, the `(symbol, role)`
 //!   classification memo, the source-fact caches (line maps, JSDoc) and the hook timings.
 //! - [`file_state`]: what one file's transform records for plugins (imports, header, root insertions, late keys,
-//!   import-elision requests, file parts).
+//!   import-elision requests, file parts, offer marks, spillable hoists).
 //! - [`backend`]: `CxBackend` over [`TransformState`](crate::classes::transform_state::TransformState), with the
 //!   phase table, and the lowering of `compile_call` / `compile_receiver`.
-//! - [`dispatch`]: the claim points the transform calls (calls, `new`, decorators, by-kind fallbacks, classes,
-//!   files, root statements, imports).
+//! - [`dispatch`]: the claim points the transform calls (calls, `new`, decorators, property keys, assignments,
+//!   by-kind fallbacks, classes, files, root statements, imports).
 //! - [`lifecycle`]: activation from the tsconfig, `SetupBackend`, `FinishBackend`, the late-string key check, the
 //!   commit with atomic writes, and `explain_checker_diagnostic`.
+//! - `lowering`: `compile_binary` and `compile_object_literal`; `spill`: the main chunk's local limit.
 //!
-//! **Claim points.** Plugins are asked before roblox-ts's own macros, in registration order, and the first `Take`
-//! wins (`RBXTS_PLUGIN_CLAIMS=all` / [`PluginOptions::claims_all`] asks every matching plugin and reports a double
-//! claim). Calls are offered:
-//! - a call in a property/element/call chain whose callee is reached through plain accesses only (`f()`,
-//!   `ns.f()`, `a.b.m()`) is offered before anything of the chain is compiled, so a plugin that takes it leaves the
-//!   callee uncompiled (no diagnostics from it, no use of its import);
-//! - any other chain call (after a `?.` link or another call) is offered with its receiver or callee already
-//!   compiled (and nil-checked when it is inside an optional chain); `compile_receiver` returns a receiver. That
-//!   includes `f?.()`, offered as `CallKind::Call` with `receiver: None` once the chain lowering has nil-checked
-//!   `f` (`compile_receiver` on it is an internal error: it has no receiver);
+//! **Offer kinds.** There are five: calls (with `new` and decorators), property keys, assignments, the expression
+//! and statement fallbacks, and the class hook. Within a kind, plugins are asked in registration order and the first
+//! `Take` wins; all of them come before roblox-ts's own macros. Across kinds, the expression hooks are asked about
+//! a node first, whatever the registration order, then the call or assignment hooks (`RBXTS_PLUGIN_CLAIMS=all` /
+//! [`PluginOptions::claims_all`] re-asks the call plugins of call, `new` and decorator offers and reports a double
+//! claim).
+//!
+//! **Calls.**
+//! - A chain's first call reached through plain accesses only (`f()`, `ns.f()`, `a.b.m()`, `super.m()`) is offered
+//!   before anything of the chain is compiled, so a plugin that takes it leaves the callee uncompiled.
+//! - Any other chain call (after a `?.` link or another call) is offered with its receiver or callee already
+//!   compiled, and nil-checked inside an optional chain; `compile_receiver` returns that receiver. `f?.()` is
+//!   offered once the chain lowering has nil-checked `f` (it has no receiver).
+//! - An optional call (`o.m?.()`, `o[k]?.()`) is offered inside the nil check on its callee (`o.m`): the claimed value
+//!   is used only when the callee is not nil. A method call's receiver is already in a local; a non-method call's
+//!   receiver is bound to one by `compile_receiver`, declared before the callee is read from it.
+//! - `super.m()` / `super[k]()` have `super` as their receiver node, but `super` is not a value: `compile_receiver`
+//!   on them is an internal error. `compile_expr` and `compile_call(Callee::Original)` lower them as roblox-ts does
+//!   (`super.m(self, …)`).
 //! - `new` expressions before constructor macros; decorators (`@D`, `@D(…)`) before the decorator expression is
 //!   compiled.
 //!
-//! `compile_expr(call.node)` inside the call's own hook lowers the call as roblox-ts does (its macros included),
-//! without asking the plugins again, and on the base already compiled, so a receiver is evaluated once. A second
-//! compile of the hook's own node is an internal error (it would be lowered twice); a statement hook cannot compile
-//! its own statement.
+//! **Lowering a hook's own node.** `compile_expr` / `compile_in_order` / an `Arg::Original` slot of the node a hook
+//! was offered lowers it as roblox-ts does there (its macros included), without offering it to that kind again: a
+//! call on the receiver or callee already compiled (so nothing is evaluated twice); an expression-hook node offered
+//! after its chain base was compiled, on that base; an assignment, `++` / `--` or logical assignment that roblox-ts
+//! lowers as a statement (its value unused), as that statement, with no value (`Expr::None`). Other kinds still see
+//! the node: an expression hook compiling its own call lets the call plugins claim it. The compiler refuses, as
+//! internal errors naming the plugin: a second self-compile, `compile_call` twice or after a self-compile, a class
+//! hook compiling its own class, a statement hook compiling its own statement, any hook compiling an ancestor of its
+//! own node, and an assignment hook compiling a `delete` operand (roblox-ts lowers it as the deletion).
 //!
-//! **Offered once per offer kind.** The kinds are calls (with `new` and decorators), the expression and statement
-//! fallbacks, and the class hook. A node is marked for its kind while its offer runs: compiling it then (a hook's
-//! own node through `compile_expr`, `compile_in_order` or an `Arg::Original` slot) does not offer it to that kind
-//! again (a call goes through `compile_claimed_call`, on the base already compiled). Other kinds still see it: an
-//! expression-kind hook that compiles its own call lets the call plugins claim that call, and a call one expression
-//! hook declined cleanly is then offered to the call plugins. Compiling an ancestor of the hook's own node offers
-//! and lowers every other node inside it again: don't.
+//! **Asked once.** A node every hook of a kind declined is not offered to that kind again, however often it is
+//! lowered (a call hook compiling its own call does not re-ask the expression hooks); `property_key` answers are
+//! kept per access node.
+//!
+//! **The expression fallback** sees every node of its kinds that roblox-ts lowers as an expression, including chain
+//! links: the links up to the first `?.` link or optional call are offered before anything of the chain is
+//! compiled, from the outermost in (the chain's first call to the call plugins after its own expression offer);
+//! later links inside the chain's nil check, their base compiled (a hook that takes such a link without lowering it
+//! drops the base's value). An expression statement's assignment or update (which roblox-ts lowers as a statement)
+//! is offered too. Not offered: assignment targets and `delete` operands (lowered as writes), binding patterns, and
+//! object literals a hook lowers with `compile_object_literal`.
+//!
+//! **Property keys** (`accesses_by_marker`). Every property access, and element access with a string literal key,
+//! whose receiver's apparent non-nullable type has a marker, when roblox-ts lowers it: reads, `delete`, writes,
+//! compound assignments, `++` / `--`, destructuring targets, `for … of` heads, callees (method calls, optional calls,
+//! `super.m()`) and every link of optional chains. The hook lowers nothing (the lowering primitives are refused, as
+//! in `begin_file`); its answer is the key: `base.key` when it is a valid Luau identifier, else
+//! `base[text_literal(key)]`, and a method callee `base:key(…)` / `base[text_literal(key)](base, …)`. A key equal to
+//! the written one leaves the access as written. An access with a computed key (`obj[k]`) on a marked receiver is an
+//! internal error naming the plugin: `AccessSite` cannot carry it.
+//!
+//! **Assignments** (`assignments_by_receiver_symbol`). An assignment, compound or logical assignment, `++` / `--` or
+//! `delete` whose target is `receiver.key` (or `receiver["key"]`) and whose receiver's symbol the plugin classifies
+//! (`SymbolRole::AssignReceiver`), offered before roblox-ts lowers the node and after the expression hooks.
+//! Destructuring targets and `for … of` heads are not offered. A computed key on a classified receiver is an internal
+//! error naming the plugin.
 //!
 //! **Declining.** Offer state lives in a stack of hook frames ([`file_state::HookFrame`]), one per running hook,
 //! so a hook nested in another (through its `compile_*` calls) never resets the outer one's. A claim hook cannot
@@ -45,16 +79,18 @@
 //! a header statement, a plugin import, a late string, or an import kept alive (`mark_import_used`), its own or a
 //! nested hook's (`request_import_elision` is harmless and allowed). Nor after any hook ran inside it (a nested node
 //! offered or claimed, a class hook): that hook would run again. The one exception is a `compile_receiver` into
-//! the offer's own scope that is the first thing to grow it: what it left (statements and the hooks it ran) is
-//! kept for the next plugin, or roblox-ts, to reuse. A decline that breaks the rule is an internal error, and the
-//! offer ends there: no other plugin, and not roblox-ts, gets the node. The rule makes plugins interact: plugin B's
-//! interest in a node nested in A's (even one B declines cleanly) makes A's compile-then-decline an error, so a
-//! plugin must decide from the AST and types before compiling anything.
+//! the offer's own scope that is the first thing to grow it (or the binding of an optional call's receiver): what
+//! it left is kept for the next plugin, or roblox-ts, to reuse. A decline that breaks the rule is an internal error,
+//! and the offer ends there: no other plugin, and not roblox-ts, gets the node. The rule makes plugins interact:
+//! plugin B's interest in a node nested in A's (even one B declines cleanly) makes A's compile-then-decline an
+//! error, so a plugin must decide from the AST and types before compiling anything.
 //!
-//! `RBXTS_PLUGIN_CLAIMS=all` asks the other matching plugins of call, `new` and decorator offers too (not expression
-//! or statement hooks), in a scratch scope. A build with it either writes the same output as without it or fails:
-//! one where such a plugin changed compiler state before declining (an approval by `is_usable_local_name`
-//! included) fails.
+//! A claimed value whose node is in statement position is evaluated as a statement (`local _ = value` unless it is a
+//! call), so no lowering drops its effects.
+//!
+//! `RBXTS_PLUGIN_CLAIMS=all` asks the other matching plugins of call, `new` and decorator offers too (not the other
+//! kinds), in a scratch scope. A build with it either writes the same output as without it or fails: one where such
+//! a plugin changed compiler state before declining (an approval by `is_usable_local_name` included) fails.
 //!
 //! **Names.** Temporary identifiers plugins ask for (`temp_id`, `hoist`, `hoist_spillable`, `push_to_var`, the
 //! `import_named` fallback) are named so that no identifier of the file, no name `is_usable_local_name` approved,
@@ -62,9 +98,10 @@
 //! any nested function); approved names and import names avoid the seam temporaries made before them in turn.
 //! roblox-ts's own temporaries keep its naming.
 //!
-//! Not offered yet (`// rbxts-rs: S2`): optional method calls `o.m?.()` / `o[k]?.()` and `super.m()` calls; a
-//! plugin whose interest matches one gets an internal error naming it. The `property_key` / `assignment` hooks are
-//! not dispatched: registering `accesses_by_marker` or `assignments_by_receiver_symbol` fails the build.
+//! **Luau's local limit.** Once a file is lowered, its main chunk's locals (plugin imports and header statements
+//! included) are counted: past 200, the `hoist_spillable` locals become fields of one table local (`_spill`), and a
+//! chunk still past the limit is an error at the statement where the count passes it. Builds without plugins keep
+//! roblox-ts's behaviour (no check).
 
 pub mod backend;
 pub mod dispatch;
@@ -73,6 +110,8 @@ pub mod host;
 pub mod lifecycle;
 
 mod facts;
+mod lowering;
+mod spill;
 
 pub use host::PluginHost;
 pub use lifecycle::{BuildInput, PluginOptions, PluginTimings};
@@ -84,6 +123,8 @@ pub enum HookKind {
     Classify,
     BeginFile,
     Call,
+    PropertyKey,
+    Assignment,
     Class,
     Expression,
     Statement,
@@ -94,11 +135,13 @@ pub enum HookKind {
 
 impl HookKind {
     /// Every hook kind, in report order.
-    pub const ALL: [HookKind; 10] = [
+    pub const ALL: [HookKind; 12] = [
         HookKind::Setup,
         HookKind::Classify,
         HookKind::BeginFile,
         HookKind::Call,
+        HookKind::PropertyKey,
+        HookKind::Assignment,
         HookKind::Class,
         HookKind::Expression,
         HookKind::Statement,
@@ -114,6 +157,8 @@ impl HookKind {
             HookKind::Classify => "classify_symbol",
             HookKind::BeginFile => "begin_file",
             HookKind::Call => "call",
+            HookKind::PropertyKey => "property_key",
+            HookKind::Assignment => "assignment",
             HookKind::Class => "class",
             HookKind::Expression => "expression",
             HookKind::Statement => "statement",

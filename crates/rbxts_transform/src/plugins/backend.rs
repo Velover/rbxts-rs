@@ -7,8 +7,8 @@ use std::sync::Arc;
 use rbxts_luau::{Effects, Expr, Stmt, create};
 use rbxts_plugin::erased::DynInstance;
 use rbxts_plugin::{
-    Aborted, Arg, BinOp, CallKind, CallSite, Callee, Cx, CxBackend, FileInfo, JsDocTag, LocalCounts, LuauIdent,
-    ObjectEdits, PResult, PluginDiagnostic, Utf16Pos,
+    AccessPosition, Aborted, Arg, BinOp, CallKind, CallSite, Callee, Cx, CxBackend, FileInfo, JsDocTag, LocalCounts,
+    LuauIdent, ObjectEdits, PResult, PluginDiagnostic, Utf16Pos, text_literal,
 };
 use rbxts_project::{PackageInfo, ProjectServices, ResolvedModuleInfo};
 use tsrs_ast::{Diagnostic, DiagnosticExt, Kind, Node, SourceFile, Symbol, new_diagnostic};
@@ -20,7 +20,7 @@ use tsrs_diagnostics::{Category, new_ad_hoc_message};
 use super::HookKind;
 use super::dispatch;
 use super::facts;
-use super::file_state::{EffectMark, HookFrame, declared_locals};
+use super::file_state::{EffectMark, HookFrame, SpillableHoist, declared_locals};
 use super::host::PluginHost;
 use crate::classes::prereqs::{Prereqs, temp_id};
 use crate::classes::transform_state::TransformState;
@@ -29,13 +29,19 @@ use crate::nodes::expressions::transform_call_expression::{
 };
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::expressions::transform_super_keyword::transform_super_keyword;
+use crate::nodes::statements::transform_expression_statement::{
+    is_statement_lowered, transform_expression_statement_inner,
+};
 use crate::nodes::transform_optional_chain::{ChainItem, transform_chain_item};
 use crate::shared::diagnostics::node_range;
 use crate::util::add_one_if_array_type::add_one_if_array_type;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
 use crate::util::ensure_transform_order::ensure_transform_order_with;
-use crate::util::evaluation::effects::{effects_commute, get_effects, get_effects_of_statements, join_effects};
+use crate::util::evaluation::effects::{
+    effects_commute, get_effects, get_effects_of_statements, is_late_read, join_effects,
+};
 use crate::util::is_method::{is_method, is_method_from_type};
+use crate::util::traversal::{skip_downwards, skip_upwards};
 use crate::util::types::{get_first_construct_symbol, get_first_defined_symbol};
 use crate::util::validate_not_any::validate_not_any_type;
 use crate::util::value_to_id_str::value_to_id_str;
@@ -57,8 +63,11 @@ pub(crate) enum Phase {
 impl Phase {
     pub(crate) fn of(hook: HookKind) -> Phase {
         match hook {
-            HookKind::Call | HookKind::Class | HookKind::Expression | HookKind::Statement => Phase::Claim,
-            HookKind::BeginFile | HookKind::EndFile => Phase::File,
+            HookKind::Call | HookKind::Assignment | HookKind::Class | HookKind::Expression | HookKind::Statement => {
+                Phase::Claim
+            }
+            // property_key answers with a key: it lowers nothing
+            HookKind::BeginFile | HookKind::EndFile | HookKind::PropertyKey => Phase::File,
             HookKind::Classify => Phase::Classify,
             HookKind::Explain | HookKind::Setup | HookKind::Finish => Phase::Explain,
         }
@@ -90,6 +99,41 @@ pub(crate) enum CallShape {
     Decorator { call: Option<P<Node>> },
 }
 
+/// What roblox-ts calls for an optional call (`o.m?.(…)`, `o[k]?.(…)`), once the chain lowering has read the
+/// callee into a local and nil-checked it: the call itself is lowered inside that check.
+#[derive(Clone, Debug)]
+pub(crate) struct OptionalCall {
+    /// The callee's value (the chain's temporary, known not to be nil here).
+    pub function: Expr,
+    /// The argument roblox-ts passes first: the receiver of a method call (bound to a local), `self` for
+    /// `super.m?.()`; `None` for a call that is not a method call.
+    pub self_arg: Option<Expr>,
+    /// The receiver for `compile_receiver`.
+    pub receiver: OptionalReceiver,
+}
+
+/// The receiver of an optional call, for `compile_receiver`.
+#[derive(Clone, Debug)]
+pub(crate) enum OptionalReceiver {
+    /// A method call's receiver, already in a local (`_self`).
+    Bound(Expr),
+    /// A non-method call's receiver as compiled, in no local: the callee is read from it before the nil check,
+    /// so `compile_receiver` binds it to a local declared before that read (`PluginFileState::optional_receivers`).
+    Unbound(Expr),
+    /// `super.m?.()`: `super` is not a value.
+    Super,
+}
+
+/// How an expression hook's own node is lowered when it was offered after its base was compiled (a chain link
+/// inside an optional chain, see `PluginFileState::eager_offers`).
+#[derive(Clone, Debug)]
+pub(crate) enum EagerLowering {
+    /// A chain link on its compiled base.
+    Item { base: Expr, item: ChainItem },
+    /// An optional call inside its nil check.
+    OptionalCall { call: OptionalCall, item: ChainItem },
+}
+
 /// A call being offered to plugins.
 #[derive(Clone)]
 pub(crate) struct CallContext {
@@ -106,11 +150,13 @@ pub(crate) struct CallContext {
     pub base_captured: bool,
     /// The chain link of a chain call, to lower the call on its compiled base.
     pub item: Option<ChainItem>,
+    /// An optional call (`o.m?.()`): lowered inside the chain's nil check on its callee.
+    pub optional: Option<OptionalCall>,
 }
 
 impl CallContext {
     pub(crate) fn new(site: CallSite, shape: CallShape, base: Option<Expr>) -> CallContext {
-        CallContext { site, shape, base, base_marks: None, base_captured: false, item: None }
+        CallContext { site, shape, base, base_marks: None, base_captured: false, item: None, optional: None }
     }
 }
 
@@ -261,6 +307,21 @@ impl HookBackend<'_, '_> {
     /// hook's goes through `compile_claimed_call`, which notes it), a second time is an internal error (it would be
     /// lowered twice), and a statement cannot be compiled as an expression.
     fn check_self_compile(&mut self, nodes: &[P<Node>]) -> Result<(), Aborted> {
+        for &node in nodes {
+            // everything else inside an ancestor would be offered and lowered a second time
+            if node != self.anchor && is_ancestor(node, self.anchor) {
+                return Err(self.misuse(
+                    "compiled an ancestor of its own node (everything else inside it would be lowered a second time)",
+                ));
+            }
+            // roblox-ts lowers the operand of `delete` as the deletion itself, not as a read
+            if self.hook == HookKind::Assignment && is_delete_operand(node) {
+                return Err(self.misuse(
+                    "compiled the operand of `delete`, which roblox-ts lowers as the deletion (it would delete it, not \
+                     read it)",
+                ));
+            }
+        }
         let own = nodes.iter().filter(|&&n| n == self.anchor).count();
         if own == 0 {
             return Ok(());
@@ -271,7 +332,12 @@ impl HookBackend<'_, '_> {
                  parts)",
             ));
         }
-        if self.hook == HookKind::Expression {
+        if self.hook == HookKind::Class {
+            return Err(self.misuse(
+                "a class hook cannot compile its own class (roblox-ts lowers it already; it would be lowered twice)",
+            ));
+        }
+        if matches!(self.hook, HookKind::Expression | HookKind::Assignment) {
             let twice = own > 1 || self.state.plugin_file.frames.last().is_some_and(|f| f.self_compiled);
             if twice {
                 return Err(self.misuse("compiled its own node a second time (it would be lowered twice)"));
@@ -397,7 +463,8 @@ impl CxBackend for HookBackend<'_, '_> {
             return Err(Aborted);
         }
         self.check_self_compile(&[node])?;
-        self.lower_unchecked(|state, prereqs, context| compile_node(state, prereqs, context, node))
+        let own = self.anchor;
+        self.lower_unchecked(|state, prereqs, context| compile_node(state, prereqs, context, node, own))
     }
 
     fn compile_in_order(&mut self, nodes: &[P<Node>]) -> Result<Vec<Expr>, Aborted> {
@@ -405,6 +472,7 @@ impl CxBackend for HookBackend<'_, '_> {
             return Err(Aborted);
         }
         self.check_self_compile(nodes)?;
+        let own = self.anchor;
         self.lower_unchecked(|state, prereqs, mut context| {
             let mut error = None;
             let values =
@@ -413,6 +481,7 @@ impl CxBackend for HookBackend<'_, '_> {
                     prereqs,
                     context.as_deref_mut(),
                     node,
+                    own,
                 ) {
                     Ok(value) => value,
                     Err(message) => {
@@ -444,6 +513,13 @@ impl CxBackend for HookBackend<'_, '_> {
             return Err(Aborted);
         }
         self.check_site(call, "compile_call")?;
+        let frame = self.state.plugin_file.frames.last().copied().unwrap_or_default();
+        if frame.called {
+            return Err(self.misuse("compile_call ran a second time on its call (it would be lowered twice)"));
+        }
+        if frame.self_compiled {
+            return Err(self.misuse("compile_call after the call was lowered with compile_expr (it would be lowered twice)"));
+        }
         self.lower_unchecked(|state, prereqs, context| {
             let context = context.expect("checked above");
             if let Some(frame) = state.plugin_file.frames.last_mut() {
@@ -454,21 +530,24 @@ impl CxBackend for HookBackend<'_, '_> {
         })
     }
 
-    fn compile_object_literal(&mut self, node: P<Node>, _edits: ObjectEdits) -> Result<Expr, Aborted> {
+    fn compile_object_literal(&mut self, node: P<Node>, edits: ObjectEdits) -> Result<Expr, Aborted> {
         if self.refused("compile_object_literal", Row::Lowering) {
             return Err(Aborted);
         }
-        // rbxts-rs: S2 — object literal edits (rename, replace, append, reorder) on roblox-ts's object lowering
-        let _ = node;
-        Err(self.misuse("compile_object_literal is not supported yet in S1"))
+        self.check_self_compile(&[node])?;
+        self.lower_unchecked(|state, prereqs, _| super::lowering::lower_object_literal(state, prereqs, node, edits))
     }
 
-    fn compile_binary(&mut self, _op: BinOp, _left: P<Node>, _right: P<Node>) -> Result<Expr, Aborted> {
+    fn compile_binary(&mut self, op: BinOp, left: P<Node>, right: P<Node>) -> Result<Expr, Aborted> {
         if self.refused("compile_binary", Row::Lowering) {
             return Err(Aborted);
         }
-        // rbxts-rs: S2 — binary operators on original operands, with the assignment hook
-        Err(self.misuse("compile_binary is not supported yet in S1"))
+        if left == self.anchor || right == self.anchor {
+            return Err(self.misuse("compile_binary takes operands, not the hook's own node"));
+        }
+        self.check_self_compile(&[left, right])?;
+        let anchor = self.anchor;
+        self.lower_unchecked(|state, prereqs, _| super::lowering::lower_binary(state, prereqs, op, left, right, anchor))
     }
 
     // --- prereqs and placement ---
@@ -531,9 +610,12 @@ impl CxBackend for HookBackend<'_, '_> {
         if self.refused("hoist_spillable", Row::Lowering) {
             return create::nil();
         }
-        // rbxts-rs: TODO S2 — the spill table: when the main chunk would pass Luau's 200-local limit, spillable
-        // hoists become fields of one table local, and the compiler reports the limit only after spilling.
-        self.hoist_unchecked(value, hint)
+        // spilled into one table local at the end of the file if the main chunk is past Luau's limit (`spill`)
+        let hoisted = self.hoist_unchecked(value, hint);
+        if let Expr::TemporaryIdentifier(id) = &hoisted {
+            self.state.plugin_file.spillable.push(SpillableHoist { id: id.id, hint: hint.to_owned() });
+        }
+        hoisted
     }
 
     fn import_named(&mut self, specifier: &str, export: &str) -> Result<Expr, Aborted> {
@@ -596,10 +678,12 @@ impl CxBackend for HookBackend<'_, '_> {
 
     fn locals(&self) -> LocalCounts {
         let main_chunk = self.state.plugin_file.main_chunk_locals;
-        // rbxts-rs: TODO S2 — locals of the function being built are not counted yet; at the main-chunk level the
-        // two counts are the same.
-        let in_function = crate::util::traversal::get_ancestor(self.anchor, tsrs_ast::is_function_like).is_some();
-        LocalCounts { function: if in_function { 0 } else { main_chunk }, main_chunk }
+        // the innermost function's body: the locals its statements declared at its top level so far
+        let function = match crate::util::traversal::get_ancestor(self.anchor, tsrs_ast::is_function_like) {
+            Some(function) => function.body().and_then(|body| self.state.plugin_file.function_locals.get(&body).copied()).unwrap_or(0),
+            None => main_chunk,
+        };
+        LocalCounts { function, main_chunk }
     }
 
     fn late_string(&mut self, key: &str) -> Expr {
@@ -690,9 +774,31 @@ fn compile_receiver(
     context: &mut CallContext,
     in_capture: bool,
 ) -> Result<Expr, String> {
+    const SUPER: &str = "compile_receiver: `super` is not a value (roblox-ts calls `super.m(self, …)`); lower the \
+                         call with compile_expr or compile_call, or pass `self` yourself";
+    if let Some(optional) = &mut context.optional {
+        let node = context.site.node;
+        return match &optional.receiver {
+            OptionalReceiver::Bound(value) => Ok(value.clone()),
+            OptionalReceiver::Super => Err(SUPER.to_owned()),
+            OptionalReceiver::Unbound(value) => {
+                // the callee is read from the receiver before the nil check: the local goes before that read
+                let (id, _) = state.plugin_file.optional_receivers.entry(node).or_insert_with(|| {
+                    let id = temp_id("self");
+                    (Expr::TemporaryIdentifier(id.clone()), create::local(id, Some(value.clone())))
+                });
+                let id = id.clone();
+                optional.receiver = OptionalReceiver::Bound(id.clone());
+                Ok(id)
+            }
+        };
+    }
     let Some(receiver) = receiver_node(context.shape) else {
         return Err(format!("compile_receiver: a {:?} call has no receiver", context.site.kind));
     };
+    if tsrs_ast::is_super_property(context.site.callee) {
+        return Err(SUPER.to_owned());
+    }
     if let Some(base) = &context.base {
         return Ok(base.clone());
     }
@@ -712,21 +818,81 @@ fn compile_receiver(
     Ok(value)
 }
 
-/// A node a hook compiles: the claimed call itself through [`compile_claimed_call`], anything else as roblox-ts
-/// lowers it (a node being offered right now is lowered without asking the plugins again).
+/// A node a hook compiles: the claimed call itself through [`compile_claimed_call`], the hook's own node
+/// (`own`) through [`lower_own_node`], anything else as roblox-ts lowers it (a node being offered right now is
+/// lowered without asking the plugins of that kind again).
 fn compile_node(
     state: &mut TransformState<'_>,
     prereqs: &mut Prereqs,
     context: Option<&mut CallContext>,
     node: P<Node>,
+    own: P<Node>,
 ) -> Result<Expr, String> {
     match context {
         Some(context) if context.site.node == node => compile_claimed_call(state, prereqs, context),
         _ if tsrs_ast::is_statement(node) => {
             Err(format!("compile_* takes expressions, not a statement ({:?})", node.kind()))
         }
+        _ if node == own => Ok(lower_own_node(state, prereqs, node)),
         _ => Ok(transform_expression(state, prereqs, node)),
     }
+}
+
+/// An expression or assignment hook's own node, lowered as roblox-ts lowers it there: on its compiled base when it
+/// was offered after the base (a link inside an optional chain); as a statement when roblox-ts lowers it as one
+/// (an assignment, `++` / `--` or logical assignment whose value is unused), with no value (`Expr::None`);
+/// else as an expression.
+fn lower_own_node(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Expr {
+    if let Some(lowering) = state.plugin_file.eager_offers.iter().rev().find(|(n, _)| *n == node).map(|(_, l)| l.clone())
+    {
+        return match lowering {
+            EagerLowering::Item { base, item } => transform_chain_item(state, prereqs, base, &item),
+            EagerLowering::OptionalCall { call, item } => {
+                dispatch::lower_optional_call(state, prereqs, &item, &call).unwrap_or(Expr::None)
+            }
+        };
+    }
+    if is_statement_form(node) {
+        let statements = transform_expression_statement_inner(state, node);
+        prereqs.push_list(statements);
+        return Expr::None;
+    }
+    transform_expression(state, prereqs, node)
+}
+
+/// roblox-ts lowers `node` as a statement of its own, not as a value: it is an expression statement's expression,
+/// or a `for` statement's initializer or incrementor, and an assignment (not a destructuring one), a logical
+/// assignment, `++` or `--` (`transformExpressionStatementInner`).
+pub(crate) fn is_statement_form(node: P<Node>) -> bool {
+    if !is_statement_lowered(node) {
+        return false;
+    }
+    let Some(parent) = skip_upwards(node).parent() else { return false };
+    match parent.kind() {
+        Kind::ExpressionStatement => parent.expression().map(skip_downwards) == Some(node),
+        Kind::ForStatement => {
+            let header = parent.as_for_statement();
+            header.initializer == Some(node) || header.incrementor == Some(node)
+        }
+        _ => false,
+    }
+}
+
+/// `ancestor` is a proper ancestor of `node`.
+fn is_ancestor(ancestor: P<Node>, node: P<Node>) -> bool {
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        if parent == ancestor {
+            return true;
+        }
+        current = parent.parent();
+    }
+    false
+}
+
+/// `node` is the operand of a `delete` (parentheses and type assertions skipped).
+pub(crate) fn is_delete_operand(node: P<Node>) -> bool {
+    skip_upwards(node).parent().is_some_and(|p| p.kind() == Kind::DeleteExpression)
 }
 
 /// `compile_expr` of the claimed call itself: the call lowered as roblox-ts lowers it, without asking the plugins
@@ -748,6 +914,12 @@ fn compile_claimed_call(
     }
     note_effect(state, "lowering it with compile_expr");
     let node = context.site.node;
+    if let Some(optional) = &context.optional {
+        // inside the chain's nil check on the callee: roblox-ts's optional call lowering
+        let item = context.item.expect("an optional call is a chain link");
+        return Ok(crate::nodes::transform_optional_chain::transform_optional_call_value(state, prereqs, &item, optional)
+            .unwrap_or(Expr::None));
+    }
     if let CallShape::Decorator { call } = context.shape {
         // the decorator's expression, its call (offered as this decorator) not asked about again
         if let Some(call) = call {
@@ -820,7 +992,8 @@ fn compile_slots(state: &mut TransformState<'_>, context: &mut CallContext, args
         match arg {
             Arg::Original(node) => {
                 let mut node_prereqs = Prereqs::new();
-                let value = compile_node(state, &mut node_prereqs, Some(&mut *context), node)?;
+                let own = context.site.node;
+                let value = compile_node(state, &mut node_prereqs, Some(&mut *context), node, own)?;
                 infos.push((value, node_prereqs.statements, Some(node)));
             }
             Arg::Luau(value) => infos.push((value, Vec::new(), None)),
@@ -879,17 +1052,58 @@ fn lower_call(
             if let CallShape::Decorator { call: None } = context.shape {
                 return Err("compile_call: `@decorator` without a call has no call to lower".to_owned());
             }
-            if let Some(name) = original_macro_name(state, context) {
+            let super_access = tsrs_ast::is_super_property(context.site.callee);
+            // roblox-ts applies no macro to `super.m()`
+            if !super_access && let Some(name) = original_macro_name(state, context) {
                 return Err(format!(
                     "compile_call: `{name}` is a roblox-ts macro; Callee::Original cannot lower it with argument \
                      slots (lower the node with compile_expr, or call another function)"
                 ));
+            }
+            if let Some(optional) = context.optional.clone() {
+                // inside the chain's nil check: `function(self, args)`, as roblox-ts's optional call lowering
+                let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
+                prereqs.push_list(arg_prereqs.statements);
+                let mut call_args: Vec<Expr> = optional.self_arg.into_iter().collect();
+                call_args.extend(values);
+                return Ok(wrap_return_if_lua_tuple(state, node, create::call(optional.function, call_args)));
+            }
+            // the validations of roblox-ts's call lowerings, in their order
+            match context.shape {
+                CallShape::Property { access, .. } => {
+                    validate_not_any_type(state, access.as_property_access_expression().expression);
+                }
+                CallShape::Element { access, .. } => {
+                    let element = access.as_element_access_expression();
+                    validate_not_any_type(state, element.expression);
+                    validate_not_any_type(state, element.argument_expression);
+                }
+                _ => {}
             }
             if matches!(context.shape, CallShape::Call | CallShape::Property { .. } | CallShape::Element { .. }) {
                 validate_not_any_type(state, context.site.callee);
             }
             let mut base = ensure_base(state, prereqs, context);
             match context.shape {
+                CallShape::Property { access, name } if super_access => {
+                    let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
+                    prereqs.push_list(arg_prereqs.statements);
+                    let key = dispatch::rewritten_key(state, access, AccessPosition::Callee);
+                    let callee = keyed_access(base, key.as_deref().unwrap_or(name));
+                    Ok(create::call(callee, with_super_self(state, access, values)))
+                }
+                CallShape::Element { access, argument } if super_access => {
+                    let callee = match dispatch::rewritten_key(state, access, AccessPosition::Callee) {
+                        Some(key) => keyed_access(base, &key),
+                        None => {
+                            let index = transform_expression(state, prereqs, argument);
+                            create::computed_index(convert_to_indexable_expression(base), index)
+                        }
+                    };
+                    let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
+                    prereqs.push_list(arg_prereqs.statements);
+                    Ok(create::call(callee, with_super_self(state, access, values)))
+                }
                 CallShape::Super => {
                     let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
                     prereqs.push_list(arg_prereqs.statements);
@@ -925,12 +1139,16 @@ fn lower_call(
                     let (mut values, nodes, arg_prereqs) = compile_slots(state, context, args)?;
                     fix_void_slots(state, context, &mut values, &nodes);
                     let method = is_method(state, access);
+                    let key = match dispatch::rewritten_key(state, access, AccessPosition::Callee) {
+                        Some(key) => property_key_of(&key),
+                        None => PropertyKey::Name(name.to_owned()),
+                    };
                     let call = create_ordered_property_call(
                         state,
                         prereqs,
                         access,
                         base,
-                        PropertyKey::Name(name.to_owned()),
+                        key,
                         values,
                         arg_prereqs.statements,
                         method,
@@ -938,25 +1156,38 @@ fn lower_call(
                     Ok(wrap_return_if_lua_tuple(state, node, call))
                 }
                 CallShape::Element { access, argument } => {
+                    let rewritten = dispatch::rewritten_key(state, access, AccessPosition::Callee);
                     let mut key_prereqs = Prereqs::new();
-                    let argument_value = transform_expression(state, &mut key_prereqs, argument);
-                    let later = get_effects_of_statements(&key_prereqs.statements);
+                    let argument_value = match &rewritten {
+                        Some(key) => text_literal(key),
+                        None => transform_expression(state, &mut key_prereqs, argument),
+                    };
+                    // as `transformElementCallExpressionInner`: a late-read base is captured before a key with effects
+                    let later = join_effects(
+                        get_effects_of_statements(&key_prereqs.statements),
+                        &(if is_late_read(&base) { get_effects(&argument_value) } else { Effects::none() }),
+                    );
                     if !effects_commute(&get_effects(&base), &later) {
                         base = prereqs.push_to_var(base, "exp");
                     }
                     prereqs.push_list(key_prereqs.statements);
                     let (mut values, nodes, arg_prereqs) = compile_slots(state, context, args)?;
                     fix_void_slots(state, context, &mut values, &nodes);
-                    let receiver_type = state.get_type(access.as_element_access_expression().expression);
-                    let receiver_type = state.checker.get_non_optional_type(receiver_type);
-                    let key = add_one_if_array_type(state, receiver_type, argument_value);
+                    let key = match rewritten {
+                        Some(key) => property_key_of(&key),
+                        None => {
+                            let receiver_type = state.get_type(access.as_element_access_expression().expression);
+                            let receiver_type = state.checker.get_non_optional_type(receiver_type);
+                            PropertyKey::Index(add_one_if_array_type(state, receiver_type, argument_value))
+                        }
+                    };
                     let method = is_method(state, access);
                     let call = create_ordered_property_call(
                         state,
                         prereqs,
                         access,
                         base,
-                        PropertyKey::Index(key),
+                        key,
                         values,
                         arg_prereqs.statements,
                         method,
@@ -999,4 +1230,34 @@ fn lower_call(
 /// The `CallKind` of a property or element call: a method call when roblox-ts calls it with `:`.
 pub(crate) fn access_call_kind(state: &mut TransformState<'_>, access: P<Node>) -> CallKind {
     if is_method(state, access) { CallKind::Method } else { CallKind::Call }
+}
+
+/// `super.m(…)` passes `self` first when `m` is a method (roblox-ts's super property call).
+fn with_super_self(state: &mut TransformState<'_>, access: P<Node>, values: Vec<Expr>) -> Vec<Expr> {
+    if is_method(state, access) {
+        let mut with_self = vec![rbxts_luau::globals::self_()];
+        with_self.extend(values);
+        with_self
+    } else {
+        values
+    }
+}
+
+/// `base.key` when the key is a valid Luau identifier, else `base[text_literal(key)]` (a `property_key` answer).
+pub(crate) fn keyed_access(base: Expr, key: &str) -> Expr {
+    if rbxts_luau::is_valid_identifier(key) {
+        create::property(convert_to_indexable_expression(base), key)
+    } else {
+        create::computed_index(convert_to_indexable_expression(base), text_literal(key))
+    }
+}
+
+/// The key of a method callee from a `property_key` answer: `obj:key(…)` when it is a valid Luau identifier, else
+/// `obj[text_literal(key)](obj, …)`.
+pub(crate) fn property_key_of(key: &str) -> PropertyKey {
+    if rbxts_luau::is_valid_identifier(key) {
+        PropertyKey::Name(key.to_owned())
+    } else {
+        PropertyKey::Index(text_literal(key))
+    }
 }

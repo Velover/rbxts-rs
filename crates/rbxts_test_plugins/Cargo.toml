@@ -10,3 +10,5 @@ description = "Test plugins for the compiler side of the plugin seam: the rbxts_
 rbxts_plugin.workspace = true
 rbxts_luau.workspace = true
 serde_json.workspace = true
+tsrs_ast.workspace = true
+rustc-hash.workspace = true

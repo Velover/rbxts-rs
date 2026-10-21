@@ -70,9 +70,12 @@ pub fn transform_statement_list_with_exports(
 ) -> Vec<Stmt> {
     let mut result = Vec::new();
     let remove_comments = state.compiler_options.remove_comments.is_true();
+    // rbxts-rs: a function body's locals, for plugins (`locals().function`)
+    let function_body = crate::plugins::dispatch::function_body_of(state, parent);
 
     for &statement in statements {
         let plugin_mark = crate::plugins::dispatch::root_statement_start(state, parent);
+        let before = result.len();
         let transformed_statements = transform_statement(state, statement);
         // rbxts-rs: plugin statements for before the top-level statement (`hoist`, `insert_before_root_statement`)
         if plugin_mark.is_some() {
@@ -94,6 +97,9 @@ pub fn transform_statement_list_with_exports(
         result.extend(transformed_statements);
         if let Some(mark) = plugin_mark {
             crate::plugins::dispatch::root_statement_end(state, mark, statement, &result, start);
+        }
+        if let Some(body) = function_body {
+            crate::plugins::dispatch::count_function_locals(state, body, &result[before..]);
         }
         if is_final {
             break;

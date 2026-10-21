@@ -43,6 +43,13 @@ pub struct PluginImport {
     pub statement: Option<Stmt>,
 }
 
+/// One `hoist_spillable` local: its temporary's id and the hint it was given.
+#[derive(Clone, Debug)]
+pub struct SpillableHoist {
+    pub id: u32,
+    pub hint: String,
+}
+
 /// The lengths of what a hook, or a hook nested in it, can leave behind besides its value: the prereq scope it
 /// writes to, root insertions (hoists), header statements and plugin imports. A declined node must leave the same.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,6 +150,29 @@ pub struct PluginFileState {
     pub in_fallback_offer: FxHashSet<P<Node>>,
     /// The class hook:
     pub in_class_offer: FxHashSet<P<Node>>,
+    /// The assignment hook:
+    pub in_assign_offer: FxHashSet<P<Node>>,
+    /// Expressions every expression hook declined: the hooks are asked about a node once, so a later lowering of
+    /// it (a call hook compiling its own call, or roblox-ts lowering a node twice) is roblox-ts's, as their answer
+    /// said.
+    pub fallback_declined: FxHashSet<P<Node>>,
+    /// Assignments every assignment hook declined (asked once, as above).
+    pub assign_declined: FxHashSet<P<Node>>,
+    /// Calls, `new` and decorators every call plugin declined (asked once, as above).
+    pub call_declined: FxHashSet<P<Node>>,
+    /// Chain links being offered to the expression hooks after their base was compiled (inside an optional
+    /// chain): a hook compiling its own node lowers it on that base. Innermost last.
+    pub(crate) eager_offers: Vec<(P<Node>, super::backend::EagerLowering)>,
+    /// Receivers of non-method optional calls (`o.f?.()`) that `compile_receiver` bound to a local, by call node:
+    /// the chain lowering declares the local before it reads the callee from it.
+    pub optional_receivers: FxHashMap<P<Node>, (Expr, Stmt)>,
+    /// The `property_key` answers, by access node: one answer per access, however often it is lowered. `None` when
+    /// every plugin declined (or a hook failed).
+    pub key_answers: FxHashMap<P<Node>, Option<String>>,
+    /// Locals each function body declared at its top level so far, by body node (`locals().function`).
+    pub function_locals: FxHashMap<P<Node>, u32>,
+    /// `hoist_spillable` locals, in hoist order: spilled into one table when the main chunk passes Luau's limit.
+    pub spillable: Vec<SpillableHoist>,
     /// `local` names declared at the top level of the main chunk so far (statements done, root insertions,
     /// imports, header).
     pub main_chunk_locals: u32,
