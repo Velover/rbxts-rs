@@ -3,14 +3,29 @@
 //! other file under the output roots after a successful build ("stale outputs": the outputs of deleted or renamed
 //! sources, and anything else roblox-ts would remove).
 //!
-//! rbxts-rs: differences from roblox-ts:
+//! The keep set follows `getProjectOutputs` rule by rule, because the clean deletes files a user may care about: it
+//! must never delete a file roblox-ts keeps. Per emitted program file (not JSON): its Luau output, its
+//! `.transformed.ts` with `writeTransformedFiles` and tsconfig plugins, and the `.d.ts` / `.d.ts.map` TypeScript
+//! would emit for it (`ts.getOutputFileNames`, in the `declarationDir` or `outDir`). Per asset in the root
+//! directories (outside the output roots and the include path, `node_modules` and `.git`; not a config, a build info
+//! or a deployment `*.project.json` beside the tsconfig; `.ts` / `.tsx` only when they are declaration files of a
+//! declaration build): its output. Then the build infos (roblox-ts's and tsc's own) and every Rojo project file.
+//!
+//! The clean, as roblox-ts's: every root is walked without following links; a directory (not a link) is cleaned
+//! and removed once empty; anything else that is not kept (files, and links to files or directories, which are
+//! removed themselves, never their targets) is deleted; `.git` is skipped.
+//!
+//! rbxts-rs: differences from roblox-ts, all keeping more or writing less:
 //! - assets are written only when their bytes changed (DESIGN §14 commit step 1), not copied on every build;
 //! - the include folder is kept whole when it lies under an output root (DESIGN §14: "The include folder is in the
 //!   clean step's keep set"), not only the runtime files roblox-ts copies (rbxts-rs does not copy them yet);
 //! - plugin artifacts and state files of this build are kept;
-//! - declaration files: rbxts-rs emits none yet, so project `.d.ts` files are not transformed and copied, and their
-//!   `.d.ts` outputs are kept as roblox-ts keeps them.
+//! - declaration assets (project `.d.ts` files of a declaration build) are kept but not written: roblox-ts rewrites
+//!   them (`transformDeclarationFile`, a TypeScript print), which is not ported; rbxts-rs emits no `.d.ts` either;
+//! - an output whose spelling differs from the file on disk only in case is renamed to the build's spelling (a
+//!   case-only rename of a source), so the Rojo instance name follows, as in a build into an empty directory.
 
+use std::io;
 use std::path::Path;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -48,18 +63,23 @@ pub struct OutputInputs<'a> {
     pub services: &'a ProjectServices,
     /// The program's compiler options (root directories, declarations).
     pub options: &'a tsrs_core::CompilerOptions,
-    /// The project files' output paths (after the override).
-    pub luau_outputs: &'a [String],
+    /// Per emitted program file: its input, its Luau output (after the override) and the declaration outputs
+    /// TypeScript would emit for it (`.d.ts`, `.d.ts.map`).
+    pub emitted: &'a [(String, String, Vec<String>)],
+    /// `writeTransformedFiles` with tsconfig plugins: the `.transformed.ts` outputs are kept.
+    pub transformed_outputs: bool,
     /// The outDir override of the build, if any.
     pub out_dir_override: Option<&'a str>,
     /// tsconfig and `extends` paths, never assets.
     pub config_paths: &'a [String],
-    /// Further files to keep: build info, plugin artifacts and state files of this build.
+    /// tsc's own build info (`getTsBuildInfoEmitOutputFilePath`), besides roblox-ts's `.rbxtsc.tsbuildinfo`.
+    pub ts_build_info: Option<&'a str>,
+    /// Further files to keep: the incremental state, plugin artifacts and state files of this build.
     pub extra_keep: &'a [String],
 }
 
 /// Moves an output path under the override, as the Luau outputs are.
-fn overridden(services: &ProjectServices, path: &str, out_dir_override: Option<&str>) -> String {
+pub fn overridden(services: &ProjectServices, path: &str, out_dir_override: Option<&str>) -> String {
     match out_dir_override {
         Some(dir)
             if is_descendant_key(&path_key(services, path), &path_key(services, &services.path_translator.out_dir)) =>
@@ -77,15 +97,10 @@ fn overridden(services: &ProjectServices, path: &str, out_dir_override: Option<&
 pub fn get_project_outputs(inputs: &OutputInputs<'_>) -> Result<ProjectOutputs, String> {
     let services = inputs.services;
     let translator = &services.path_translator;
-    let mut outputs = ProjectOutputs::default();
-    let out_root = inputs.out_dir_override.map_or_else(|| translator.out_dir.clone(), str::to_owned);
-    outputs.roots.push(out_root.clone());
-    if inputs.options.get_emit_declarations() && !inputs.options.declaration_dir.is_empty() {
-        let declaration_dir = nodepath::normalize(&inputs.options.declaration_dir);
-        if inputs.out_dir_override.is_none() {
-            outputs.roots.push(declaration_dir);
-        }
-    }
+    let mut outputs = ProjectOutputs {
+        roots: output_roots(services, inputs.options, inputs.out_dir_override),
+        ..ProjectOutputs::default()
+    };
 
     let root_dirs: Vec<String> = {
         let mut dirs = rbxts_project::setup::get_root_dirs(inputs.options);
@@ -103,6 +118,7 @@ pub fn get_project_outputs(inputs: &OutputInputs<'_>) -> Result<ProjectOutputs, 
         }
     }
 
+    // addOutput: an output with two inputs is an error
     let mut owners: FxHashMap<String, String> = FxHashMap::default();
     let mut add_output = |outputs: &mut ProjectOutputs, output: &str, input: &str| -> Result<(), String> {
         let key = path_key(services, output);
@@ -115,26 +131,34 @@ pub fn get_project_outputs(inputs: &OutputInputs<'_>) -> Result<ProjectOutputs, 
         outputs.keep.insert(key);
         Ok(())
     };
-    for output in inputs.luau_outputs {
-        outputs.keep.insert(path_key(services, output));
-    }
-    if translator.declaration {
-        // rbxts-rs: no declaration emit yet; keep what a declaration build would write
-        for output in inputs.luau_outputs {
-            let stem = output.strip_suffix(".luau").or_else(|| output.strip_suffix(".lua")).unwrap_or(output);
-            outputs.keep.insert(path_key(services, &format!("{stem}.d.ts")));
+    for (input, luau, declarations) in inputs.emitted {
+        add_output(&mut outputs, luau, input)?;
+        if inputs.transformed_outputs {
+            let transformed =
+                overridden(services, &translator.get_output_transformed_path(input), inputs.out_dir_override);
+            add_output(&mut outputs, &transformed, input)?;
+        }
+        for declaration in declarations {
+            add_output(&mut outputs, declaration, input)?;
         }
     }
 
     let include = nodepath::resolve(&[&services.data.options.include_path]);
+    // every output root, with or without the override (roblox-ts: `getOutputRoots` of every project)
     let mut excluded: Vec<String> = outputs.roots.iter().map(|r| path_key(services, r)).collect();
-    excluded.push(path_key(services, &translator.out_dir));
+    excluded.extend(output_roots(services, inputs.options, None).iter().map(|r| path_key(services, r)));
     excluded.push(path_key(services, &include));
     let config_keys: FxHashSet<String> = inputs.config_paths.iter().map(|p| path_key(services, p)).collect();
-    let build_info = translator.build_info_output_path.as_ref().map(|p| path_key(services, p));
+    let build_infos: FxHashSet<String> = translator
+        .build_info_output_path
+        .iter()
+        .map(String::as_str)
+        .chain(inputs.ts_build_info)
+        .map(|p| path_key(services, p))
+        .collect();
     let project_dir_key = path_key(services, &services.data.project_path);
 
-    // (path, is a directory); entries' types come from the directory listing (links are followed)
+    // (path, is a directory); entries' types come from the directory listing (links are followed, as `statSync`)
     let mut stack: Vec<(String, bool)> =
         root_dirs.iter().map(|d| (d.clone(), std::fs::metadata(d).is_ok_and(|m| m.is_dir()))).collect();
     let mut assets = Vec::new();
@@ -166,41 +190,50 @@ pub fn get_project_outputs(inputs: &OutputInputs<'_>) -> Result<ProjectOutputs, 
         }
         let base = nodepath::basename(&input);
         let is_deployment_config = path_key(services, nodepath::dirname(&input)) == project_dir_key
-            && base.ends_with(".project.json")
-            && base.len() > 13;
-        if config_keys.contains(&key) || build_info.as_ref() == Some(&key) || is_deployment_config {
-            continue;
-        }
-        if input.ends_with(".ts") || input.ends_with(".tsx") {
-            // rbxts-rs: `.d.ts` assets need declaration transforms, not ported
+            && base.len() > ".project.json".len()
+            && base.ends_with(".project.json");
+        if config_keys.contains(&key) || build_infos.contains(&key) || is_deployment_config {
             continue;
         }
         let output = overridden(services, &translator.get_output_path(&input), inputs.out_dir_override);
+        if input.ends_with(".ts") || input.ends_with(".tsx") {
+            if !tsrs_core::tspath::is_declaration_file_name(&input) || !translator.declaration {
+                continue;
+            }
+            // rbxts-rs: a declaration asset is kept, not written (`transformDeclarationFile` is not ported)
+            add_output(&mut outputs, &output, &input)?;
+            continue;
+        }
         add_output(&mut outputs, &output, &input)?;
         assets.push((input, output));
     }
     assets.sort();
     outputs.assets = assets;
 
-    if let Some(build_info) = &translator.build_info_output_path {
+    for build_info in translator.build_info_output_path.iter().map(String::as_str).chain(inputs.ts_build_info) {
         outputs.keep.insert(path_key(services, build_info));
     }
     for extra in inputs.extra_keep {
         outputs.keep.insert(path_key(services, extra));
     }
-    let rojo = &services.rojo_resolver;
-    for config in rojo.config_files() {
+    for config in services.rojo_resolver.config_files() {
         outputs.keep.insert(path_key(services, config));
     }
     outputs.keep_dirs.push(include);
     Ok(outputs)
 }
 
-/// Commit step 1 for assets: copies each asset whose output is missing or differs. Returns the outputs written.
-pub fn sync_assets(outputs: &ProjectOutputs) -> Result<Vec<String>, String> {
+/// Commit step 1 for assets: copies each asset whose output is missing or differs (renaming an output whose
+/// spelling differs only in case). Returns the outputs written.
+pub fn sync_assets(
+    services: &ProjectServices,
+    outputs: &ProjectOutputs,
+    listing: &Listing,
+) -> Result<Vec<String>, String> {
     let mut written = Vec::new();
     for (input, output) in &outputs.assets {
         let bytes = std::fs::read(input).map_err(|e| format!("could not read {input}: {e}"))?;
+        match_case(services, output, listing).map_err(|e| format!("could not rename to {output}: {e}"))?;
         if write_if_changed(Path::new(output), &bytes).map_err(|e| format!("could not write {output}: {e}"))? {
             written.push(output.clone());
         }
@@ -209,14 +242,26 @@ pub fn sync_assets(outputs: &ProjectOutputs) -> Result<Vec<String>, String> {
 }
 
 /// The files under the output roots before a build writes anything, taken once per build: for the missing-output
-/// check and for the clean. The include folder and `.git` are not entered.
+/// check, the case check and the clean. The include folder and `.git` are not entered, nor links.
 #[derive(Debug, Default)]
 pub struct Listing {
-    /// (path, key) of every file.
+    /// (path, key) of every file, and of every link (to a file or a directory).
     pub files: Vec<(String, String)>,
-    pub keys: FxHashSet<String>,
+    /// Path key → the path as spelled on disk.
+    pub spelled: FxHashMap<String, String>,
+    /// The links among `files` (removed as links, never followed).
+    pub links: FxHashSet<String>,
     /// The directories that were empty (roblox-ts's clean removes empty directories too).
     pub empty_dirs: Vec<String>,
+    /// The roots listed, as spelled.
+    pub roots: Vec<String>,
+}
+
+impl Listing {
+    /// A file with this key was there.
+    pub fn contains(&self, key: &str) -> bool {
+        self.spelled.contains_key(key)
+    }
 }
 
 /// The output roots of a build: the outDir (or its override), and the `declarationDir` of a declaration build
@@ -228,7 +273,10 @@ pub fn output_roots(
 ) -> Vec<String> {
     let mut roots = vec![out_dir_override.map_or_else(|| services.path_translator.out_dir.clone(), str::to_owned)];
     if out_dir_override.is_none() && options.get_emit_declarations() && !options.declaration_dir.is_empty() {
-        roots.push(nodepath::normalize(&options.declaration_dir));
+        let declaration_dir = nodepath::resolve(&[&services.data.project_path, &options.declaration_dir]);
+        if !roots.iter().any(|r| path_key(services, r) == path_key(services, &declaration_dir)) {
+            roots.push(declaration_dir);
+        }
     }
     roots
 }
@@ -236,8 +284,14 @@ pub fn output_roots(
 /// Lists the files under `roots`.
 pub fn list(services: &ProjectServices, roots: &[String]) -> Listing {
     let include = path_key(services, &nodepath::resolve(&[&services.data.options.include_path]));
-    let mut listing = Listing::default();
-    let mut stack: Vec<String> = roots.iter().filter(|r| Path::new(r.as_str()).is_dir()).cloned().collect();
+    let mut listing = Listing { roots: roots.to_vec(), ..Listing::default() };
+    // a root that is a link is not entered (roblox-ts's `existsSync` + `readdirSync` would follow it; its clean of
+    // the link's contents would delete files outside the project)
+    let mut stack: Vec<String> = roots
+        .iter()
+        .filter(|r| std::fs::symlink_metadata(r.as_str()).is_ok_and(|m| m.file_type().is_dir()))
+        .cloned()
+        .collect();
     while let Some(directory) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&directory) else { continue };
         let mut count = 0;
@@ -250,12 +304,15 @@ pub fn list(services: &ProjectServices, roots: &[String]) -> Listing {
             let path = nodepath::join(&[&directory, &name]);
             let Ok(file_type) = entry.file_type() else { continue };
             let key = path_key(services, &path);
-            if file_type.is_dir() {
+            if file_type.is_dir() && !file_type.is_symlink() {
                 if !is_descendant_key(&key, &include) {
                     stack.push(path);
                 }
             } else {
-                listing.keys.insert(key.clone());
+                if file_type.is_symlink() {
+                    listing.links.insert(key.clone());
+                }
+                listing.spelled.insert(key.clone(), path.clone());
                 listing.files.push((path, key));
             }
         }
@@ -266,8 +323,42 @@ pub fn list(services: &ProjectServices, roots: &[String]) -> Listing {
     listing
 }
 
-/// Commit step 3 for stale outputs: deletes every listed file that is not kept, then the directories that leaves
-/// empty (never a root). Returns the files deleted.
+/// When the listing has `path` spelled differently (only in case), renames the differing components below the
+/// output root on disk to `path`'s spelling, from the root down, so a build into a used directory names its outputs
+/// as a build into an empty one does. Nothing above the output root is touched.
+pub fn match_case(services: &ProjectServices, path: &str, listing: &Listing) -> io::Result<()> {
+    let key = path_key(services, path);
+    let Some(existing) = listing.spelled.get(&key) else { return Ok(()) };
+    let wanted = nodepath::normalize(path).replace('\\', "/");
+    if existing.replace('\\', "/") == wanted {
+        return Ok(());
+    }
+    let Some(root) = listing.roots.iter().find(|r| is_descendant_key(&key, &path_key(services, r))) else {
+        return Ok(());
+    };
+    let root = nodepath::normalize(root).replace('\\', "/");
+    let root = root.trim_end_matches('/');
+    let Some(below) = wanted.get(root.len()..).map(|rest| rest.trim_start_matches('/')) else { return Ok(()) };
+    let mut directory = root.to_owned();
+    for part in below.split('/') {
+        let next = format!("{directory}/{part}");
+        let on_disk = std::fs::read_dir(&directory)?
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .find(|name| name.to_lowercase() == part.to_lowercase());
+        if let Some(on_disk) = on_disk
+            && on_disk != part
+        {
+            std::fs::rename(format!("{directory}/{on_disk}"), &next)?;
+        }
+        directory = next;
+    }
+    Ok(())
+}
+
+/// Commit step 3 for stale outputs: deletes every listed file and link that is not kept (a link itself, never what
+/// it points to), then the directories that leaves empty and those that were empty (never a root). Returns the
+/// files deleted.
 pub fn clean(services: &ProjectServices, outputs: &ProjectOutputs, listing: &Listing) -> Result<Vec<String>, String> {
     let roots: Vec<String> = outputs.roots.iter().map(|r| path_key(services, r)).collect();
     let mut deleted = Vec::new();
@@ -278,7 +369,9 @@ pub fn clean(services: &ProjectServices, outputs: &ProjectOutputs, listing: &Lis
         if outputs.keep.contains(key) {
             continue;
         }
-        if remove_file(Path::new(path)).map_err(|e| format!("could not delete {path}: {e}"))? {
+        let removed =
+            if listing.links.contains(key) { remove_link(Path::new(path)) } else { remove_file(Path::new(path)) };
+        if removed.map_err(|e| format!("could not delete {path}: {e}"))? {
             deleted.push(path.clone());
         }
         let mut directory = nodepath::dirname(path).to_owned();
@@ -317,4 +410,13 @@ pub fn clean(services: &ProjectServices, outputs: &ProjectOutputs, listing: &Lis
     }
     deleted.sort();
     Ok(deleted)
+}
+
+/// Removes a link itself: a file link with `remove_file`, a directory link (a junction or a directory symlink) with
+/// `remove_dir`, which on a link removes the link and leaves its target alone.
+fn remove_link(path: &Path) -> io::Result<bool> {
+    match remove_file(path) {
+        Ok(removed) => Ok(removed),
+        Err(_) => std::fs::remove_dir(path).map(|()| true),
+    }
 }

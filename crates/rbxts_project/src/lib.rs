@@ -53,10 +53,6 @@ pub struct Project {
     /// The working directory the project was loaded from (TypeScript spelling).
     pub cwd: String,
     module_resolver: OnceLock<ModuleResolver>,
-    /// The file system the program reads through (each program gets its own caching layer over it).
-    fs: Arc<dyn FS>,
-    /// The parsed files kept across builds, when the program was loaded with one ([`load_cached`]).
-    source_cache: Option<Arc<SourceFileCache>>,
 }
 
 struct ConfigHost {
@@ -116,8 +112,6 @@ pub fn load_cached(opts: &LoadOptions, cache: Option<&Arc<SourceFileCache>>) -> 
         program_time,
         cwd,
         module_resolver: OnceLock::new(),
-        fs,
-        source_cache: cache.cloned(),
     })
 }
 
@@ -132,33 +126,27 @@ fn new_host(cwd: &str, fs: &Arc<dyn FS>, cache: Option<&Arc<SourceFileCache>>) -
 }
 
 impl Project {
-    /// A program for edited files, made from this one with tsrs's `reuse_program` (the path tsrs's own watcher takes):
-    /// each file in `changed` is parsed again and replaces its old version; every other file, the module resolution
-    /// and the options are this program's. `None` when tsrs cannot reuse the program for one of the files (its
-    /// imports, references or module augmentations changed, or it is not in the program): load the project again.
-    /// The parsed files go to this project's source cache. Neither program is freed (see [`source_cache`]).
-    pub fn reuse(&self, changed: &[String]) -> Option<Project> {
-        let host = new_host(&self.cwd, &self.fs, self.source_cache.as_ref());
-        let case_sensitive = self.fs.use_case_sensitive_file_names();
-        let start = Instant::now();
-        let mut program = self.program;
-        for file_name in changed {
-            let path = tspath::to_path(file_name, &self.cwd, case_sensitive);
-            program.get_source_file_by_path(&path)?;
-            let (reused, _, ok) = program.reuse_program(&path, Arc::clone(&host), None, None);
-            program = reused.filter(|_| ok)?;
+    /// The declaration outputs TypeScript would emit for a project file (`ts.getOutputFileNames` filtered to
+    /// `.d.ts` and `.d.ts.map`, as roblox-ts keeps them): none unless declarations are emitted, and none for JSON
+    /// or declaration files.
+    pub fn declaration_outputs(&self, file_name: &str) -> Vec<String> {
+        let options = self.program.options();
+        if !options.get_emit_declarations()
+            || tspath::is_declaration_file_name(file_name)
+            || tspath::file_extension_is(file_name, tspath::EXTENSION_JSON)
+        {
+            return Vec::new();
         }
-        Some(Project {
-            config: self.config,
-            program,
-            checkers: self.checkers,
-            config_time: Duration::ZERO,
-            program_time: start.elapsed(),
-            cwd: self.cwd.clone(),
-            module_resolver: OnceLock::new(),
-            fs: Arc::clone(&self.fs),
-            source_cache: self.source_cache.clone(),
-        })
+        let declaration =
+            tsrs_tsoptions::outputpaths::get_output_declaration_file_name_worker(file_name, &options, &*self.config);
+        if declaration.is_empty() {
+            return Vec::new();
+        }
+        let mut outputs = vec![declaration.clone()];
+        if options.get_are_declaration_maps_enabled() {
+            outputs.push(format!("{declaration}.map"));
+        }
+        outputs
     }
 
     /// The files roblox-ts compiles: not declaration files, not JSON modules, not from external libraries

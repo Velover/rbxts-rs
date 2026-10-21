@@ -7,9 +7,12 @@
 //!   the reversed references, transitively (`getChangedFilePaths`, with no signature pruning). References are every
 //!   resolved import (type-only imports, `export … from` and `import()` types included), triple-slash references,
 //!   type reference directives and the file's module augmentations;
-//! - **TypeScript's global rule:** a seed or deleted file that affects the global scope (a script file, a
-//!   `declare global`, a global `.d.ts`) or declares an ambient module invalidates every file (roblox-ts misses
-//!   this, census S1);
+//! - **TypeScript's global rule:** a seed, deleted file or file the closure reaches that affects the global scope
+//!   (a script file, a `declare global`, a global `.d.ts`) or declares an ambient module invalidates every file
+//!   (roblox-ts misses this, census S1). Reached files count because a global declaration whose types come from a
+//!   changed module changes every file's view of the globals (TypeScript's `handleDtsMayChangeOfGlobalScope`);
+//! - **case-only renames:** a file whose path key is unchanged but whose spelling changed is a seed (its output's
+//!   name changes);
 //! - **augmentation edges:** a file in the closure that augments module X brings in every file that reaches X (census
 //!   S2), so an edit that only changes an augmentation's types re-transforms X's importers.
 //!
@@ -199,10 +202,19 @@ pub fn invalidate<T>(
             }
             Some(previous) => {
                 let text_changed = previous.version != facts.version;
-                if text_changed {
+                // a case-only rename keeps the path key but changes the output's name
+                let renamed = previous.file_name != facts.file_name;
+                if renamed {
+                    result.deleted.push(previous.file_name.clone());
+                    result.added.push(facts.file_name.clone());
+                } else if text_changed {
                     result.changed.push(facts.file_name.clone());
                 }
-                if text_changed || previous.references != facts.references || previous.augments != facts.augments {
+                if text_changed
+                    || renamed
+                    || previous.references != facts.references
+                    || previous.augments != facts.augments
+                {
                     seeds.push(key);
                     result.all |= facts.global || previous.global;
                 }
@@ -240,11 +252,19 @@ pub fn invalidate<T>(
         }
     }
 
+    // TypeScript's global rule applies to every file the walk reaches (`handleDtsMayChangeOfGlobalScope`): a global
+    // script or `declare global` whose types come from a changed file changes every file's view of the globals
+    let new_global: FxHashSet<&str> = new.iter().filter(|(_, f)| f.global).map(|(k, _)| k.as_str()).collect();
     let mut queue: VecDeque<&str> = seeds.iter().copied().chain(deleted_augments).collect();
     let mut seen: FxHashSet<&str> = FxHashSet::default();
     while let Some(key) = queue.pop_front() {
         if !seen.insert(key) {
             continue;
+        }
+        if new_global.contains(key) || old.get(key).map(&facts_of).is_some_and(|f| f.global) {
+            result.all = true;
+            result.affected.clear();
+            return result;
         }
         if let Some(files) = importers.get(key) {
             queue.extend(files.iter().copied());
@@ -330,6 +350,34 @@ mod tests {
         let inv = invalidate(&old, |f| f, &new);
         assert_eq!(inv.deleted, ["d"]);
         assert!(inv.affected.is_empty());
+    }
+
+    #[test]
+    fn a_global_file_reached_through_the_closure_invalidates_everything() {
+        // gl (global) references inner2 through an import() type; useHop uses gl's interface without an import
+        let old: FxHashMap<String, FileFacts> = [
+            facts("inner2", 1, &[], &[], false),
+            facts("gl", 1, &["inner2"], &[], true),
+            facts("useHop", 1, &[], &[], false),
+        ]
+        .into_iter()
+        .collect();
+        let mut new: Vec<(String, FileFacts)> = old.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        new.iter_mut().find(|(k, _)| k == "inner2").unwrap().1.version = Version(2, 2, 0);
+        assert!(invalidate(&old, |f| f, &new).all);
+    }
+
+    #[test]
+    fn a_case_only_rename_is_a_seed() {
+        let old: FxHashMap<String, FileFacts> = [facts("usehub", 1, &[], &[], false)].into_iter().collect();
+        let mut new: Vec<(String, FileFacts)> = old.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        new[0].1.file_name = "UseHub".into();
+        let inv = invalidate(&old, |f| f, &new);
+        assert_eq!(affected(&inv), ["usehub"]);
+        assert_eq!(
+            (inv.deleted.as_slice(), inv.added.as_slice()),
+            (&["usehub".to_owned()][..], &["UseHub".to_owned()][..])
+        );
     }
 
     #[test]

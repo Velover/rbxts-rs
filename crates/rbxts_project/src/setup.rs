@@ -602,8 +602,9 @@ pub fn get_root_dirs(opts: &CompilerOptions) -> Vec<String> {
     if !opts.root_dir.is_empty() { vec![opts.root_dir.clone()] } else { opts.root_dirs.clone().unwrap_or_default() }
 }
 
-/// TypeScript 5's `getTsBuildInfoEmitOutputFilePath` (the build info of an incremental or composite build).
-fn ts5_build_info_path(opts: &CompilerOptions) -> Option<String> {
+/// TypeScript 5's `getTsBuildInfoEmitOutputFilePath` (the build info of an incremental or composite build): tsc's
+/// own file, which roblox-ts's clean keeps beside its `.rbxtsc.tsbuildinfo`.
+pub fn ts5_build_info_path(opts: &CompilerOptions) -> Option<String> {
     if !(opts.incremental.is_true() || opts.composite.is_true()) {
         return None;
     }

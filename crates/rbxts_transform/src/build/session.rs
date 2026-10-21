@@ -2,10 +2,11 @@
 //! (watch mode, the parity harness).
 //!
 //! A build is `build(kind, changes)`:
-//! 1. **Load or update the program.** The first build loads it. A watch rebuild whose touched paths are only edited
-//!    program files updates it with tsrs's `reuse_program` (the path tsrs's own watcher takes) and keeps the project
-//!    setup; anything else (an added or deleted path, a tsconfig, Rojo or plugin input) loads it again, with the
-//!    unchanged files served from the session's [`SourceFileCache`] (the same `SourceFile` objects).
+//! 1. **Load the program** and the project setup, every build, as roblox-ts does: module resolution, the Rojo
+//!    resolvers and the package mapping are redone (a package installed or upgraded under `node_modules`, which no
+//!    watcher sees, is picked up). Unchanged files come from the session's [`SourceFileCache`] (the same
+//!    `SourceFile` objects), so only edited files are parsed again. (tsrs's `reuse_program` would keep the old
+//!    module resolution: an import that failed to resolve stays unresolved after its package is installed.)
 //! 2. **Decide the files to transform** ([`super::graph`]): every project file in a clean build, after a change of
 //!    the salt (compiler, options, configs, Rojo files, plugin list), after a plugin's `setup` re-ran, or in an
 //!    incremental build with plugins (their file parts are not persisted); otherwise roblox-ts's closure with
@@ -129,8 +130,6 @@ pub struct BuildSummary {
     pub kind: Option<BuildKind>,
     /// Every project file was transformed.
     pub all: bool,
-    /// The program was updated in place (`reuse_program`) rather than loaded again.
-    pub reused_program: bool,
     /// Files parsed for this build (source cache misses).
     pub parsed: usize,
     /// Project files re-rendered because their late strings changed value.
@@ -140,11 +139,6 @@ pub struct BuildSummary {
     pub deleted: Vec<String>,
     /// The changes since the last committed build.
     pub changes: ChangeSet,
-}
-
-fn is_ts_like(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
-    [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".json"].iter().any(|e| lower.ends_with(e))
 }
 
 impl<'p> BuildSession<'p> {
@@ -208,6 +202,23 @@ impl<'p> BuildSession<'p> {
             }
         }
         inputs
+    }
+
+    /// The module resolutions plugins asked for in `setup` (`SetupCx::resolve_module`): (specifier, from file,
+    /// resolved file). They are build inputs: a watcher watches the package directories they depend on, and a
+    /// changed result runs `setup` again.
+    pub fn plugin_resolutions(&self) -> Vec<(String, String, Option<String>)> {
+        let mut out = Vec::new();
+        if let Some(committed) = &self.committed {
+            for plugin in &committed.plugins {
+                for input in &plugin.inputs {
+                    if let BuildInput::Resolution { specifier, from, resolved, .. } = input {
+                        out.push((specifier.clone(), from.clone(), resolved.clone()));
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// The directories plugins asked the last committed build to watch (`FinishCx::watch_dir`).
@@ -328,28 +339,8 @@ impl<'p> BuildSession<'p> {
         self.pending.extend(touched.iter().cloned());
         let parses_before = self.cache.parses();
 
-        // 1. load or update the program
-        let content_only = match (&committed, &last) {
-            (Some(c), Some(last)) if !c.from_disk && !touched.is_empty() => self.edited_sources(touched, last, c),
-            _ => None,
-        };
-        let loaded = match (content_only, last) {
-            (Some(changed), Some(last)) => {
-                if changed.is_empty() {
-                    Some(last)
-                } else {
-                    match last.project.reuse(&changed) {
-                        Some(project) => {
-                            report.timings.program = project.program_time;
-                            summary.reused_program = true;
-                            Some(Loaded { project, ..last })
-                        }
-                        None => self.load(&mut report, last.versions),
-                    }
-                }
-            }
-            (_, last) => self.load(&mut report, last.map(|l| l.versions).unwrap_or_default()),
-        };
+        // 1. load the program, over the source cache
+        let loaded = self.load(&mut report, last.map(|l| l.versions).unwrap_or_default());
         let Some(loaded) = loaded else {
             summary.parsed = self.cache.parses() - parses_before;
             return (report, summary, committed, None);
@@ -533,7 +524,7 @@ impl<'p> BuildSession<'p> {
                     }
                     // roblox-ts: any source whose output is missing
                     let out = output_path(services, file.get().file_name(), self.options.out_dir_override.as_deref());
-                    !listing.keys.contains(&path_key_of(services, &out))
+                    !listing.contains(&path_key_of(services, &out))
                 })
                 .collect()
         };
@@ -848,6 +839,10 @@ impl<'p> BuildSession<'p> {
         if !self.options.no_write {
             for outcome in &mut report.files {
                 let Some(source) = &outcome.luau else { continue };
+                if let Err(e) = outputs::match_case(services, &outcome.out_path, &listing) {
+                    report.fatal.push(format!("could not rename to {}: {e}", outcome.out_path));
+                    continue;
+                }
                 match write_if_changed(Path::new(&outcome.out_path), source.as_bytes()) {
                     Ok(written) => {
                         outcome.written = written;
@@ -976,24 +971,38 @@ impl<'p> BuildSession<'p> {
         disk: Option<(&str, DiskState)>,
     ) -> Result<(), String> {
         let services = &loaded.services;
-        let luau_outputs: Vec<String> = files
+        let out_dir_override = self.options.out_dir_override.as_deref();
+        let emitted: Vec<(String, String, Vec<String>)> = files
             .iter()
-            .map(|f| output_path(services, f.get().file_name(), self.options.out_dir_override.as_deref()))
+            .map(|f| {
+                let name = f.get().file_name();
+                let declarations = loaded
+                    .project
+                    .declaration_outputs(name)
+                    .iter()
+                    .map(|d| outputs::overridden(services, d, out_dir_override))
+                    .collect();
+                (name.to_owned(), output_path(services, name, out_dir_override), declarations)
+            })
             .collect();
         let mut extra_keep: Vec<String> = queue.artifacts.iter().map(|(_, p, _)| p.clone()).collect();
         extra_keep.extend(queue.state_files.iter().map(|(_, p, _)| p.clone()));
         extra_keep.extend(disk.as_ref().map(|(path, _)| (*path).to_owned()));
         let options = loaded.project.program.options();
+        let ts_build_info = rbxts_project::setup::ts5_build_info_path(&options);
         let outputs = outputs::get_project_outputs(&OutputInputs {
             services,
             options: &options,
-            luau_outputs: &luau_outputs,
-            out_dir_override: self.options.out_dir_override.as_deref(),
+            emitted: &emitted,
+            transformed_outputs: services.data.options.write_transformed_files
+                && options.plugins.as_ref().is_some_and(|p| !p.is_empty()),
+            out_dir_override,
             config_paths: &loaded.config_paths,
+            ts_build_info: ts_build_info.as_deref(),
             extra_keep: &extra_keep,
         })?;
         // 1. assets (the Luau is written)
-        summary.written.extend(outputs::sync_assets(&outputs)?);
+        summary.written.extend(outputs::sync_assets(services, &outputs, listing)?);
         // 2. artifacts
         let written = commit_artifacts(queue)?;
         summary.written.extend(written.iter().cloned());
@@ -1038,47 +1047,6 @@ impl<'p> BuildSession<'p> {
             return record.state.clone();
         }
         plugin.plugin.default_state()
-    }
-
-    /// The touched paths' program files when the touched paths are only edits of existing program files and of
-    /// other existing files that are not configs (assets): the program can then be updated in place. `None` when the
-    /// project must be loaded again.
-    fn edited_sources(&self, touched: &[String], last: &Loaded, committed: &Committed) -> Option<Vec<String>> {
-        let services = &last.services;
-        let program = last.project.program;
-        let configs: FxHashSet<String> = self.config_inputs_of(last, Some(committed));
-        let mut changed = Vec::new();
-        for path in touched {
-            let key = path_key_of(services, path);
-            if configs.contains(&key) || key.ends_with(".project.json") {
-                return None;
-            }
-            let metadata = std::fs::metadata(path).ok()?;
-            if !metadata.is_file() {
-                return None;
-            }
-            match program.get_source_file(&tsrs_core::tspath::normalize_path(path)) {
-                Some(file) => changed.push(file.get().file_name().to_owned()),
-                None if is_ts_like(path) => return None,
-                None => {}
-            }
-        }
-        // program files outside the root directories (packages) have no watcher: compare them with what was parsed
-        let roots: Vec<String> = rbxts_project::setup::get_root_dirs(&program.options())
-            .iter()
-            .map(|r| path_key_of(services, &nodepath::resolve(&[r])) + "/")
-            .collect();
-        let external = program.source_files().iter().filter(|f| {
-            let name = f.get().file_name();
-            !name.starts_with("bundled:") && {
-                let key = path_key_of(services, name);
-                !roots.iter().any(|root| key.starts_with(root.as_str()))
-            }
-        });
-        changed.extend(self.cache.changed_on_disk(external.map(|f| (f.path(), f.get().file_name()))));
-        changed.sort();
-        changed.dedup();
-        Some(changed)
     }
 
     /// The config inputs' path keys: tsconfig and `extends`, Rojo project files, plugin input files.

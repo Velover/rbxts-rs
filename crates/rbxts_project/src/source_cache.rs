@@ -2,8 +2,10 @@
 //! out the same `SourceFile` for a file whose modification time, size and parse options are unchanged, as roblox-ts's
 //! program factory does (an unchanged file is the same object in the next program) and as tsrs's own watcher does.
 //!
-//! The files are never freed: freeing a program needs tsrs's `free_program`, an `unsafe fn` (rbxts-rs has no
-//! `unsafe`). The watcher restarts its process past a memory limit instead (DESIGN §14 "Memory").
+//! A program is loaded again for every build (module resolution must be redone: a package installed since the
+//! last build changes it), so this cache is what keeps a rebuild cheap. The files are never freed: freeing a
+//! program needs tsrs's `free_program`, an `unsafe fn` (rbxts-rs has no `unsafe`). The watcher restarts its process
+//! past a memory limit instead (DESIGN §14 "Memory").
 
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -37,23 +39,6 @@ impl SourceFileCache {
     /// An empty cache.
     pub fn new() -> SourceFileCache {
         SourceFileCache::default()
-    }
-
-    /// The files among `files` (path and file name) that changed on disk since the cache parsed them: another
-    /// modification time or size, or gone. Files the cache never parsed are left out. For files no watcher watches
-    /// (packages), checked before a program is updated in place.
-    pub fn changed_on_disk<'a>(&self, files: impl IntoIterator<Item = (&'a Path, &'a str)>) -> Vec<String> {
-        let cached = self.files.lock().expect("source file cache");
-        let mut changed = Vec::new();
-        for (path, file_name) in files {
-            let Some(entry) = cached.get(path) else { continue };
-            let same = std::fs::metadata(file_name)
-                .is_ok_and(|m| m.modified().ok() == entry.mod_time && m.len() as i64 == entry.size);
-            if !same {
-                changed.push(file_name.to_owned());
-            }
-        }
-        changed
     }
 
     /// How many files the hosts over this cache parsed (cache misses), for timings and tests.
