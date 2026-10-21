@@ -41,7 +41,11 @@ impl Drop for Watcher {
         let _ = self.child.kill();
         let _ = self.child.wait();
         let link = self.root.join("node_modules");
-        let _ = Command::new("cmd").args(["/C", "rmdir"]).arg(link.to_string_lossy().replace('/', "\\")).status();
+        let _ = Command::new("cmd")
+            .args(["/C", "rmdir"])
+            .arg(link.to_string_lossy().replace('/', "\\"))
+            .stderr(Stdio::null())
+            .status();
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
@@ -202,6 +206,17 @@ fn start(root: &Path) -> Watcher {
 }
 
 impl Watcher {
+    /// Takes events until none comes for 1.5 s; the last build-end seen.
+    fn settle(&self) -> Option<Value> {
+        let mut last = None;
+        while let Ok(event) = self.events.recv_timeout(Duration::from_millis(1500)) {
+            if event["event"] == "build-end" {
+                last = Some(event);
+            }
+        }
+        last
+    }
+
     /// Build ends until one that succeeded (a package written in steps can take more than one rebuild), within 60 s.
     fn until_ok(&self) -> Value {
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
@@ -301,9 +316,125 @@ fn the_watcher_sees_directories_moved_in_and_packages_installed() {
     let use_pkg = std::fs::read_to_string(root.join("out/shared/usePkg.luau")).unwrap();
     assert!(use_pkg.contains("ReadonlyMap.size"), "the package's new types were used:\n{use_pkg}");
 
-    drop(watcher);
     for link in links {
         unlink(&link);
     }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A copy of the watch fixture without the stamp plugin, with a real `node_modules` and `@rbxts` holding one
+/// junction per package (so packages can be added in the copy alone). Returns (base, project, junctions).
+fn linked_project(label: &str) -> Option<(PathBuf, PathBuf, Vec<PathBuf>)> {
+    let node_modules = std::env::var_os("RBXTS_RS_FIXTURE_NODE_MODULES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_NODE_MODULES));
+    if !node_modules.join("@rbxts").join("compiler-types").is_dir() {
+        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        return None;
+    }
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../rbxts_transform/tests/watch_fixtures/basic");
+    let base = std::env::temp_dir().join(format!("rbxts-rs-cli-watch-{label}-{}", std::process::id()));
+    let root = base.join("project");
+    let _ = std::fs::remove_dir_all(&base);
+    copy_dir(&fixture, &root);
+    let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap().replace(
+        "\"plugins\": [{ \"transform\": \"rbxts-transform-stamp\", \"prefix\": \"watch \" }]",
+        "\"plugins\": []",
+    );
+    std::fs::write(root.join("tsconfig.json"), tsconfig).unwrap();
+    let scope = root.join("node_modules/@rbxts");
+    std::fs::create_dir_all(&scope).unwrap();
+    let mut links = Vec::new();
+    for entry in std::fs::read_dir(node_modules.join("@rbxts")).unwrap().flatten() {
+        let link = scope.join(entry.file_name());
+        let status = Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link.to_string_lossy().replace('/', "\\"))
+            .arg(entry.path().to_string_lossy().replace('/', "\\"))
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        links.push(link);
+    }
+    Some((base, root, links))
+}
+
+/// A package folder created (one rebuild starts), its files written while that rebuild runs: the folder is
+/// watched only after the build, so the writes raise no event of their own, yet the watcher ends on a successful
+/// build. Then churn under node_modules (`.package-lock.json`, `.cache/`) starts no rebuild.
+#[test]
+fn files_written_into_a_new_package_folder_during_its_rebuild_are_seen() {
+    let Some((base, root, links)) = linked_project("late-pkg") else { return };
+    std::fs::write(
+        root.join("src/shared/usePkg.ts"),
+        "import { v } from \"@rbxts/latepkg\";\n\nexport const w = v.size();\n",
+    )
+    .unwrap();
+    let watcher = start(&root);
+    let initial = watcher.build_end(0);
+    assert_eq!(initial["ok"], false, "the package is missing: {initial}");
+
+    let package = root.join("node_modules/@rbxts/latepkg");
+    std::fs::create_dir(&package).unwrap();
+    // wait for the rebuild the folder starts, then fill the folder while it runs
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let event = watcher.events.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())).unwrap();
+        if event["event"] == "build-start" {
+            break;
+        }
+    }
+    std::fs::write(
+        package.join("package.json"),
+        "{ \"name\": \"@rbxts/latepkg\", \"main\": \"init.lua\", \"types\": \"index.d.ts\" }\n",
+    )
+    .unwrap();
+    std::fs::write(package.join("index.d.ts"), "export declare const v: Array<number>;\n").unwrap();
+    std::fs::write(package.join("init.lua"), "return { v = {} }\n").unwrap();
+    watcher.until_ok();
+    // a write the build may not have seen starts one more rebuild (the folder is compared with the build's start)
+    let last = watcher.settle();
+    assert!(last.as_ref().is_none_or(|end| end["ok"] == true), "the last build failed: {last:?}");
+    assert!(root.join("out/shared/usePkg.luau").is_file());
+
+    // node_modules churn: dot entries are no packages
+    std::fs::write(root.join("node_modules/.package-lock.json"), "{}\n").unwrap();
+    std::fs::create_dir_all(root.join("node_modules/.cache/x")).unwrap();
+    std::fs::write(root.join("node_modules/.cache/x/y"), "z").unwrap();
+    std::fs::write(root.join("node_modules/@rbxts/.lock"), "z").unwrap();
+    watcher.assert_quiet(Duration::from_millis(1500));
+
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A tsconfig whose outDir is the project directory fails the build; the watcher must still see the tsconfig
+/// restored (its events are configs, never ignored as outputs) and later source edits.
+#[test]
+fn the_watcher_hears_the_tsconfig_after_an_out_dir_holding_the_project() {
+    let Some((base, root, links)) = linked_project("outdir") else { return };
+    let watcher = start(&root);
+    let initial = watcher.build_end(0);
+    assert_eq!(initial["ok"], true, "{initial}");
+    let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
+    std::fs::write(root.join("tsconfig.json"), tsconfig.replace("\"outDir\": \"out\"", "\"outDir\": \".\"")).unwrap();
+    let end = watcher.build_end(1);
+    assert_eq!(end["ok"], false, "an outDir holding the sources fails: {end}");
+    std::fs::write(root.join("tsconfig.json"), &tsconfig).unwrap();
+    let end = watcher.build_end(2);
+    assert_eq!(end["ok"], true, "the restored tsconfig rebuilt: {end}");
+    std::fs::write(root.join("src/shared/later.ts"), "export const later = 1;\n").unwrap();
+    let end = watcher.build_end(3);
+    assert_eq!(end["ok"], true, "{end}");
+    assert!(root.join("out/shared/later.luau").is_file());
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
     let _ = std::fs::remove_dir_all(&base);
 }

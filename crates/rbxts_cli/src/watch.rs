@@ -7,9 +7,16 @@
 //!   recursively): `node_modules` and its `@scope` directories, where an added or removed package counts; the
 //!   root and the declaration directories of every package the program uses, of every package an unresolved import
 //!   names, and of every package plugin `resolve_module` calls went through, where a changed `package.json` or
-//!   declaration file counts. Events under the output roots, the include folder and `.git`, other events under
-//!   `node_modules`, a directory's own modification events (its entries' events say more; a directory created or
-//!   moved in counts), rbxts-rs's own temporary files, and writes of this watcher's own artifacts are dropped.
+//!   declaration file counts (and, for a package or scope folder, the folder's own modification: files written
+//!   into a package folder not watched yet). Config files and build inputs always count. Other events are dropped:
+//!   under the output roots (never a root holding the project, a source root or the tsconfig), the include folder
+//!   and `.git`; the rest of `node_modules`, dot entries there (`.package-lock.json`, `.cache`) included; a
+//!   directory's own modification elsewhere (its entries' events say more; a directory created or moved in counts);
+//!   rbxts-rs's own temporary files; and writes of this watcher's own artifacts.
+//! - **New watches.** The watched directories are brought up to date after each build, before it is reported. A
+//!   directory watched for the first time is compared with the build's start: what changed in it since (written
+//!   while the build ran, before any watch could see it) starts another rebuild. A build that loads no project
+//!   keeps the last good watches.
 //! - **Debounce.** Trailing, 100 ms as roblox-ts: each event restarts the wait, and the paths of one burst become
 //!   one rebuild. A rename is its two paths (the session sees a deletion and an addition).
 //! - **Errors.** A panic in a rebuild is reported and the session starts over with a clean build; the watcher
@@ -21,7 +28,7 @@
 //!   process runs the watcher as a child and starts a new one when it exits with [`RESTART_EXIT_CODE`]. The new
 //!   watcher's first build is a clean one, or an incremental one for an `incremental` project.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
@@ -160,8 +167,11 @@ fn status_line_restart() {
 }
 
 /// What the watcher watches and ignores.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Watched {
+    /// Path keys of the tsconfig, the configs it extends, the Rojo project files and the plugins' input files: their
+    /// events always count, whatever directory they are in (an outDir set to the project directory included).
+    config_inputs: FxHashSet<String>,
     recursive: BTreeSet<String>,
     flat: BTreeSet<String>,
     /// Path keys of the directories whose events are dropped (output roots, include folder).
@@ -196,18 +206,41 @@ fn is_under(path_key: &str, root_key: &str) -> bool {
             && path_key.as_bytes()[root_key.len()] == b'/')
 }
 
-fn watched_set(session: &BuildSession<'_>) -> Watched {
+/// The tsconfig's path and directory, watched before any project could be loaded (a broken tsconfig at the first
+/// build).
+fn minimal_set(session: &BuildSession<'_>) -> Watched {
     let mut watched = Watched::default();
-    // the tsconfig's directory, also when no project could be loaded (a broken tsconfig at the first build)
+    let tsconfig = nodepath::resolve(&[&session.options.cwd, &session.options.tsconfig]);
+    watched.flat.insert(nodepath::dirname(&tsconfig).to_owned());
+    watched.config_inputs.insert(key(&tsconfig));
     watched
-        .flat
-        .insert(nodepath::dirname(&nodepath::resolve(&[&session.options.cwd, &session.options.tsconfig])).to_owned());
-    let Some((services, program_files, root_dirs)) = session.watch_roots() else { return watched };
+}
+
+/// What to watch for the last loaded project; `None` when the last build loaded none (then the last good set is
+/// kept: a failing load says nothing about where the sources are).
+fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
+    let mut watched = minimal_set(session);
+    let (services, program_files, root_dirs) = session.watch_roots()?;
     let project_dir = services.data.project_path.clone();
     let out_dir = session.options.out_dir_override.clone().unwrap_or_else(|| services.path_translator.out_dir.clone());
-    watched.ignored_roots.push(key(&out_dir));
-    watched.ignored_roots.push(key(&services.path_translator.out_dir));
-    watched.ignored_roots.push(key(&nodepath::resolve(&[&services.data.options.include_path])));
+    // an output root holding the project, a source root or the tsconfig would drop the events that matter (the
+    // build refuses such a root anyway): it is never ignored
+    let protected: Vec<String> = root_dirs
+        .iter()
+        .map(|r| key(r))
+        .chain([key(&project_dir), key(&nodepath::resolve(&[&session.options.cwd, &session.options.tsconfig]))])
+        .collect();
+    for root in
+        [out_dir, services.path_translator.out_dir.clone(), nodepath::resolve(&[&services.data.options.include_path])]
+    {
+        let root = key(&root);
+        if !protected.iter().any(|p| is_under(p, &root)) {
+            watched.ignored_roots.push(root);
+        }
+    }
+    for input in session.config_inputs() {
+        watched.config_inputs.insert(key(&input));
+    }
     for root in &root_dirs {
         watched.recursive.insert(nodepath::resolve(&[root]));
     }
@@ -286,17 +319,30 @@ fn watched_set(session: &BuildSession<'_>) -> Watched {
     // one watch per directory, whatever its spelling
     let mut seen = FxHashSet::default();
     watched.flat.retain(|dir| seen.insert(key(dir)));
-    watched
+    Some(watched)
 }
 
-/// Whether an event path matters.
-fn relevant(path: &str, watched: &Watched, own: &FxHashMap<String, Version>) -> bool {
+/// Whether an event path matters. `folder_modify`: the event is only a modification of an existing directory
+/// (its entries changed), which counts for a package or scope folder only (files written into a package folder
+/// that is not watched yet surface as that), never elsewhere (its entries' own events say more).
+fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &FxHashMap<String, Version>) -> bool {
     let k = key(path);
+    // configs and build inputs first: roblox-ts's watcher checks isConfigPath before its output-path ignore
+    if watched.config_inputs.contains(&k) {
+        return true;
+    }
     if watched.ignored_roots.iter().any(|root| is_under(&k, root)) {
         return false;
     }
     let parent = nodepath::dirname(&k);
     let name = nodepath::basename(&k);
+    // package names never start with a dot: `node_modules/.package-lock.json`, `.cache`, `.bin` are churn
+    if watched.module_dirs.contains(parent) && name.starts_with('.') {
+        return false;
+    }
+    if folder_modify {
+        return watched.module_dirs.contains(parent) || watched.plugin_package_dirs.contains(&k);
+    }
     let package_event = watched.module_dirs.contains(parent)
         || watched.plugin_package_dirs.contains(parent)
         || watched.plugin_package_dirs.contains(&k)
@@ -324,18 +370,13 @@ struct Subscriptions {
 }
 
 impl Subscriptions {
-    /// Watches what `watched` lists. An empty set (no project loaded: a broken tsconfig, a crashed build) keeps
-    /// the current watches, so the fix is seen.
-    fn update(&mut self, watched: &Watched) {
-        if watched.recursive.is_empty() && watched.flat.is_empty() {
-            return;
-        }
+    /// Watches what `watched` lists. Returns the paths in the directories it starts watching that changed since
+    /// `since` (the build's start) and matter: a write between the program load and the new watch (a package
+    /// folder filled during the build that its creation started, a `watch_dir` root) raised no event here, so
+    /// those paths start another rebuild.
+    fn update(&mut self, watched: &Watched, since: SystemTime, own: &FxHashMap<String, Version>) -> Vec<String> {
         if debug() {
-            eprintln!(
-                "[rbxtsc watch] recursive {:?}
-[rbxtsc watch] flat {:?}",
-                watched.recursive, watched.flat
-            );
+            eprintln!("[rbxtsc watch] recursive {:?}\n[rbxtsc watch] flat {:?}", watched.recursive, watched.flat);
         }
         let wanted: FxHashSet<(String, bool)> = watched
             .recursive
@@ -348,13 +389,45 @@ impl Subscriptions {
             let _ = recursive;
             let _ = self.watcher.unwatch(Path::new(dir));
         }
+        let mut stale = Vec::new();
         for (dir, recursive) in wanted.iter().filter(|w| !self.active.contains(w)) {
             let mode = if *recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
             if let Err(e) = self.watcher.watch(Path::new(dir), mode) {
                 eprintln!("rbxtsc: cannot watch {dir}: {e}");
             }
+            changed_since(Path::new(dir), *recursive, since, &mut |path| {
+                let text = path_text(path);
+                if relevant(&text, false, watched, own) {
+                    stale.push(text);
+                }
+            });
         }
         self.active = wanted;
+        if debug() && !stale.is_empty() {
+            eprintln!("[rbxtsc watch] changed before their directory was watched: {stale:?}");
+        }
+        stale
+    }
+}
+
+/// Calls `found` with every entry under `dir` (recursively or not) modified at or after `since`. Links are not
+/// followed into.
+fn changed_since(dir: &Path, recursive: bool, since: SystemTime, found: &mut dyn FnMut(&Path)) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let Ok(metadata) = entry.metadata() else { continue };
+        if metadata.modified().is_ok_and(|m| m >= since) {
+            found(&entry.path());
+        }
+        let name = entry.file_name();
+        if recursive
+            && metadata.is_dir()
+            && !metadata.file_type().is_symlink()
+            && name != "node_modules"
+            && name != ".git"
+        {
+            changed_since(&entry.path(), true, since, found);
+        }
     }
 }
 
@@ -391,12 +464,24 @@ fn watch(
     // a restarted watcher goes on from the last generation of the one before
     let mut generation = if first_generation > 0 { first_generation + 1 } else { 0 };
 
+    let mut watched = minimal_set(&session);
     status("Starting compilation in watch mode...");
-    rebuild(&mut session, &mut subscriptions, build, cwd, generation, &[], &mut own);
+    let mut stale = rebuild(&mut session, &mut subscriptions, &mut watched, build, cwd, generation, &[], &mut own);
     loop {
-        let Some(paths) = collect(&receiver) else { return 0 };
-        let watched = watched_set(&session);
-        let mut paths: Vec<String> = paths.into_iter().filter(|p| p == RESCAN || relevant(p, &watched, &own)).collect();
+        // paths that changed before their directory was watched start a rebuild of their own
+        let events: Vec<(String, bool)> = if stale.is_empty() {
+            let Some(events) = collect(&receiver) else { return 0 };
+            events
+        } else {
+            std::mem::take(&mut stale).into_iter().map(|p| (p, false)).collect()
+        };
+        let mut paths: Vec<String> = events
+            .into_iter()
+            .filter(|(p, folder_modify)| p == RESCAN || relevant(p, *folder_modify, &watched, &own))
+            .map(|(p, _)| p)
+            .collect();
+        paths.sort();
+        paths.dedup();
         // a directory as a touched path makes the session load the project again, with every file's facts
         if let Some(rescan) = paths.iter_mut().find(|p| *p == RESCAN) {
             *rescan = session.options.tsconfig.clone(); // a config input: a rebuild with every file looked at
@@ -406,7 +491,7 @@ fn watch(
         }
         generation += 1;
         status("File change detected. Starting incremental compilation...");
-        rebuild(&mut session, &mut subscriptions, build, cwd, generation, &paths, &mut own);
+        stale = rebuild(&mut session, &mut subscriptions, &mut watched, build, cwd, generation, &paths, &mut own);
         if let Some(limit) = memory_limit()
             && std::env::var(CHILD_ENV).is_ok()
             && memory_stats::memory_stats().is_some_and(|m| m.physical_mem > limit)
@@ -419,32 +504,33 @@ fn watch(
     }
 }
 
-/// Waits for an event, then for the burst to end (each event restarts the wait); the paths of the burst, sorted.
+/// Waits for an event, then for the burst to end (each event restarts the wait); the paths of the burst, sorted,
+/// each flagged when all its events were modifications of an existing directory (see [`relevant`]). A directory
+/// created, moved in or renamed is a plain event (on Windows a directory moved in is one event for the directory).
 /// `None` when the watcher stopped.
-fn collect(receiver: &Receiver<notify::Result<Event>>) -> Option<Vec<String>> {
-    let mut paths: BTreeSet<String> = BTreeSet::new();
-    let add = |event: notify::Result<Event>, paths: &mut BTreeSet<String>| match event {
+fn collect(receiver: &Receiver<notify::Result<Event>>) -> Option<Vec<(String, bool)>> {
+    let mut paths: BTreeMap<String, bool> = BTreeMap::new();
+    let add = |event: notify::Result<Event>, paths: &mut BTreeMap<String, bool>| match event {
         _ if debug() && {
             eprintln!("[rbxtsc watch] event {event:?}");
             false
         } => {}
-        // a directory's own modification (its entries changed) says nothing its entries' events do not; a directory
-        // created, moved in or renamed is kept (on Windows, a directory moved in is one event for the directory)
-        Ok(event)
-            if matches!(
-                event.kind,
-                EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_) | ModifyKind::Metadata(_) | ModifyKind::Other)
-            ) && event.paths.iter().all(|p| std::fs::metadata(p).is_ok_and(|m| m.is_dir())) => {}
         // events were lost (an overflowing buffer): everything may have changed
         Err(_) => {
-            paths.insert(RESCAN.to_owned());
+            paths.insert(RESCAN.to_owned(), false);
         }
         Ok(event) if event.need_rescan() => {
-            paths.insert(RESCAN.to_owned());
+            paths.insert(RESCAN.to_owned(), false);
         }
         Ok(event) if !matches!(event.kind, EventKind::Access(_)) => {
+            let modify = matches!(
+                event.kind,
+                EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_) | ModifyKind::Metadata(_) | ModifyKind::Other)
+            );
             for path in event.paths {
-                paths.insert(path_text(&path));
+                let folder_modify = modify && std::fs::metadata(&path).is_ok_and(|m| m.is_dir());
+                let entry = paths.entry(path_text(&path)).or_insert(folder_modify);
+                *entry &= folder_modify;
             }
         }
         Ok(_) => {}
@@ -467,23 +553,37 @@ fn path_text(path: &Path) -> String {
 /// One build of the watch loop, with its report and events. A panic is reported, and the session starts over.
 /// After the build, the watched directories are brought up to date before anything is printed, so a change made
 /// as soon as the build is reported finished is seen.
+#[allow(clippy::too_many_arguments)]
 fn rebuild(
     session: &mut BuildSession<'_>,
     subscriptions: &mut Subscriptions,
+    watched: &mut Watched,
     build: &BuildArgs,
     cwd: &str,
     generation: u64,
     paths: &[String],
     own: &mut FxHashMap<String, Version>,
-) {
+) -> Vec<String> {
     if build.events_json {
         println!("{{\"event\":\"build-start\",\"gen\":{generation},\"changes\":{}}}", json_list(paths));
     }
+    let since = SystemTime::now();
     let result = catch_unwind(AssertUnwindSafe(|| session.build(paths)));
     if result.is_err() {
         session.reset();
     }
-    subscriptions.update(&watched_set(session));
+    // this build's own writes are known before the new watches look for changes
+    if let Ok((_, summary)) = &result {
+        for path in &summary.written {
+            if let Ok(bytes) = std::fs::read(path) {
+                own.insert(key(path), Version::of(&String::from_utf8_lossy(&bytes)));
+            }
+        }
+    }
+    if let Some(set) = watched_set(session) {
+        *watched = set;
+    }
+    let stale = subscriptions.update(watched, since, own);
     let (report, summary) = match result {
         Ok(result) => result,
         Err(panic) => {
@@ -500,20 +600,16 @@ fn rebuild(
                 );
             }
             status("Found 1 error. Watching for file changes.");
-            return;
+            return stale;
         }
     };
     print_report(&report, cwd, build);
-    for path in &summary.written {
-        if let Ok(bytes) = std::fs::read(path) {
-            own.insert(key(path), Version::of(&String::from_utf8_lossy(&bytes)));
-        }
-    }
     let errors = error_count(&report);
     if build.events_json {
         print_end(generation, &report, &summary, errors);
     }
     status(&format!("Found {errors} error{}. Watching for file changes.", if errors == 1 { "" } else { "s" }));
+    stale
 }
 
 fn print_end(generation: u64, report: &CompileReport, summary: &BuildSummary, errors: usize) {
