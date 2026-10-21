@@ -5,7 +5,7 @@ export function useInheritance() {
 }
 
 export function useMore() {
-	print(NestedSuper, SuperNotFirst, FromExpression);
+	print(NestedSuper, SuperNotFirst, FromExpression, SuperMiddle);
 }
 
 class Base {
@@ -110,5 +110,16 @@ class FromExpression extends BaseExpression {}
 export default class NamedDefaultClass extends Base {
 	constructor() {
 		super(4);
+	}
+}
+
+class SuperMiddle extends Base {
+	public q = 1;
+	constructor() {
+		// before super
+		super(1);
+		// set up
+		print("x");
+		// trailing
 	}
 }

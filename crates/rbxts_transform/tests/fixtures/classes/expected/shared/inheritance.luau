@@ -4,9 +4,9 @@ local Derived, ImplicitDerived, EmptyDerived, AbstractDerived, FromCall, Impleme
 local function useInheritance()
 	print(Derived, ImplicitDerived, EmptyDerived, AbstractDerived, FromCall, Implementer, SuperIndexed)
 end
-local NestedSuper, SuperNotFirst, FromExpression
+local NestedSuper, SuperNotFirst, FromExpression, SuperMiddle
 local function useMore()
-	print(NestedSuper, SuperNotFirst, FromExpression)
+	print(NestedSuper, SuperNotFirst, FromExpression, SuperMiddle)
 end
 local Base
 do
@@ -264,6 +264,29 @@ do
 	end
 	function NamedDefaultClass:constructor()
 		super.constructor(self, 4)
+	end
+end
+do
+	local super = Base
+	SuperMiddle = setmetatable({}, {
+		__tostring = function()
+			return "SuperMiddle"
+		end,
+		__index = super,
+	})
+	SuperMiddle.__index = SuperMiddle
+	function SuperMiddle.new(...)
+		local self = setmetatable({}, SuperMiddle)
+		return self:constructor(...) or self
+	end
+	function SuperMiddle:constructor()
+		-- before super
+		super.constructor(self, 1)
+		-- trailing
+		self.q = 1
+		-- set up
+		print("x")
+		-- trailing
 	end
 end
 return {

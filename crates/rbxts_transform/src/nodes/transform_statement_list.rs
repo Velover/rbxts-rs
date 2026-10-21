@@ -20,17 +20,14 @@ pub struct ExportInfo<'m> {
 /// (`getLastToken` and its `isNodeDescendantOf` check).
 ///
 /// rbxts-rs: tsrs has no token children, so the last token is found from the syntax: a block's `}` follows its last
-/// statement (or its `{`), a source file ends with its end-of-file token, and anything else is scanned. With no
-/// `last_statement` (an empty slice of a block, as `transformClassConstructor` passes), the block's own last statement
-/// still decides where its `}` is.
+/// statement (or its `{`), a source file ends with its end-of-file token, and anything else is scanned. A block's
+/// `}` is found from the block's own last statement, not from `last_statement`: `transformClassConstructor` passes
+/// slices of the constructor body (before and after `super()`), and `getLastToken` is the block's `}` either way.
 fn last_token_pos(node: P<Node>, last_statement: Option<P<Node>>) -> Option<u32> {
     match node.kind() {
-        Kind::Block | Kind::ModuleBlock => Some(match last_statement {
+        Kind::Block | Kind::ModuleBlock => Some(match node.statements().last() {
             Some(last) => last.end().source_offset()?,
-            None => match node.statements().last() {
-                Some(last) => last.end().source_offset()?,
-                None => get_start(node) + 1,
-            },
+            None => get_start(node) + 1,
         }),
         Kind::SourceFile => node.as_source_file().end_of_file_token.pos().source_offset(),
         _ => {
