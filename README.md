@@ -34,3 +34,24 @@ node <rbxts-rs>/tools/dump-luau-ast.cjs <roblox-ts checkout> tsconfig.json <dump
 Dumps of the real project stay outside the repo (scratchpad `rbxts-rs/luau-dumps`). The committed fixture
 `crates/rbxts_bench/fixtures/luau-edge-cases.jsonl` comes from `tools/luau-edge-cases.cjs` (hand-written trees,
 rendered by roblox-ts's luau-ast) and is checked by `cargo test -p rbxts_bench`.
+
+## Project setup parity (`rbxts_project`)
+
+`crates/rbxts_project` also holds the setup roblox-ts does before transforming: `@roblox-ts/rojo-resolver` 1.3.0
+(`rojo`), `@roblox-ts/path-translator` 1.1.1 (`path_translator`), Node's `path` semantics they rely on (`nodepath`),
+and the single-project parts of roblox-ts's `src/Project` (`setup`: `rbxts` options, project data, compiler-option
+checks, the path translator, the package resolvers and mapping, `compileFiles`'s Rojo checks), shared with plugins
+as `ProjectServices` (with package.json lookups and `Project::resolve_module`). `tools/dump-project-services.cjs`
+records roblox-ts's own values for a project; `rbxts-bench project-parity` computes them with the port and compares.
+
+```sh
+# RBXTS_DIR: a roblox-ts checkout with out/ built (default E:/Projects/TS/Flamework/roblox-ts-test/roblox-ts)
+node <rbxts-rs>/tools/dump-project-services.cjs <project dir or tsconfig.json> <dump.json> [--timing-runs N]
+<rbxts-rs>/target/measure/rbxts-bench.exe project-parity <dump.json> [--runs N] [--max-diffs N]
+```
+
+Dumps of the real project stay outside the repo (scratchpad `rbxts-rs/project-dumps`). `cargo test -p rbxts_project
+-p rbxts_bench` runs the same comparisons on committed fixtures: Node's answers for the path functions
+(`tools/gen-nodepath-cases.cjs`), the JavaScript resolver's on hand-made Rojo trees (`tools/gen-rojo-cases.cjs`) and
+roblox-ts's setup on hand-made projects (`tools/gen-setup-fixtures.cjs`); rerun those scripts when the fixtures
+change.

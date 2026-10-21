@@ -78,3 +78,37 @@ The dump script also checks the TypeScript trees for what a parent-free renderer
 identifiers), nodes shared between two places (60), and whether any parent-dependent decision (parentheses,
 temporary-identifier scope edges, long-bracket spacing) would differ under the structural parent. None does, in
 either corpus.
+
+## M1 (part): project setup parity (`rbxts-bench project-parity`)
+
+`rbxts_project`'s Rojo resolver, path translator and project setup against roblox-ts's own (`@roblox-ts/rojo-resolver`
+1.3.0, `@roblox-ts/path-translator` 1.1.1, `src/Project` of roblox-ts master with the tsrs-experiment
+`validateCompilerOptions`), dumped by `tools/dump-project-services.cjs`. Values: project data, path translator, Rojo
+partitions / file mounts / warnings of the project's and the package resolvers, package mapping, project type,
+runtime library path, `compileFiles`'s diagnostics, `resolve_module` probes, and per program file the output,
+declaration, transformed, input and import paths with their Rojo paths, script types, network types and isolation.
+Files are those in both programs: TypeScript 7 defaults `types` to `[]`, so `@rbxts/types` and friends that TS 5.9
+pulls in through `typeRoots` are only in the JavaScript program unless imported.
+
+| date | corpus | files compared | values | differences |
+| --- | --- | --- | --- | --- |
+| 2026-10-21 | the real project | 886 (of 956 in TS5's program) | 39,803 | 0 |
+| 2026-10-21 | roblox-ts tests (root + its 2 project references, references with their graph-given options) | 305 | 10,844 | 0 |
+| 2026-10-21 | Flamework monorepo `tests/place` (bun symlinks) | 105 (of 125) | 3,173 | 0 |
+| 2026-10-21 | 12 hand-written setup fixtures (`crates/rbxts_bench/tests/setup_fixtures.rs`) | - | all | 0 |
+
+Resolver build time, min / median of 5-10 (ms), profile `measure`. "shipped" is the published `RojoResolver.js`
+(`fs.realpathSync`, JS implementation, twice per entry), "native" the same with `realpathSync.native`. "whole setup"
+is `Project::setup`: rbxts options, project data, option checks, path translator, the project's resolver, one synthetic
+resolver per type root and the package mapping (those three in parallel), and `compileFiles`'s checks.
+
+| date | corpus | JS `fromPath`, shipped | JS `fromPath`, native | Rust `from_path` | Rust whole setup | load |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-21 | the real project | 3318 / 3373 | 917 / 957 | 35 / 39 | 43-46 / 47-48 | busy (CPU ~55%) |
+| 2026-10-21 | roblox-ts tests | 299 / 323 | 82 / 86 | 2.0 / 2.4 | 3.5 / 3.9 | busy |
+| 2026-10-21 | Flamework `tests/place` | 654 / 672 | 122 / 136 | 6.4 / 7.8 | 16 / 17 | busy |
+
+- The walk lists each directory once with the entries' own types (no `realpath`, no `stat` except for links) and
+  spells out paths only for directories and project files.
+- Partition checks (`checkRojoConfig`, lookups) compare already-resolved ASCII paths without building `path.relative`
+  strings; that took the real project's setup from ~200 ms to ~80 ms before the walks were parallel.
