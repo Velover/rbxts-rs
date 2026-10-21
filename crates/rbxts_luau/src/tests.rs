@@ -321,8 +321,8 @@ fn compound_assignments() {
 
 #[test]
 fn method_calls_on_literals() {
-    // parentheses around a simple expression are dropped even for a method call's receiver (as in TypeScript),
-    // so roblox-ts must not build `("abc"):upper()` this way
+    // parentheses around a simple expression are dropped (as in TypeScript), but not around a literal that is
+    // indexed or called (rbxts-rs: roblox-ts renders `"abc":upper()`, which does not parse)
     let statements = vec![
         print(vec![
             method_call(paren(string("abc")), "upper", vec![]),
@@ -337,7 +337,7 @@ fn method_calls_on_literals() {
     ];
     assert_eq!(
         render_lines(statements),
-        "print(\"abc\":upper(), 5:x(), ({}):y())\nprint((a .. b):len(), (function()\n\treturn 1\nend)())\n\
+        "print((\"abc\"):upper(), (5):x(), ({}):y())\nprint((a .. b):len(), (function()\n\treturn 1\nend)())\n\
          print(({\n\ta = 1,\n}).a())\n"
     );
 }

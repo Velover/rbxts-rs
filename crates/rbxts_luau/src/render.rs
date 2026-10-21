@@ -405,13 +405,30 @@ impl Renderer<'_> {
         self.out.push_str(name);
     }
 
+    /// What is indexed or called. rbxts-rs: a literal (`nil`, a boolean, a number, a string) keeps its parentheses
+    /// there, which roblox-ts's renderer drops around a simple value (`"x":rep(2)`, which does not parse); roblox-ts
+    /// never lowers a literal into that position itself, but a plugin's claimed value can land there.
+    fn base(&mut self, e: &Expr) {
+        let mut innermost = e;
+        while let Expr::Parenthesized(p) = innermost {
+            innermost = &p.expression;
+        }
+        if innermost.is_simple_primitive() {
+            self.out.push('(');
+            self.expr(innermost, Ctx::None);
+            self.out.push(')');
+        } else {
+            self.expr(e, Ctx::None);
+        }
+    }
+
     fn expr(&mut self, e: &Expr, ctx: Ctx) {
         let late = self.late_strings;
         match e {
             Expr::Identifier(id) => self.identifier(&id.name),
             Expr::TemporaryIdentifier(id) => self.temporary_identifier(id),
             Expr::ComputedIndex(node) => {
-                self.expr(&node.expression, Ctx::None);
+                self.base(&node.expression);
                 match string_value(late, &node.index) {
                     Some(name) if is_valid_identifier(name) => {
                         self.out.push('.');
@@ -425,7 +442,7 @@ impl Renderer<'_> {
                 }
             }
             Expr::PropertyAccess(node) => {
-                self.expr(&node.expression, Ctx::None);
+                self.base(&node.expression);
                 if is_valid_identifier(&node.name) {
                     self.out.push('.');
                     self.out.push_str(&node.name);
@@ -436,14 +453,14 @@ impl Renderer<'_> {
                 }
             }
             Expr::Call(node) => {
-                self.expr(&node.expression, Ctx::None);
+                self.base(&node.expression);
                 self.out.push('(');
                 self.list(&node.args);
                 self.out.push(')');
             }
             Expr::MethodCall(node) => {
                 assert!(is_valid_identifier(&node.name), "Invalid method name: \"{}\"", node.name);
-                self.expr(&node.expression, Ctx::None);
+                self.base(&node.expression);
                 self.out.push(':');
                 self.out.push_str(&node.name);
                 self.out.push('(');
@@ -793,7 +810,9 @@ fn ends_with_indexable(statement: &Stmt) -> bool {
 fn starts_with_parenthesis(statement: &Stmt) -> bool {
     fn inner(e: &Expr) -> bool {
         match e {
+            // a literal base is rendered in parentheses (`base`)
             Expr::Parenthesized(_) => true,
+            e if e.is_simple_primitive() => true,
             Expr::Call(node) => inner(&node.expression),
             Expr::MethodCall(node) => inner(&node.expression),
             Expr::PropertyAccess(node) => inner(&node.expression),
