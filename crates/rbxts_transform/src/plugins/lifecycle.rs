@@ -1,9 +1,9 @@
 //! The build lifecycle around the transform (DESIGN §4, §14): which plugins are on, `setup` and `finish` with their
 //! backends, the late-string key check, the commit, and `explain_checker_diagnostic` on files that failed checking.
 //!
-//! S1 runs clean builds only. The seams for incremental and watch builds are marked `// rbxts-rs: S2`: kept
-//! `Shared`s and committed states across builds, cached file parts and late values, `rebuild_start`, the artifact
-//! set of the last build (stale deletions), and the build inputs as watch and hash inputs.
+//! The build's kind, changes, state origin and whether every file is transformed come from the build session
+//! ([`crate::build`]), which also keeps the `Shared`s and committed states across builds, the cached file parts
+//! and late values, and the artifact set of the last build (stale deletions).
 
 use std::cell::{OnceCell, RefCell};
 use std::io;
@@ -49,8 +49,8 @@ pub(crate) struct ActivePlugin<'p> {
 /// What a plugin read in `setup`: recorded so incremental and watch builds can rebuild when one changes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BuildInput {
-    /// A file read through `read_input` (its absolute path, and whether it existed).
-    File { plugin: &'static str, path: String, exists: bool },
+    /// A file read through `read_input` (its absolute path, whether it existed, and the version of its text).
+    File { plugin: &'static str, path: String, exists: bool, version: Option<crate::build::graph::Version> },
     /// An environment variable read through `env`.
     Env { plugin: &'static str, name: String, value: Option<String> },
     /// A `resolve_module` from `setup`.
@@ -178,6 +178,12 @@ pub(crate) struct Setup<'s> {
     pub inputs: RefCell<Vec<BuildInput>>,
     pub messages: &'s mut Vec<String>,
     pub warnings: &'s mut Vec<String>,
+    pub kind: BuildKind,
+    /// Every source file is transformed this build.
+    pub all: bool,
+    /// What changed since the last committed build (`None` for a clean build).
+    pub changes: Option<&'s ChangeSet>,
+    pub origin: StateOrigin,
 }
 
 impl SetupBackend for Setup<'_> {
@@ -199,7 +205,7 @@ impl SetupBackend for Setup<'_> {
 
     fn resolve_module(&self, specifier: &str, from_file: &str) -> Option<ResolvedModuleInfo> {
         let resolved = resolve_module_from(self.program, self.resolver, specifier, from_file);
-        // a build input: a package installed mid-watch must trigger a rebuild (rbxts-rs: S2 — the watcher)
+        // a build input: a package installed mid-watch must trigger a rebuild
         self.inputs.borrow_mut().push(BuildInput::Resolution {
             plugin: self.plugin,
             specifier: specifier.to_owned(),
@@ -217,7 +223,11 @@ impl SetupBackend for Setup<'_> {
             Err(e) => Err(e),
         };
         let exists = matches!(result, Ok(Some(_)));
-        self.inputs.borrow_mut().push(BuildInput::File { plugin: self.plugin, path, exists });
+        let version = match &result {
+            Ok(Some(text)) => Some(crate::build::graph::Version::of(text)),
+            _ => None,
+        };
+        self.inputs.borrow_mut().push(BuildInput::File { plugin: self.plugin, path, exists, version });
         result
     }
 
@@ -232,20 +242,19 @@ impl SetupBackend for Setup<'_> {
     }
 
     fn build_kind(&self) -> BuildKind {
-        // rbxts-rs: S2 — Incremental and WatchRebuild
-        BuildKind::Clean
+        self.kind
     }
 
     fn transforms_all_files(&self) -> bool {
-        true
+        self.all
     }
 
     fn changes(&self) -> Option<&ChangeSet> {
-        None
+        self.changes
     }
 
     fn state_origin(&self) -> StateOrigin {
-        StateOrigin::Fresh
+        self.origin
     }
 
     fn read_persisted(&mut self, path: &Path) -> io::Result<Option<Vec<u8>>> {
@@ -268,14 +277,13 @@ impl SetupBackend for Setup<'_> {
     }
 }
 
-/// Runs one plugin's `setup` on a clean build: the state starts from `default_state()` (the plugin reloads what it
-/// persisted itself with `read_persisted`).
+/// Runs one plugin's `setup` on `state`: `default_state()` for a clean or incremental build (the plugin reloads
+/// what it persisted itself with `read_persisted`), a copy of the committed state for a watch rebuild.
 pub(crate) fn run_setup(
     active: &ActivePlugin<'_>,
     backend: &mut Setup<'_>,
+    mut state: ErasedState,
 ) -> (Result<ErasedShared, rbxts_plugin::Fatal>, ErasedState, Duration) {
-    // rbxts-rs: S2 — the committed state of the last build in this process, and `rebuild_start` with a kept Shared
-    let mut state = active.plugin.default_state();
     let start = std::time::Instant::now();
     let shared = active.plugin.setup(&mut SetupCx::new(backend), &mut state);
     (shared, state, start.elapsed())
@@ -292,7 +300,7 @@ pub(crate) struct CommitQueue {
     pub state_files: Vec<(&'static str, String, Vec<u8>)>,
     /// Deleted in step 3.
     pub removals: Vec<(&'static str, String)>,
-    /// Glob roots to watch (rbxts-rs: S2 — the watcher).
+    /// Glob roots to watch.
     pub watch_dirs: Vec<(&'static str, String)>,
 }
 
@@ -311,6 +319,8 @@ pub(crate) struct Finish<'s> {
     pub errors: &'s mut Vec<String>,
     pub warnings: &'s mut Vec<String>,
     pub messages: &'s mut Vec<String>,
+    pub kind: BuildKind,
+    pub all: bool,
 }
 
 impl Finish<'_> {
@@ -359,11 +369,11 @@ impl FinishBackend for Finish<'_> {
     }
 
     fn build_kind(&self) -> BuildKind {
-        BuildKind::Clean
+        self.kind
     }
 
     fn transforms_all_files(&self) -> bool {
-        true
+        self.all
     }
 
     fn resolve_late(&mut self, key: &str, escaped: String) {
@@ -393,7 +403,6 @@ impl FinishBackend for Finish<'_> {
     }
 
     fn watch_dir(&mut self, path: &Path) {
-        // rbxts-rs: S2 — the watcher; recorded only
         if let Some(path) = self.checked_path(path, "watched directory") {
             self.queue.watch_dirs.push((self.plugin, path));
         }
@@ -495,12 +504,10 @@ pub fn remove_file(path: &Path) -> io::Result<bool> {
     }
 }
 
-/// Commit steps 2-4 after the Luau outputs (step 1, written by the caller): artifacts (only if changed), the
-/// removals (rbxts-rs: S2 — and the artifacts the last build wrote but this one did not), then state files.
-/// Returns the paths written and deleted, or the first failure; a failure stops the commit there.
-pub(crate) fn commit_plugin_files(queue: &CommitQueue) -> Result<(Vec<String>, Vec<String>), String> {
+/// Commit step 2: the plugin artifacts, each only if its bytes changed. Returns the paths written, or the first
+/// failure (which stops the commit there).
+pub(crate) fn commit_artifacts(queue: &CommitQueue) -> Result<Vec<String>, String> {
     let mut written = Vec::new();
-    let mut deleted = Vec::new();
     for (plugin, path, bytes) in &queue.artifacts {
         match write_if_changed(Path::new(path), bytes) {
             Ok(true) => written.push(path.clone()),
@@ -508,13 +515,28 @@ pub(crate) fn commit_plugin_files(queue: &CommitQueue) -> Result<(Vec<String>, V
             Err(e) => return Err(format!("plugin `{plugin}`: could not write {path}: {e}")),
         }
     }
-    for (plugin, path) in &queue.removals {
+    Ok(written)
+}
+
+/// Commit step 3 for plugins: `remove_artifact`s, and the artifacts the last build wrote but this one did not
+/// (`stale`, which the caller diffs). Returns the paths deleted.
+pub(crate) fn commit_removals(queue: &CommitQueue, stale: &[String]) -> Result<Vec<String>, String> {
+    let mut deleted = Vec::new();
+    let removals = queue.removals.iter().map(|(plugin, path)| (*plugin, path)).chain(stale.iter().map(|p| ("", p)));
+    for (plugin, path) in removals {
         match remove_file(Path::new(path)) {
             Ok(true) => deleted.push(path.clone()),
             Ok(false) => {}
+            Err(e) if plugin.is_empty() => return Err(format!("could not delete the stale artifact {path}: {e}")),
             Err(e) => return Err(format!("plugin `{plugin}`: could not delete {path}: {e}")),
         }
     }
+    Ok(deleted)
+}
+
+/// Commit step 4 for plugins: the state files, each only if its bytes changed. Returns the paths written.
+pub(crate) fn commit_state_files(queue: &CommitQueue) -> Result<Vec<String>, String> {
+    let mut written = Vec::new();
     for (plugin, path, bytes) in &queue.state_files {
         match write_if_changed(Path::new(path), bytes) {
             Ok(true) => written.push(path.clone()),
@@ -522,7 +544,7 @@ pub(crate) fn commit_plugin_files(queue: &CommitQueue) -> Result<(Vec<String>, V
             Err(e) => return Err(format!("plugin `{plugin}`: could not write {path}: {e}")),
         }
     }
-    Ok((written, deleted))
+    Ok(written)
 }
 
 /// The key for a Luau output path, to keep artifacts off them.
