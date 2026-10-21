@@ -74,6 +74,9 @@ pub struct Timings {
     /// Plugin `finish` (all plugins) and the late-string key check.
     pub plugin_finish: Duration,
     pub render: Duration,
+    /// Luau's compiler on the files near one of its limits (`plugins::spill`), and how many were checked.
+    pub load_check: Duration,
+    pub load_checked: u32,
     pub write: Duration,
 }
 
@@ -235,6 +238,8 @@ pub(crate) struct FileTransform {
     pub parts: Vec<Option<ErasedPart>>,
     /// The late keys its Luau uses: (plugin, namespaced key).
     pub late_keys: Vec<(usize, String)>,
+    /// It is near one of Luau's limits: Luau's compiler checks it once rendered.
+    pub load_check: Option<crate::plugins::spill::LoadCheck>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -277,7 +282,8 @@ pub(crate) fn transform_file(
     let unsupported = std::mem::take(&mut state.diagnostics.unsupported);
     let parts = std::mem::take(&mut state.plugin_file.parts);
     let late_keys = std::mem::take(&mut state.plugin_file.late_keys);
-    FileTransform { ast, diagnostics, unsupported, internal_errors, panicked, parts, late_keys }
+    let load_check = state.plugin_file.load_check.take();
+    FileTransform { ast, diagnostics, unsupported, internal_errors, panicked, parts, late_keys, load_check }
 }
 
 /// The check failed: each plugin may explain the checker diagnostics of the failing files

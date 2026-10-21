@@ -177,12 +177,14 @@ pub struct PluginFileState {
     /// `hoist_spillable` locals, in hoist order: spilled into one table when the main chunk passes Luau's limit.
     pub spillable: Vec<SpillableHoist>,
     /// A plugin hook emitted something into the file (a claimed value, a class hook's statements, or any primitive
-    /// that changes compiler state): the file is checked against Luau's local limit (`spill`).
+    /// that changes compiler state): the file is checked against Luau's limits (`spill`).
     pub emitted: bool,
     /// Statements inserted into the file's statement list after its top-level statements were lowered, as
     /// (index, count) in the order they were inserted: plugin imports, the header, `local exports`, the
     /// `Compiled with` comment and `local TS`. They move `root_ranges` to the final list.
     pub front_inserts: Vec<(usize, usize)>,
+    /// The file is near one of Luau's limits: Luau's compiler checks it once rendered (`spill::load_check`).
+    pub(crate) load_check: Option<super::spill::LoadCheck>,
     /// `local` names declared at the top level of the main chunk so far (statements done, root insertions,
     /// imports, header).
     pub main_chunk_locals: u32,

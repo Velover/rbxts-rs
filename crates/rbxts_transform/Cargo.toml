@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 rbxts_luau.workspace = true
+rbxts_luau_check.workspace = true
 rbxts_project.workspace = true
 tsrs_core.workspace = true
 tsrs_ast.workspace = true

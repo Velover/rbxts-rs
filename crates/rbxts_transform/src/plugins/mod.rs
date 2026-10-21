@@ -11,7 +11,7 @@
 //!   by-kind fallbacks, classes, files, root statements, imports).
 //! - [`lifecycle`]: activation from the tsconfig, `SetupBackend`, `FinishBackend`, the late-string key check, the
 //!   commit with atomic writes, and `explain_checker_diagnostic`.
-//! - `lowering`: `compile_binary` and `compile_object_literal`; `spill`: the main chunk's local limit.
+//! - `lowering`: `compile_binary` and `compile_object_literal`; `spill`: Luau's limits (pre-count, spill, load check).
 //!
 //! **Offer kinds.** There are five: calls (with `new` and decorators), property keys, assignments, the expression
 //! and statement fallbacks, and the class hook. Within a kind, plugins are asked in registration order and the first
@@ -108,17 +108,15 @@
 //! any nested function); approved names and import names avoid the seam temporaries made before them in turn.
 //! roblox-ts's own temporaries keep its naming.
 //!
-//! **Luau's limits** (`spill`). Every file a plugin emitted anything into is checked once complete, its main chunk
-//! and each function, against Luau's 200 live local registers (enclosing blocks' locals count, loop variables,
-//! `local exports` and `local TS` too) and 200 upvalues. Luau folds a `local` statement whose names are all constants
-//! (constant values, no more values than names, no name written anywhere) into no register, only from optimisation
-//! level 1 and only at debug level 1, so two counts are kept: every local name (conservative), and what takes a
-//! register at level 1 and debug level 1, Roblox's Studio-testing default (certain). Past 200, the main chunk's
-//! conservative count spills the `hoist_spillable` locals into one table local (`_spill`); a certain count still
-//! past it is an error (the file fails to load in Studio), a conservative one a warning (it loads only where Luau
-//! folds constants, and fails at `--!optimize 0` or debug level 2). A function's diagnostic is anchored at the main
-//! chunk's statement that contains it. A function that uses more than 200 locals of the functions around it (its
-//! nested functions' uses included) is a warning naming it. Other files, and builds without plugins, keep roblox-ts's
+//! **Luau's limits** (`spill`). Every file a plugin emitted anything into is checked once complete against Luau's
+//! limits: 200 live locals and 255 registers per function, 200 upvalues, and its nesting depth. A cheap pre-count
+//! (every local name, enclosing blocks, loop variables, `local exports` and `local TS` included) spills the
+//! `hoist_spillable` locals into one table local (`_spill`) when the main chunk has more than 200, and marks a file
+//! near a limit. Luau's own compiler (`rbxts_luau_check`, a pinned release built from source) then compiles the
+//! rendered file, its `--!optimize` directive honoured: refused at optimisation level 1 or 2 with debug level 1
+//! (Studio's default, live games) is an error with Luau's message, at the TS statement holding the line Luau names (a
+//! function's: the main chunk's statement containing it); refused only at `--!optimize 0` or debug level 2 is a
+//! warning (it loads only with Luau's constant folding). Other files, and builds without plugins, keep roblox-ts's
 //! behaviour.
 
 pub mod backend;
@@ -129,7 +127,7 @@ pub mod lifecycle;
 
 mod facts;
 mod lowering;
-mod spill;
+pub(crate) mod spill;
 
 pub use host::PluginHost;
 pub use lifecycle::{BuildInput, PluginOptions, PluginTimings};

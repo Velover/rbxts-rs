@@ -684,6 +684,7 @@ impl<'p> BuildSession<'p> {
         let mut asts: Vec<Option<Vec<Stmt>>> = Vec::with_capacity(to_transform.len());
         let mut new_parts: Vec<Vec<Option<ErasedPart>>> = Vec::with_capacity(to_transform.len());
         let mut file_late_keys: Vec<Vec<(usize, String)>> = Vec::with_capacity(to_transform.len());
+        let mut load_checks = Vec::with_capacity(to_transform.len());
         let mut hook_times = None;
         {
             let mut checker = project.program.get_type_checker(&ctx);
@@ -724,6 +725,7 @@ impl<'p> BuildSession<'p> {
                 let out_path = output_path(services, &file_name, self.options.out_dir_override.as_deref());
                 new_parts.push(transformed.parts);
                 file_late_keys.push(transformed.late_keys);
+                load_checks.push(transformed.load_check);
                 report.files.push(FileOutcome {
                     file_name: file_name.clone(),
                     out_path,
@@ -867,14 +869,29 @@ impl<'p> BuildSession<'p> {
 
         // 7. render, and re-render kept files whose late strings changed value
         let start = Instant::now();
-        for ((outcome, ast), keys) in report.files.iter_mut().zip(&asts).zip(&file_late_keys) {
+        let mut statement_lines: Vec<Option<Vec<u32>>> = Vec::with_capacity(report.files.len());
+        for ((outcome, ast), (keys, check)) in
+            report.files.iter_mut().zip(&asts).zip(file_late_keys.iter().zip(&load_checks))
+        {
+            statement_lines.push(None);
             if let Some(ast) = ast
                 && outcome.is_clean()
                 && (keys.is_empty() || finished)
             {
-                // rbxts-rs: a panic while rendering is this file's internal error, not the build's crash
-                match quietly(|| rbxts_luau::render(ast, &late_strings)) {
-                    Ok(luau) => outcome.luau = Some(luau),
+                // rbxts-rs: a panic while rendering is this file's internal error, not the build's crash; a file
+                // marked for the load check keeps where each statement starts, to place Luau's messages
+                let rendered = quietly(|| match check {
+                    Some(_) => {
+                        let (luau, lines) = rbxts_luau::render_with_lines(ast, &late_strings);
+                        (luau, Some(lines))
+                    }
+                    None => (rbxts_luau::render(ast, &late_strings), None),
+                });
+                match rendered {
+                    Ok((luau, lines)) => {
+                        outcome.luau = Some(luau);
+                        *statement_lines.last_mut().expect("pushed above") = lines;
+                    }
                     Err(panic) => {
                         let message = format!("rendering the Luau panicked: {}", panic_message(&*panic));
                         match project.program.get_source_file(&outcome.file_name) {
@@ -911,7 +928,20 @@ impl<'p> BuildSession<'p> {
             }
         }
         report.timings.render = start.elapsed();
-        // a file that failed to render fails the build as a transform error does
+        // Luau's compiler on the files near one of its limits: an error keeps the file from being written
+        let start = Instant::now();
+        for ((outcome, check), lines) in report.files.iter_mut().zip(&load_checks).zip(&statement_lines) {
+            let (Some(check), Some(lines), Some(luau)) = (check, lines, &outcome.luau) else { continue };
+            report.timings.load_checked += 1;
+            if let Some(diagnostic) = crate::plugins::spill::load_check(check, luau, lines) {
+                if diagnostic.category() == Category::Error {
+                    outcome.luau = None;
+                }
+                outcome.diagnostics.push(diagnostic);
+            }
+        }
+        report.timings.load_check = start.elapsed();
+        // a file that failed to render or Luau refuses fails the build as a transform error does
         if (!report.fatal.is_empty() || report.has_errors()) && !self.options.write_partial {
             return (report, summary, committed, Some(loaded));
         }

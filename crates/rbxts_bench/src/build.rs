@@ -335,6 +335,7 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
         ("transform", t.transform),
         ("plugin_finish", t.plugin_finish),
         ("render", t.render),
+        ("load_check", t.load_check),
         ("write", t.write),
     ];
     let clean = report.files.iter().filter(|f| f.is_clean()).count();
@@ -366,6 +367,9 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
             let _ = writeln!(out, "  {name:<13} {:>9.1} ms", ms(d));
         }
         let _ = writeln!(out, "  {:<13} {:>9.1} ms", "total", ms(total));
+        if t.load_checked > 0 {
+            let _ = writeln!(out, "Luau load check: {} files near a limit", t.load_checked);
+        }
         let _ = writeln!(
             out,
             "peak working set {:.1} MiB, peak commit {:.1} MiB",
