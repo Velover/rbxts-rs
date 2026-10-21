@@ -74,8 +74,6 @@ pub struct OutputInputs<'a> {
     pub config_paths: &'a [String],
     /// tsc's own build info (`getTsBuildInfoEmitOutputFilePath`), besides roblox-ts's `.rbxtsc.tsbuildinfo`.
     pub ts_build_info: Option<&'a str>,
-    /// Further files to keep: the incremental state, plugin artifacts and state files of this build.
-    pub extra_keep: &'a [String],
 }
 
 /// Moves an output path under the override, as the Luau outputs are.
@@ -213,9 +211,6 @@ pub fn get_project_outputs(inputs: &OutputInputs<'_>) -> Result<ProjectOutputs, 
     for build_info in translator.build_info_output_path.iter().map(String::as_str).chain(inputs.ts_build_info) {
         outputs.keep.insert(path_key(services, build_info));
     }
-    for extra in inputs.extra_keep {
-        outputs.keep.insert(path_key(services, extra));
-    }
     for config in services.rojo_resolver.config_files() {
         outputs.keep.insert(path_key(services, config));
     }
@@ -223,18 +218,28 @@ pub fn get_project_outputs(inputs: &OutputInputs<'_>) -> Result<ProjectOutputs, 
     Ok(outputs)
 }
 
-/// Commit step 1 for assets: copies each asset whose output is missing or differs (renaming an output whose
-/// spelling differs only in case). Returns the outputs written.
+/// The assets' bytes, in `outputs.assets` order, read before the commit writes anything.
+pub fn read_assets(outputs: &ProjectOutputs) -> Result<Vec<Vec<u8>>, String> {
+    outputs
+        .assets
+        .iter()
+        .map(|(input, _)| std::fs::read(input).map_err(|e| format!("could not read {input}: {e}")))
+        .collect()
+}
+
+/// Commit step 1 for assets: writes each asset (`bytes` from [`read_assets`]) whose output is missing or differs.
+/// rbxts-rs: an output whose spelling differs from the file on disk only in case is renamed first (see
+/// [`match_case`]). Returns the outputs written.
 pub fn sync_assets(
     services: &ProjectServices,
     outputs: &ProjectOutputs,
+    bytes: &[Vec<u8>],
     listing: &Listing,
 ) -> Result<Vec<String>, String> {
     let mut written = Vec::new();
-    for (input, output) in &outputs.assets {
-        let bytes = std::fs::read(input).map_err(|e| format!("could not read {input}: {e}"))?;
+    for ((_, output), bytes) in outputs.assets.iter().zip(bytes) {
         match_case(services, output, listing).map_err(|e| format!("could not rename to {output}: {e}"))?;
-        if write_if_changed(Path::new(output), &bytes).map_err(|e| format!("could not write {output}: {e}"))? {
+        if write_if_changed(Path::new(output), bytes).map_err(|e| format!("could not write {output}: {e}"))? {
             written.push(output.clone());
         }
     }
@@ -323,6 +328,9 @@ pub fn list(services: &ProjectServices, roots: &[String]) -> Listing {
     listing
 }
 
+/// rbxts-rs: a deliberate deviation from roblox-ts, which writes into the existing file and keeps its old name, so
+/// after a case-only rename of a source the Rojo instance keeps the old spelling (a roblox-ts bug).
+///
 /// When the listing has `path` spelled differently (only in case), renames the differing components below the
 /// output root on disk to `path`'s spelling, from the root down, so a build into a used directory names its outputs
 /// as a build into an empty one does. Nothing above the output root is touched.

@@ -394,6 +394,33 @@
 					}
 				}
 			]
+		},
+		{
+			"name": "K7: an asset beside a source, both emitting to one output (nothing written)",
+			"expect": "error",
+			"do": [
+				{
+					"write": {
+						"file": "src/shared/d.luau",
+						"text": "return 1\n"
+					}
+				},
+				{
+					"patch": {
+						"file": "src/shared/c.ts",
+						"find": "export const cValue = 2;",
+						"replace": "export const cValue = 7;"
+					}
+				}
+			]
+		},
+		{
+			"name": "K7: the asset removed",
+			"do": [
+				{
+					"delete": "src/shared/d.luau"
+				}
+			]
 		}
 	]
 }

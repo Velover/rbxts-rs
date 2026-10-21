@@ -485,7 +485,10 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
                 .problems
                 .extend(tree_diff(&after, &before).into_iter().map(|p| format!("a failing build wrote: {p}")));
             let watch_errors = error_texts(&report, &work);
-            let clean_errors = error_texts(&clean_report, &clean_root);
+            // a clean build in the copy itself names its moved outDir where the watcher names `out`
+            let moved_out = clean.join("out").to_string_lossy().replace('\\', "/").to_lowercase();
+            let clean_errors: Vec<String> =
+                error_texts(&clean_report, &clean_root).iter().map(|e| e.replace(&moved_out, "/out")).collect();
             if watch_errors != clean_errors {
                 result.problems.push(format!("diagnostics differ: watch {watch_errors:?} / clean {clean_errors:?}"));
             }

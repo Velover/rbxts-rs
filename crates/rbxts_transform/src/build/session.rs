@@ -221,6 +221,26 @@ impl<'p> BuildSession<'p> {
         out
     }
 
+    /// The bare module specifiers the last loaded program could not resolve (packages not installed yet), for a
+    /// watcher to watch where they would appear.
+    pub fn unresolved_packages(&self) -> Vec<String> {
+        let Some(last) = &self.last else { return Vec::new() };
+        let mut names: Vec<String> = last
+            .project
+            .program
+            .get_resolved_modules()
+            .values()
+            .flat_map(|cache| cache.iter())
+            .filter(|(key, resolved)| {
+                !resolved.is_resolved() && !key.name.starts_with('.') && !key.name.starts_with('/')
+            })
+            .map(|(key, _)| key.name.to_owned())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
     /// The directories plugins asked the last committed build to watch (`FinishCx::watch_dir`).
     pub fn plugin_watch_dirs(&self) -> Vec<String> {
         self.committed.as_ref().map_or_else(Vec::new, |c| c.watch_dirs.clone())
@@ -505,6 +525,15 @@ impl<'p> BuildSession<'p> {
 
         let files = project.project_files();
         report.project_files = files.len();
+        // the output set and its errors before anything is compiled or written, as roblox-ts's getProjectOutputs
+        // runs before compileFiles: two inputs emitting to one output, or an output root holding sources, write nothing
+        let mut project_outputs = match self.project_outputs(&loaded, &files) {
+            Ok(outputs) => outputs,
+            Err(message) => {
+                report.fatal.push(message);
+                return (report, summary, committed, Some(loaded));
+            }
+        };
         let to_transform: Vec<P<SourceFile>> = if all {
             files.clone()
         } else {
@@ -836,9 +865,22 @@ impl<'p> BuildSession<'p> {
         // 8. commit
         let start = Instant::now();
         let success = !report.has_errors() && finished;
+        // the assets' bytes are read before the first write, so a vanished asset fails the build with nothing written
+        let asset_bytes = if success && !self.options.no_write {
+            match outputs::read_assets(&project_outputs) {
+                Ok(bytes) => bytes,
+                Err(message) => {
+                    report.fatal.push(message);
+                    return (report, summary, committed, Some(loaded));
+                }
+            }
+        } else {
+            Vec::new()
+        };
         if !self.options.no_write {
             for outcome in &mut report.files {
                 let Some(source) = &outcome.luau else { continue };
+                // rbxts-rs: a case-only rename renames the output too (roblox-ts keeps the old name: its bug)
                 if let Err(e) = outputs::match_case(services, &outcome.out_path, &listing) {
                     report.fatal.push(format!("could not rename to {}: {e}", outcome.out_path));
                     continue;
@@ -879,9 +921,17 @@ impl<'p> BuildSession<'p> {
                     };
                     (path.as_str(), state)
                 });
-                if let Err(message) =
-                    self.commit_rest(&mut report, &mut summary, &loaded, &files, &queue, &stale, &listing, disk)
-                {
+                if let Err(message) = self.commit_rest(
+                    &mut report,
+                    &mut summary,
+                    &loaded,
+                    &mut project_outputs,
+                    &asset_bytes,
+                    &queue,
+                    &stale,
+                    &listing,
+                    disk,
+                ) {
                     report.fatal.push(message);
                 }
             }
@@ -964,12 +1014,51 @@ impl<'p> BuildSession<'p> {
         report: &mut CompileReport,
         summary: &mut BuildSummary,
         loaded: &Loaded,
-        files: &[P<SourceFile>],
+        outputs: &mut outputs::ProjectOutputs,
+        asset_bytes: &[Vec<u8>],
         queue: &CommitQueue,
         stale: &[String],
         listing: &outputs::Listing,
         disk: Option<(&str, DiskState)>,
     ) -> Result<(), String> {
+        let services = &loaded.services;
+        // this build's artifacts, state files and incremental state are kept too
+        for path in queue
+            .artifacts
+            .iter()
+            .map(|(_, p, _)| p.as_str())
+            .chain(queue.state_files.iter().map(|(_, p, _)| p.as_str()))
+            .chain(disk.as_ref().map(|(path, _)| *path))
+        {
+            outputs.keep.insert(outputs::path_key(services, path));
+        }
+        // 1. assets (the Luau is written)
+        summary.written.extend(outputs::sync_assets(services, outputs, asset_bytes, listing)?);
+        // 2. artifacts
+        let written = commit_artifacts(queue)?;
+        summary.written.extend(written.iter().cloned());
+        report.artifacts_written.extend(written);
+        // 3. stale outputs, stale artifacts, removals
+        let deleted = outputs::clean(services, outputs, listing)?;
+        summary.deleted.extend(deleted);
+        let deleted = commit_removals(queue, stale)?;
+        summary.deleted.extend(deleted.iter().cloned());
+        report.artifacts_deleted.extend(deleted);
+        // 4. plugin state files, then the incremental state
+        let written = commit_state_files(queue)?;
+        summary.written.extend(written.iter().cloned());
+        report.artifacts_written.extend(written);
+        if let Some((path, state)) = disk
+            && state.write(path).map_err(|e| format!("could not write the incremental state {path}: {e}"))?
+        {
+            summary.written.push(path.to_owned());
+        }
+        Ok(())
+    }
+
+    /// roblox-ts's `getProjectOutputs` for this build: the output roots, the keep set (without this build's plugin
+    /// files) and the assets, or the error that stops the build before anything is written.
+    fn project_outputs(&self, loaded: &Loaded, files: &[P<SourceFile>]) -> Result<outputs::ProjectOutputs, String> {
         let services = &loaded.services;
         let out_dir_override = self.options.out_dir_override.as_deref();
         let emitted: Vec<(String, String, Vec<String>)> = files
@@ -985,12 +1074,9 @@ impl<'p> BuildSession<'p> {
                 (name.to_owned(), output_path(services, name, out_dir_override), declarations)
             })
             .collect();
-        let mut extra_keep: Vec<String> = queue.artifacts.iter().map(|(_, p, _)| p.clone()).collect();
-        extra_keep.extend(queue.state_files.iter().map(|(_, p, _)| p.clone()));
-        extra_keep.extend(disk.as_ref().map(|(path, _)| (*path).to_owned()));
         let options = loaded.project.program.options();
         let ts_build_info = rbxts_project::setup::ts5_build_info_path(&options);
-        let outputs = outputs::get_project_outputs(&OutputInputs {
+        outputs::get_project_outputs(&OutputInputs {
             services,
             options: &options,
             emitted: &emitted,
@@ -999,30 +1085,7 @@ impl<'p> BuildSession<'p> {
             out_dir_override,
             config_paths: &loaded.config_paths,
             ts_build_info: ts_build_info.as_deref(),
-            extra_keep: &extra_keep,
-        })?;
-        // 1. assets (the Luau is written)
-        summary.written.extend(outputs::sync_assets(services, &outputs, listing)?);
-        // 2. artifacts
-        let written = commit_artifacts(queue)?;
-        summary.written.extend(written.iter().cloned());
-        report.artifacts_written.extend(written);
-        // 3. stale outputs, stale artifacts, removals
-        let deleted = outputs::clean(services, &outputs, listing)?;
-        summary.deleted.extend(deleted);
-        let deleted = commit_removals(queue, stale)?;
-        summary.deleted.extend(deleted.iter().cloned());
-        report.artifacts_deleted.extend(deleted);
-        // 4. plugin state files, then the incremental state
-        let written = commit_state_files(queue)?;
-        summary.written.extend(written.iter().cloned());
-        report.artifacts_written.extend(written);
-        if let Some((path, state)) = disk
-            && state.write(path).map_err(|e| format!("could not write the incremental state {path}: {e}"))?
-        {
-            summary.written.push(path.to_owned());
-        }
-        Ok(())
+        })
     }
 
     /// Where the incremental state goes: beside roblox-ts's build info for an `incremental` or `composite`
