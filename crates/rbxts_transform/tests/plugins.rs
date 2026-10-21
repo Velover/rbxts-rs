@@ -217,7 +217,7 @@ fn probe_and_stamp_match_the_expected_luau() {
          {\"file\":\"src/shared/classes.ts\",\"claims\":2},{\"file\":\"src/shared/decorators.ts\",\"claims\":2},\
          {\"file\":\"src/shared/elide.ts\",\"claims\":3},{\"file\":\"src/shared/elideAll.ts\",\"claims\":1},\
          {\"file\":\"src/shared/elideKept.ts\",\"claims\":1},{\"file\":\"src/shared/facts.ts\",\"claims\":1},\
-         {\"file\":\"src/shared/fallbacks.ts\",\"claims\":2},{\"file\":\"src/shared/receivers.ts\",\"claims\":3},\
+         {\"file\":\"src/shared/fallbacks.ts\",\"claims\":2},{\"file\":\"src/shared/inorder.ts\",\"claims\":5},{\"file\":\"src/shared/receivers.ts\",\"claims\":3},\
          {\"file\":\"src/shared/reuse.ts\",\"claims\":1},{\"file\":\"src/shared/selfcalls.ts\",\"claims\":5},\
          {\"file\":\"src/shared/shadow.ts\",\"claims\":3}]\n"
     );
@@ -342,11 +342,12 @@ fn declining_after_lowering_is_an_error_and_a_call_is_offered_once() {
     let Some(project) = Project::new("decline") else { return };
     project.write(
         "src/shared/declines.ts",
-        "export const a = probeDeclineAfter(1);\nexport const b = probeHoistDecline();\nexport const c = probePrereqDecline();\n\
+        "import { helper } from \"./macros\";\nexport const a = probeDeclineAfter(1);\nexport const b = probeHoistDecline();\nexport const c = probePrereqDecline();\n\
          export const d = probeArgDecline(probeHoist(sideEffect()));\nexport const e = void probeVoidHoist;\n\
          export const f = probeArgDecline(probeSelf(1));\n\
          export const g = capMap[probePrereq(tostring(sideEffect()))].cr(1);\n\
-         export const h = void void probeVoidSelf;\n",
+         export const h = void void probeVoidSelf;\nexport const i = probeLateDecline();\n\
+         export const j = probeMarkDecline(helper);\n",
     );
     let report = project.build(&["stamp", "probe"], |_| {});
     let all = diagnostics(&report);
@@ -370,10 +371,48 @@ fn declining_after_lowering_is_an_error_and_a_call_is_offered_once() {
             // the inner `void probeVoidSelf` hook ran inside the outer one: its frame does not reset the outer's
             "error declines.ts: rbxts-rs internal error: plugin `probe` declined an expression after lowering it with \
              compile_expr",
+            "error declines.ts: rbxts-rs internal error: plugin `probe` declined a call after calling late_string",
+            "error declines.ts: rbxts-rs internal error: plugin `probe` declined a call after calling mark_import_used",
         ]
     );
     // the hook that compiled the call itself and declined ran once: the call is not offered again
     assert_eq!(all.iter().filter(|d| d.ends_with("probe: declineafter was offered")).count(), 1, "{all:?}");
+    assert!(!project.out_exists());
+}
+
+#[test]
+fn an_erroneous_decline_ends_the_offer() {
+    let Some(project) = Project::new("decline-ends") else { return };
+    project.write("src/shared/declines.ts", "export const a = probeDeclineAfter(1);\n");
+    let report = project.build(&["stamp", "probe", "probe-b"], |_| {});
+    let all = diagnostics(&report);
+    // probe declined after lowering the call: an error, and probe-b is not asked (it would warn too)
+    assert_eq!(all.iter().filter(|d| d.ends_with("probe: declineafter was offered")).count(), 1, "{all:?}");
+    assert_eq!(
+        errors(&report),
+        vec![
+            "error declines.ts: rbxts-rs internal error: plugin `probe` declined a call after lowering it with compile_expr"
+        ]
+    );
+}
+
+#[test]
+fn claims_all_never_changes_the_output() {
+    let Some(project) = Project::new("claims-all") else { return };
+    // without the switch: probe-touched is only asked where probe declined, and changes nothing
+    let report = project.build(&["stamp", "probe", "probe-touched"], |_| {});
+    assert_eq!(errors(&report), Vec::<String>::new());
+    assert_expected(&report);
+    // with it: probe-touched is asked about calls probe took, and its hook changes compiler state before declining,
+    // so the build fails instead of writing different output
+    std::fs::remove_dir_all(project.root.join("out")).unwrap();
+    let report = project.build(&["stamp", "probe", "probe-touched"], |o| o.claims_all = true);
+    let touched: Vec<String> = errors(&report).into_iter().filter(|e| e.contains("changed compiler state")).collect();
+    assert!(!touched.is_empty(), "{:?}", errors(&report));
+    assert!(touched.iter().all(|e| e.ends_with(
+        "plugin `probe-touched` changed compiler state when asked about a call plugin `probe` claimed \
+         (RBXTS_PLUGIN_CLAIMS=all fails such a build rather than change its output)"
+    )));
     assert!(!project.out_exists());
 }
 

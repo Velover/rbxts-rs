@@ -10,6 +10,7 @@ use tsrs_core::P;
 
 use super::HookKind;
 use super::backend::{CallContext, CallShape, access_call_kind, run_classify, run_hook, run_hook_framed};
+// (run_hook: the broadcast hooks; run_hook_framed: the claim hooks, whose frame decides a decline)
 use super::file_state::{EffectMark, HookFrame, ImportOverrides, PluginImport, RootRange, declared_locals};
 use super::host::PluginHost;
 use crate::classes::prereqs::{Prereqs, temp_id};
@@ -146,6 +147,23 @@ fn offer_call(
     context: &mut CallContext,
     candidates: &[(usize, Tag)],
 ) -> Option<Expr> {
+    let site = context.site;
+    // the node is offered once: a dispatch of it while this offer runs lowers it without asking again
+    if !state.plugin_file.in_offer.insert(site.node) {
+        return None;
+    }
+    let value = offer_call_inner(state, host, prereqs, context, candidates);
+    state.plugin_file.in_offer.remove(&site.node);
+    value
+}
+
+fn offer_call_inner(
+    state: &mut TransformState<'_>,
+    host: &PluginHost,
+    prereqs: &mut Prereqs,
+    context: &mut CallContext,
+    candidates: &[(usize, Tag)],
+) -> Option<Expr> {
     let start = state.plugin_file.effect_mark(prereqs.statements.len());
     let site = context.site;
     for (position, &(plugin, tag)) in candidates.iter().enumerate() {
@@ -160,7 +178,12 @@ fn offer_call(
                 }
                 return Some(value);
             }
-            Ok(Claim::Decline) => check_decline(state, host, prereqs, &mut *context, plugin, start, frame),
+            Ok(Claim::Decline) => {
+                if check_decline(state, host, prereqs, &mut *context, plugin, start, frame) {
+                    // already an error: no other plugin, and not roblox-ts, gets the node (nothing runs twice)
+                    return Some(create::nil());
+                }
+            }
             Err(()) => return Some(create::nil()),
         }
     }
@@ -184,7 +207,8 @@ fn decline_problem(
 }
 
 /// A declined call must leave nothing behind (its own effects or those of hooks nested in it, through
-/// `compile_expr` of an argument) but a receiver the next plugin or roblox-ts reuses.
+/// `compile_expr` of an argument) but a receiver the next plugin or roblox-ts reuses. Reports and returns `true`
+/// when it did.
 fn check_decline(
     state: &mut TransformState<'_>,
     host: &PluginHost,
@@ -193,21 +217,26 @@ fn check_decline(
     plugin: usize,
     start: EffectMark,
     frame: HookFrame,
-) {
+) -> bool {
     // a receiver compiled first into the offer's scope (compile_receiver) stays for the next plugin, or roblox-ts
     let (allowed, allowed_nested) = match context.base_marks {
         Some((base_start, base_end)) if base_start == start => (base_end, frame.receiver_nested_hooks),
         _ => (start, 0),
     };
     let now = state.plugin_file.effect_mark(prereqs.statements.len());
-    if let Some(problem) = decline_problem(&frame, &now, &allowed, allowed_nested) {
+    let problem = decline_problem(&frame, &now, &allowed, allowed_nested);
+    if let Some(problem) = problem {
         let message = format!("plugin `{}` declined a call after {problem}", host.name(plugin));
         state.internal_error(context.site.node, &message);
     }
+    problem.is_some()
 }
 
 /// `RBXTS_PLUGIN_CLAIMS=all`: asks the remaining candidates too, in a scratch scope, and reports each that also
-/// takes the call.
+/// takes the call. A debug switch must not change the output: a candidate whose hook changed any compiler state
+/// before declining (it compiled, placed, imported, named or reported anything) fails the build instead, so a
+/// build with the switch either matches the build without it or writes nothing. (The hook's own instance state is
+/// out of reach: hooks should decide from the AST and types before doing anything, as the decline rule asks.)
 fn report_double_claims(
     state: &mut TransformState<'_>,
     host: &PluginHost,
@@ -222,16 +251,30 @@ fn report_double_claims(
         }
         let mut scratch = Prereqs::new();
         let mut copy = context.clone();
-        let result =
-            run_hook(state, Some(&mut scratch), Some(&mut copy), plugin, HookKind::Call, site.node, |instance, cx| {
-                instance.call(cx, &site, tag)
-            });
-        if let Ok(Claim::Take(_)) = result {
-            let message = format!(
+        let (result, frame) = run_hook_framed(
+            state,
+            Some(&mut scratch),
+            Some(&mut copy),
+            plugin,
+            HookKind::Call,
+            site.node,
+            |instance, cx| instance.call(cx, &site, tag),
+        );
+        let message = match result {
+            Ok(Claim::Take(_)) => Some(format!(
                 "plugins `{}` and `{}` both claimed this call (RBXTS_PLUGIN_CLAIMS=all)",
                 host.name(winner),
                 host.name(plugin)
-            );
+            )),
+            _ if frame.touched || frame.nested_hooks > 0 => Some(format!(
+                "plugin `{}` changed compiler state when asked about a call plugin `{}` claimed \
+                 (RBXTS_PLUGIN_CLAIMS=all fails such a build rather than change its output)",
+                host.name(plugin),
+                host.name(winner)
+            )),
+            _ => None,
+        };
+        if let Some(message) = message {
             state.internal_error(site.node, &message);
         }
     }
@@ -387,6 +430,9 @@ fn claim_chain_start_slow(
         return None;
     }
     let item = &chain[k];
+    if state.plugin_file.in_offer.contains(&item.node) {
+        return None;
+    }
     if state.plugin_file.offered.contains(&item.node) {
         // `compile_expr` of the claimed call itself: the item lowering skips it
         return None;
@@ -407,6 +453,7 @@ fn claim_chain_start_slow(
         state.plugin_file.offered.remove(&item.node);
         return Some((k + 1, value));
     }
+    // (an erroneous decline returned nil above, so the node is not lowered or offered again)
     // declined: a `compile_expr` of the call in a hook consumed the mark, which keeps it from being offered again
     state.plugin_file.offered.insert(item.node);
     if context.base_captured {
@@ -445,7 +492,7 @@ fn claim_chain_call_slow(
     {
         return Err(base);
     }
-    if state.plugin_file.offered.remove(&item.node) {
+    if state.plugin_file.in_offer.contains(&item.node) || state.plugin_file.offered.remove(&item.node) {
         return Err(base);
     }
     let Some((mut context, method, unsupported)) = chain_site(state, host, item) else { return Err(base) };
@@ -475,7 +522,7 @@ pub fn claim_new(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<
 #[inline(never)]
 fn claim_new_slow(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Option<Expr> {
     let host = state.plugins?;
-    if !host.any_calls || state.plugin_file.offered.remove(&node) {
+    if !host.any_calls || state.plugin_file.in_offer.contains(&node) || state.plugin_file.offered.remove(&node) {
         return None;
     }
     let callee = node.expression()?;
@@ -509,7 +556,7 @@ pub fn claim_decorator(state: &mut TransformState<'_>, prereqs: &mut Prereqs, de
 #[inline(never)]
 fn claim_decorator_slow(state: &mut TransformState<'_>, prereqs: &mut Prereqs, decorator: P<Node>) -> Option<Expr> {
     let host = state.plugins?;
-    if !host.any_calls {
+    if !host.any_calls || state.plugin_file.in_offer.contains(&decorator) {
         return None;
     }
     let expression = decorator.expression()?;
@@ -561,9 +608,21 @@ pub fn claim_expression(state: &mut TransformState<'_>, prereqs: &mut Prereqs, n
 fn claim_expression_slow(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Option<Expr> {
     let host = state.plugins?;
     let list = host.expressions.get(&node.kind())?;
-    if state.plugin_file.offered_expressions.remove(&node) {
+    if !state.plugin_file.in_offer.insert(node) {
         return None;
     }
+    let value = claim_expression_offer(state, host, prereqs, node, list);
+    state.plugin_file.in_offer.remove(&node);
+    value
+}
+
+fn claim_expression_offer(
+    state: &mut TransformState<'_>,
+    host: &PluginHost,
+    prereqs: &mut Prereqs,
+    node: P<Node>,
+    list: &[(usize, Tag)],
+) -> Option<Expr> {
     for &(plugin, tag) in list {
         if !state.plugin_file.begun[plugin] {
             continue;
@@ -580,6 +639,8 @@ fn claim_expression_slow(state: &mut TransformState<'_>, prereqs: &mut Prereqs, 
                 if let Some(what) = decline_problem(&frame, &now, &start, 0) {
                     let message = format!("plugin `{}` declined an expression after {what}", host.name(plugin));
                     state.internal_error(node, &message);
+                    // already an error: no other plugin, and not roblox-ts, gets the node
+                    return Some(create::nil());
                 }
             }
             Err(()) => return Some(create::nil()),
@@ -599,6 +660,20 @@ pub fn claim_statement(state: &mut TransformState<'_>, node: P<Node>) -> Option<
 fn claim_statement_slow(state: &mut TransformState<'_>, node: P<Node>) -> Option<Vec<Stmt>> {
     let host = state.plugins?;
     let list = host.statements.get(&node.kind())?;
+    if !state.plugin_file.in_offer.insert(node) {
+        return None;
+    }
+    let value = claim_statement_offer(state, host, node, list);
+    state.plugin_file.in_offer.remove(&node);
+    value
+}
+
+fn claim_statement_offer(
+    state: &mut TransformState<'_>,
+    host: &PluginHost,
+    node: P<Node>,
+    list: &[(usize, Tag)],
+) -> Option<Vec<Stmt>> {
     for &(plugin, tag) in list {
         if !state.plugin_file.begun[plugin] {
             continue;
@@ -620,6 +695,7 @@ fn claim_statement_slow(state: &mut TransformState<'_>, node: P<Node>) -> Option
                 if let Some(what) = decline_problem(&frame, &now, &start, 0) {
                     let message = format!("plugin `{}` declined a statement after {what}", host.name(plugin));
                     state.internal_error(node, &message);
+                    return Some(Vec::new());
                 }
             }
             Err(()) => return Some(Vec::new()),
@@ -657,6 +733,9 @@ fn class_statements_slow(state: &mut TransformState<'_>, node: P<Node>, luau_nam
     if !host.any_classes {
         return Vec::new();
     }
+    if !state.plugin_file.in_offer.insert(node) {
+        return Vec::new();
+    }
     let decorated = is_decorated(node);
     let site = ClassSite { node, luau_name: luau_name.clone().into(), decorated };
     let mut out = Vec::new();
@@ -679,6 +758,7 @@ fn class_statements_slow(state: &mut TransformState<'_>, node: P<Node>, luau_nam
             out.extend(statements);
         }
     }
+    state.plugin_file.in_offer.remove(&node);
     out
 }
 

@@ -27,14 +27,25 @@
 //! `compile_expr(call.node)` inside the call's own hook lowers the call as roblox-ts does (its macros included),
 //! without asking the plugins again, and on the base already compiled, so a receiver is never evaluated twice.
 //!
+//! **Offered once.** A node is marked while its offer runs: a hook compiling its own node (`compile_expr`,
+//! `compile_in_order`, an `Arg::Original` slot) or an ancestor of it lowers it as roblox-ts does, without asking
+//! the plugins again (a call through `compile_claimed_call`, on the base already compiled).
+//!
 //! **Declining.** Offer state lives in a stack of hook frames ([`file_state::HookFrame`]), one per running hook,
 //! so a hook nested in another (through its `compile_*` calls) never resets the outer one's. A claim hook cannot
 //! decline its node after it lowered it (`compile_expr` of the node, `compile_call`), compiled the receiver inside
 //! a capture, or left anything behind in the scope it writes into or the file: prereqs, a hoist, a root insertion,
-//! a header statement or a plugin import, its own or a nested hook's. Nor after any hook ran inside it (a nested
-//! node offered or claimed, a class hook): that hook would run again. Only what a `compile_receiver` into the
-//! offer's own scope left (statements and nested hooks) is kept, for the next plugin or roblox-ts to reuse. A
-//! decline that breaks the rule is an internal error, and the node is not offered again.
+//! a header statement, a plugin import, a late string, or an import kept alive (`mark_import_used`), its own or a
+//! nested hook's (`request_import_elision` is harmless and allowed). Nor after any hook ran inside it (a nested node
+//! offered or claimed, a class hook): that hook would run again. The one exception is a `compile_receiver` into
+//! the offer's own scope that is the first thing to grow it: what it left (statements and the hooks it ran) is
+//! kept for the next plugin, or roblox-ts, to reuse. A decline that breaks the rule is an internal error, and the
+//! offer ends there: no other plugin, and not roblox-ts, gets the node. The rule makes plugins interact: plugin B's
+//! interest in a node nested in A's (even one B declines cleanly) makes A's compile-then-decline an error, so a
+//! plugin must decide from the AST and types before compiling anything.
+//!
+//! `RBXTS_PLUGIN_CLAIMS=all` asks the other matching plugins too, in a scratch scope; a build where one of them
+//! changed compiler state before declining fails rather than change its output.
 //!
 //! **Names.** Temporary identifiers plugins ask for (`temp_id`, `hoist`, `hoist_spillable`, `push_to_var`, the
 //! `import_named` fallback) are named so that no identifier of the file, no name `is_usable_local_name` approved,

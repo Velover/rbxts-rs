@@ -51,6 +51,9 @@ pub struct EffectMark {
     pub root_inserts: usize,
     pub header: usize,
     pub imports: usize,
+    /// Late keys used and imports kept alive (`late_string`, `mark_import_used`).
+    pub late_keys: usize,
+    pub forced_imports: usize,
 }
 
 impl EffectMark {
@@ -67,6 +70,10 @@ impl EffectMark {
             Some("leaving header statements behind (its own or a nested hook's)")
         } else if self.imports > earlier.imports {
             Some("leaving a plugin import behind (its own or a nested hook's)")
+        } else if self.late_keys > earlier.late_keys {
+            Some("using a late string (its own or a nested hook's)")
+        } else if self.forced_imports > earlier.forced_imports {
+            Some("keeping an import alive (mark_import_used or a reused import, its own or a nested hook's)")
         } else {
             None
         }
@@ -88,6 +95,9 @@ pub struct HookFrame {
     /// Of those, the ones the lazy `compile_receiver` ran: the receiver is kept for reuse, so they do not run
     /// again.
     pub receiver_nested_hooks: u32,
+    /// The hook called a primitive that changes compiler state (any lowering, placement, import, late string,
+    /// temporary, name approval or diagnostic), not only a query. `RBXTS_PLUGIN_CLAIMS=all` relies on it.
+    pub touched: bool,
 }
 
 /// The per-file plugin state.
@@ -122,8 +132,9 @@ pub struct PluginFileState {
     pub import_overrides: Option<ImportOverrides>,
     /// Calls already offered to the plugins (a chain call asked before its callee was compiled).
     pub offered: FxHashSet<P<Node>>,
-    /// Expressions an `expression` hook compiled itself (`compile_expr` of its own node): not offered again.
-    pub offered_expressions: FxHashSet<P<Node>>,
+    /// Nodes being offered right now: a dispatch of one of them while its offer runs (a hook compiling its own
+    /// node, or an ancestor of it) lowers it as roblox-ts does, without asking the plugins again.
+    pub in_offer: FxHashSet<P<Node>>,
     /// `local` names declared at the top level of the main chunk so far (statements done, root insertions,
     /// imports, header).
     pub main_chunk_locals: u32,
@@ -173,6 +184,8 @@ impl PluginFileState {
             root_inserts: self.root_inserts.len(),
             header: self.header.len(),
             imports: self.imports.len(),
+            late_keys: self.late_keys.len(),
+            forced_imports: self.forced_imports.len(),
         }
     }
 

@@ -33,7 +33,7 @@ use crate::nodes::transform_optional_chain::{ChainItem, transform_chain_item};
 use crate::shared::diagnostics::node_range;
 use crate::util::add_one_if_array_type::add_one_if_array_type;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
-use crate::util::ensure_transform_order::ensure_transform_order;
+use crate::util::ensure_transform_order::ensure_transform_order_with;
 use crate::util::evaluation::effects::{effects_commute, get_effects, get_effects_of_statements, join_effects};
 use crate::util::is_method::{is_method, is_method_from_type};
 use crate::util::types::{get_first_construct_symbol, get_first_defined_symbol};
@@ -247,6 +247,21 @@ impl HookBackend<'_, '_> {
         note_effect(self.state, what);
     }
 
+    /// A primitive that changes compiler state ran (see [`HookFrame::touched`]).
+    fn touch(&mut self) {
+        if let Some(frame) = self.state.plugin_file.frames.last_mut() {
+            frame.touched = true;
+        }
+    }
+
+    /// An expression hook compiling its own node lowers it: it cannot be declined any more. (A call hook's own
+    /// node goes through `compile_claimed_call`, which notes it.)
+    fn note_self_compile(&mut self, nodes: &[P<Node>]) {
+        if self.hook == HookKind::Expression && nodes.contains(&self.anchor) {
+            self.note_effect("lowering it with compile_expr");
+        }
+    }
+
     /// A temporary identifier no user local of the file can capture ([`PluginFileState::seam_hint`]).
     fn seam_temp(&mut self, hint: &str) -> LuauIdent {
         temp_id(self.state.plugin_file.seam_hint(self.state.source_file, hint))
@@ -254,6 +269,7 @@ impl HookBackend<'_, '_> {
 
     fn hoist_unchecked(&mut self, value: Expr, hint: &str) -> Expr {
         self.note_effect("calling hoist");
+        self.touch();
         let id = self.seam_temp(hint);
         self.state.plugin_file.main_chunk_locals += 1;
         self.state.plugin_file.root_inserts.push(create::local(id.clone(), Some(value)));
@@ -308,6 +324,7 @@ impl HookBackend<'_, '_> {
         &mut self,
         f: impl FnOnce(&mut TransformState<'_>, &mut Prereqs, Option<&mut CallContext>) -> Result<T, String>,
     ) -> Result<T, Aborted> {
+        self.touch();
         let before = self.state.diagnostics.diagnostics.len();
         self.host.enter(None, self.hook);
         let prereqs = match self.captures.last_mut() {
@@ -364,20 +381,32 @@ impl CxBackend for HookBackend<'_, '_> {
     // --- lowering ---
 
     fn compile_expr(&mut self, node: P<Node>) -> Result<Expr, Aborted> {
-        if self.call.as_deref().is_some_and(|context| context.site.node == node) {
-            return self.lower("compile_expr", |state, prereqs, context| {
-                compile_claimed_call(state, prereqs, context.expect("a call context"))
-            });
-        }
-        if self.hook == HookKind::Expression && node == self.anchor {
-            self.state.plugin_file.offered_expressions.insert(node);
-            self.note_effect("lowering it with compile_expr");
-        }
-        self.lower("compile_expr", |state, prereqs, _| Ok(transform_expression(state, prereqs, node)))
+        self.note_self_compile(&[node]);
+        self.lower("compile_expr", |state, prereqs, context| compile_node(state, prereqs, context, node))
     }
 
     fn compile_in_order(&mut self, nodes: &[P<Node>]) -> Result<Vec<Expr>, Aborted> {
-        self.lower("compile_in_order", |state, prereqs, _| Ok(ensure_transform_order(state, prereqs, nodes)))
+        self.note_self_compile(nodes);
+        self.lower("compile_in_order", |state, prereqs, mut context| {
+            let mut error = None;
+            let values =
+                ensure_transform_order_with(state, prereqs, nodes, &mut |state, prereqs, node| match compile_node(
+                    state,
+                    prereqs,
+                    context.as_deref_mut(),
+                    node,
+                ) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        error.get_or_insert(message);
+                        Expr::None
+                    }
+                });
+            match error {
+                Some(message) => Err(message),
+                None => Ok(values),
+            }
+        })
     }
 
     fn compile_receiver(&mut self, call: &CallSite) -> Result<Expr, Aborted> {
@@ -428,6 +457,7 @@ impl CxBackend for HookBackend<'_, '_> {
 
     fn prereq(&mut self, stmt: Stmt) {
         if !self.refused("prereq", Row::Lowering) {
+            self.touch();
             self.scope().push(stmt);
         }
     }
@@ -436,6 +466,7 @@ impl CxBackend for HookBackend<'_, '_> {
         if self.refused("push_to_var", Row::Lowering) {
             return create::nil();
         }
+        self.touch();
         // an empty hint is the one roblox-ts derives from the value, made capture-safe like any other
         let hint = if hint.is_empty() { value_to_id_str(&value) } else { hint.to_owned() };
         let hint = self.state.plugin_file.seam_hint(self.state.source_file, &hint);
@@ -445,6 +476,7 @@ impl CxBackend for HookBackend<'_, '_> {
     fn begin_capture(&mut self) {
         // a refused capture still opens a scope, so begin and end stay paired
         self.refused("capture", Row::Lowering);
+        self.touch();
         self.captures.push(Prereqs::new());
     }
 
@@ -455,6 +487,7 @@ impl CxBackend for HookBackend<'_, '_> {
     fn insert_before_root_statement(&mut self, stmts: Vec<Stmt>) {
         if !self.refused("insert_before_root_statement", Row::Lowering) {
             self.note_effect("calling insert_before_root_statement");
+            self.touch();
             self.state.plugin_file.main_chunk_locals += stmts.iter().map(declared_locals).sum::<u32>();
             self.state.plugin_file.root_inserts.extend(stmts);
         }
@@ -463,6 +496,7 @@ impl CxBackend for HookBackend<'_, '_> {
     fn header(&mut self, stmts: Vec<Stmt>) {
         if !self.refused("header", Row::FileLevel) {
             self.note_effect("calling header");
+            self.touch();
             self.state.plugin_file.main_chunk_locals += stmts.iter().map(declared_locals).sum::<u32>();
             self.state.plugin_file.header.extend(stmts);
         }
@@ -489,6 +523,7 @@ impl CxBackend for HookBackend<'_, '_> {
             return Err(Aborted);
         }
         self.note_effect("calling import_named");
+        self.touch();
         let anchor = self.anchor;
         let before = self.state.diagnostics.diagnostics.len();
         match dispatch::import_named(self.state, self.host, anchor, specifier, export) {
@@ -500,6 +535,8 @@ impl CxBackend for HookBackend<'_, '_> {
 
     fn mark_import_used(&mut self, alias_declaration: P<Node>) {
         if !self.refused("mark_import_used", Row::FileLevel) {
+            self.note_effect("calling mark_import_used");
+            self.touch();
             self.state.plugin_file.forced_imports.insert(alias_declaration);
         }
     }
@@ -518,6 +555,8 @@ impl CxBackend for HookBackend<'_, '_> {
             ));
             return;
         }
+        // harmless on a decline: an elision request is only honoured when nothing compiled uses the import
+        self.touch();
         let requests = &mut self.state.plugin_file.elision_requests;
         if !requests.contains(&alias_declaration) {
             requests.push(alias_declaration);
@@ -526,6 +565,7 @@ impl CxBackend for HookBackend<'_, '_> {
 
     fn temp_id(&mut self, hint: &str) -> LuauIdent {
         self.refused("temp_id", Row::FileLevel);
+        self.touch();
         self.seam_temp(hint)
     }
 
@@ -548,6 +588,8 @@ impl CxBackend for HookBackend<'_, '_> {
         if self.refused("late_string", Row::FileLevel) {
             return create::nil();
         }
+        self.note_effect("calling late_string");
+        self.touch();
         let key = super::lifecycle::late_key(self.name(), key);
         self.state.plugin_file.use_late_key(self.plugin, key.clone());
         create::late_string(key)
@@ -555,6 +597,7 @@ impl CxBackend for HookBackend<'_, '_> {
 
     fn comment(&mut self, text: &str) {
         if !self.refused("comment", Row::Lowering) {
+            self.touch();
             self.scope().push(create::comment(text));
         }
     }
@@ -597,6 +640,7 @@ impl CxBackend for HookBackend<'_, '_> {
             self.state.internal_error(diagnostic.node, &message);
             return;
         }
+        self.touch();
         self.state.add_diagnostic(to_diagnostic(&diagnostic));
     }
 }
@@ -648,6 +692,20 @@ fn compile_receiver(
         }
     }
     Ok(value)
+}
+
+/// A node a hook compiles: the claimed call itself through [`compile_claimed_call`], anything else as roblox-ts
+/// lowers it (a node being offered right now is lowered without asking the plugins again).
+fn compile_node(
+    state: &mut TransformState<'_>,
+    prereqs: &mut Prereqs,
+    context: Option<&mut CallContext>,
+    node: P<Node>,
+) -> Result<Expr, String> {
+    match context {
+        Some(context) if context.site.node == node => compile_claimed_call(state, prereqs, context),
+        _ => Ok(transform_expression(state, prereqs, node)),
+    }
 }
 
 /// `compile_expr` of the claimed call itself: the call lowered as roblox-ts lowers it, without asking the plugins
@@ -723,16 +781,23 @@ fn original_macro_name(state: &mut TransformState<'_>, context: &CallContext) ->
     }
 }
 
+/// Compiled argument slots: the values, the slot nodes (`None` for Luau and `nil` slots) and the prereqs.
+type Slots = (Vec<Expr>, Vec<Option<P<Node>>>, Prereqs);
+
 /// The argument slots, compiled in evaluation order: each `Original` node with its own prereqs, then the values
 /// bound to locals where a later slot's prereqs could change them (`ensureTransformOrder` over every slot, ready
 /// Luau values included). Returns the values, the slot nodes (`None` for Luau and `nil` slots) and the prereqs.
-fn compile_slots(state: &mut TransformState<'_>, args: Vec<Arg>) -> (Vec<Expr>, Vec<Option<P<Node>>>, Prereqs) {
+fn compile_slots(
+    state: &mut TransformState<'_>,
+    context: &mut CallContext,
+    args: Vec<Arg>,
+) -> Result<Slots, String> {
     let mut infos: Vec<(Expr, Vec<Stmt>, Option<P<Node>>)> = Vec::with_capacity(args.len());
     for arg in args {
         match arg {
             Arg::Original(node) => {
                 let mut node_prereqs = Prereqs::new();
-                let value = transform_expression(state, &mut node_prereqs, node);
+                let value = compile_node(state, &mut node_prereqs, Some(&mut *context), node)?;
                 infos.push((value, node_prereqs.statements, Some(node)));
             }
             Arg::Luau(value) => infos.push((value, Vec::new(), None)),
@@ -758,7 +823,7 @@ fn compile_slots(state: &mut TransformState<'_>, args: Vec<Arg>) -> (Vec<Expr>, 
         values.push(if capture { prereqs.push_to_var(expression, "exp") } else { expression });
         nodes.push(node);
     }
-    (values, nodes, prereqs)
+    Ok((values, nodes, prereqs))
 }
 
 /// `fixVoidArgumentsForRobloxFunctions` on the `Original` slots.
@@ -803,19 +868,19 @@ fn lower_call(
             let mut base = ensure_base(state, prereqs, context);
             match context.shape {
                 CallShape::Super => {
-                    let (values, _, arg_prereqs) = compile_slots(state, args);
+                    let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
                     prereqs.push_list(arg_prereqs.statements);
                     let mut with_self = vec![rbxts_luau::globals::self_()];
                     with_self.extend(values);
                     Ok(create::call(create::property(convert_to_indexable_expression(base), "constructor"), with_self))
                 }
                 CallShape::New => {
-                    let (values, _, arg_prereqs) = compile_slots(state, args);
+                    let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
                     prereqs.push_list(arg_prereqs.statements);
                     Ok(create::call(create::property(base, "new"), values))
                 }
                 CallShape::Call | CallShape::Decorator { .. } => {
-                    let (mut values, nodes, arg_prereqs) = compile_slots(state, args);
+                    let (mut values, nodes, arg_prereqs) = compile_slots(state, context, args)?;
                     let callee_node = context.site.callee;
                     fix_void_slots(state, context, &mut values, &nodes);
                     if !effects_commute(&get_effects(&base), &get_effects_of_statements(&arg_prereqs.statements)) {
@@ -834,7 +899,7 @@ fn lower_call(
                     })
                 }
                 CallShape::Property { access, name } => {
-                    let (mut values, nodes, arg_prereqs) = compile_slots(state, args);
+                    let (mut values, nodes, arg_prereqs) = compile_slots(state, context, args)?;
                     fix_void_slots(state, context, &mut values, &nodes);
                     let method = is_method(state, access);
                     let call = create_ordered_property_call(
@@ -857,7 +922,7 @@ fn lower_call(
                         base = prereqs.push_to_var(base, "exp");
                     }
                     prereqs.push_list(key_prereqs.statements);
-                    let (mut values, nodes, arg_prereqs) = compile_slots(state, args);
+                    let (mut values, nodes, arg_prereqs) = compile_slots(state, context, args)?;
                     fix_void_slots(state, context, &mut values, &nodes);
                     let receiver_type = state.get_type(access.as_element_access_expression().expression);
                     let receiver_type = state.checker.get_non_optional_type(receiver_type);
@@ -878,7 +943,7 @@ fn lower_call(
             }
         }
         Callee::Function(function) => {
-            let (values, _, arg_prereqs) = compile_slots(state, args);
+            let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
             let function =
                 if effects_commute(&get_effects(&function), &get_effects_of_statements(&arg_prereqs.statements)) {
                     function
@@ -895,7 +960,7 @@ fn lower_call(
                      with the object as the first argument)"
                 ));
             }
-            let (values, _, arg_prereqs) = compile_slots(state, args);
+            let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
             let object = if effects_commute(&get_effects(&object), &get_effects_of_statements(&arg_prereqs.statements))
             {
                 object

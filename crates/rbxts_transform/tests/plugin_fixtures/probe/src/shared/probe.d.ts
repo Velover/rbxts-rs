@@ -124,3 +124,24 @@ declare const capMap: Record<string, CapChain>;
 
 /** `void void probeVoidSelf`: the outer hook compiles its own node and declines (tests only). */
 declare const probeVoidSelf: number;
+
+/** The claimed node through compile_in_order (a `new`, an eager and a lazy chain call, an expression hook). */
+/** @probe inorderself */
+declare class ProbeInOrder {
+	constructor(a: number);
+}
+/** @probe inorderself */
+declare function probeInOrderFn(a: number): number;
+interface InOrderChain {
+	/** @probe inorderself */
+	io(a: number): number;
+}
+declare const maybeInOrder: InOrderChain | undefined;
+declare function getInOrder(): InOrderChain;
+declare const probeVoidInOrder: number;
+
+/** A late string or mark_import_used, then declined: each an internal error (tests only). */
+/** @probe latedecline */
+declare function probeLateDecline(): string;
+/** @probe markdecline */
+declare function probeMarkDecline(a: unknown): unknown;

@@ -21,6 +21,9 @@
 //! - `approve` / `approveimpl`: declares a local named `_hoisted` / `impl` when `is_usable_local_name` approves
 //!   it, then compiles the argument (seam temporaries and imports must avoid approved names, in either order);
 //! - `caprecv`: `capture(compile_receiver)`, statements dropped, then declined (an internal error);
+//! - `inorderself`: `wrap(compile_in_order([call.node]))`, the claimed node through `compile_in_order`;
+//! - `latedecline` / `markdecline`: a late string, or `mark_import_used` of the argument's import, then declined
+//!   (each an internal error);
 //! - `facts`: a string of source facts: the call's UTF-16 line and character, its width, the callee's declaring
 //!   package, where `./runtime` resolves, the `{@link}` in the tag and what it resolves to, the file's checker
 //!   diagnostics;
@@ -75,6 +78,8 @@ pub enum Mode {
     FinishPanic,
     /// Registers `accesses_by_marker`, which S1 does not dispatch.
     S2Interest,
+    /// Only calls by symbol; every call hook takes a temporary id, then declines (for `RBXTS_PLUGIN_CLAIMS=all`).
+    DeclineTouched,
 }
 
 /// The probe factory. Two probes with different names can be registered together (claim order tests).
@@ -115,6 +120,9 @@ const OPS: &[&str] = &[
     "approve",
     "approveimpl",
     "caprecv",
+    "inorderself",
+    "latedecline",
+    "markdecline",
 ];
 const RECEIVER: Tag = Tag(100);
 const CALLEE: Tag = Tag(101);
@@ -349,6 +357,21 @@ impl ProbeInstance {
                 let value = cx.compile_expr(arg(0).expect("an argument"))?;
                 self.claimed(value)
             }
+            "inorderself" => {
+                // the claimed node itself through compile_in_order: lowered as roblox-ts lowers it, without recursion
+                let mut values = cx.compile_in_order(&[call.node])?;
+                self.claimed(create::call(create::id("wrap"), vec![values.remove(0)]))
+            }
+            "latedecline" => {
+                cx.late_string("declined");
+                Ok(Claim::Decline)
+            }
+            "markdecline" => {
+                if let Some(alias) = arg(0).and_then(|a| Self::alias_of(cx, a)) {
+                    cx.mark_import_used(alias);
+                }
+                Ok(Claim::Decline)
+            }
             "caprecv" => {
                 // the receiver compiled inside a capture whose statements are dropped, then declined: an error
                 let _ = cx.capture(|cx| cx.compile_receiver(call))?;
@@ -385,6 +408,9 @@ impl PluginInstance for ProbeInstance {
 
     fn interest(&self, interest: &mut Interest) {
         interest.calls_by_symbol();
+        if self.mode == Mode::DeclineTouched {
+            return;
+        }
         interest.calls_by_receiver(&["probeMethod"], "__probeMarker", RECEIVER);
         interest.calls_by_callee_marker("__probeCallee", CALLEE);
         interest.classes(ClassFilter::Decorated);
@@ -419,6 +445,10 @@ impl PluginInstance for ProbeInstance {
     }
 
     fn call(&self, cx: &mut Cx<'_>, call: &CallSite, tag: Tag) -> PResult<Claim<LuauExpr>> {
+        if self.mode == Mode::DeclineTouched {
+            cx.temp_id("touched");
+            return Ok(Claim::Decline);
+        }
         match tag {
             RECEIVER => {
                 let object = cx.compile_receiver(call)?;
@@ -456,6 +486,11 @@ impl PluginInstance for ProbeInstance {
                 // compiles its own node (whose operand is dispatched to this hook too), then declines: an error
                 "void probeVoidSelf" => {
                     cx.compile_expr(node)?;
+                }
+                // its own node through compile_in_order: lowered as roblox-ts lowers it
+                "probeVoidInOrder" => {
+                    let mut values = cx.compile_in_order(&[node])?;
+                    return self.claimed(create::call(create::id("wrap"), vec![values.remove(0)]));
                 }
                 _ => {}
             }
