@@ -11,6 +11,7 @@ pub mod transform_expression;
 pub mod transform_function_expression;
 pub mod transform_identifier;
 pub mod transform_import_expression;
+pub mod transform_new_expression;
 pub mod transform_no_substitution_template_literal;
 pub mod transform_numeric_literal;
 pub mod transform_object_literal_expression;

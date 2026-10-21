@@ -29,7 +29,6 @@ pub fn is_unsupported_expression_kind(kind: Kind) -> bool {
             | Kind::JsxExpression
             | Kind::JsxFragment
             | Kind::JsxSelfClosingElement
-            | Kind::NewExpression
     )
 }
 

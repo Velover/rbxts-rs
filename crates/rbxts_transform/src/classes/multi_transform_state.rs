@@ -30,6 +30,9 @@ pub struct MultiTransformState {
     pub get_module_exports_alias_map_cache: FxHashMap<P<Symbol>, Rc<FxHashMap<P<Symbol>, Expr>>>,
     /// rbxts-rs: whether a declaration file is under `node_modules/@rbxts/types` (`isRobloxType`, `isBuiltinDeclaration`).
     pub is_rbxts_types_file_cache: FxHashMap<P<SourceFile>, bool>,
+    /// rbxts-rs: the resolver for `$getModuleTree` specifiers no import resolves (`ts.resolveModuleName` with `ts.sys`),
+    /// made on first use.
+    pub module_resolver: Option<rbxts_project::ModuleResolver>,
 }
 
 impl MultiTransformState {

@@ -45,8 +45,20 @@ pub fn get_source_file_from_module_specifier(
             return Some(declaration.as_source_file_p());
         }
     }
-    // rbxts-rs: roblox-ts falls back to `ts.resolveModuleName` for `$getModuleTree` specifiers that no import uses;
-    // that comes with the macro.
+    // Fallback for $getModuleTree when module is not referenced by any regular import
+    if tsrs_ast::is_string_literal_like(module_specifier) {
+        let source_file = source_file_of(module_specifier);
+        let program = state.program;
+        let resolver = state
+            .multi_transform_state
+            .module_resolver
+            .get_or_insert_with(|| rbxts_project::ModuleResolver::new(program.options(), program.get_current_directory()));
+        // rbxts-rs: `ts.resolveModuleName` is called without a resolution mode; the file's default mode stands in
+        let mode = program.get_default_resolution_mode_for_file(source_file);
+        if let Some(resolved) = resolver.resolve(module_specifier.text(), source_file.get().file_name(), mode) {
+            return program.get_source_file(&resolved.file_name);
+        }
+    }
     None
 }
 

@@ -6,6 +6,7 @@ use tsrs_core::P;
 
 use crate::classes::prereqs::{Prereqs, temp_id};
 use crate::classes::transform_state::TransformState;
+use crate::macros::property_call_macros::wrap_comments;
 use crate::macros::types::{CallMacro, Macro, PropertyCallMacro};
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::shared::diagnostics::errors;
@@ -29,6 +30,10 @@ pub fn transform_macro_call(
     expression: Expr,
     node_arguments: &[P<Node>],
 ) -> Expr {
+    // rbxts-rs: an operand that transformed to nothing (an unsupported node, or an error such as `$tuple()` as an
+    // argument) has already been reported and the file is not written. TypeScript expands the macro over the
+    // shifted arguments anyway; here the expansion is skipped, so macros can rely on their operands.
+    let mut missing_operand = expression.is_none();
     let mut operands = vec![EvaluationOperand { expression, prereqs: Vec::new() }];
     for &argument in node_arguments {
         let mut value_prereqs = Prereqs::new();
@@ -39,6 +44,7 @@ pub fn transform_macro_call(
             if value.is_call() && is_possibly_undefined(state, argument_type) {
                 value = create::paren(value);
             }
+            missing_operand |= value.is_none();
             operands.push(EvaluationOperand { expression: value, prereqs: value_prereqs.statements });
             continue;
         }
@@ -84,11 +90,18 @@ pub fn transform_macro_call(
         return state.unsupported(node, &label);
     };
 
+    if missing_operand {
+        return Expr::None;
+    }
+
     let result = plan_evaluation(prereqs, operands, |expansion_prereqs, references| {
         let mut references = references.into_iter();
         let receiver = references.next().expect("the receiver operand");
         let args: Vec<Expr> = references.filter(|arg| !arg.is_none()).collect();
-        transform(state, expansion_prereqs, node, receiver, args)
+        match r#macro {
+            MacroKind::Call(_) => transform(state, expansion_prereqs, node, receiver, args),
+            MacroKind::PropertyCall(_) => wrap_comments(name, transform, state, expansion_prereqs, node, receiver, args),
+        }
     });
     wrap_return_if_lua_tuple(state, node, result)
 }

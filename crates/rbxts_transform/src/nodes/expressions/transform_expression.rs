@@ -20,6 +20,7 @@ use super::transform_delete_expression::transform_delete_expression;
 use super::transform_element_access_expression::transform_element_access_expression;
 use super::transform_function_expression::transform_function_expression;
 use super::transform_identifier::transform_identifier;
+use super::transform_new_expression::transform_new_expression;
 use super::transform_no_substitution_template_literal::transform_no_substitution_template_literal;
 use super::transform_numeric_literal::transform_numeric_literal;
 use super::transform_object_literal_expression::transform_object_literal_expression;
@@ -86,6 +87,7 @@ pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereq
         Kind::FalseKeyword => Expr::False,
         Kind::TrueKeyword => Expr::True,
         Kind::Identifier => transform_identifier(state, node),
+        Kind::NewExpression => transform_new_expression(state, prereqs, node),
         Kind::NoSubstitutionTemplateLiteral => transform_no_substitution_template_literal(node),
         Kind::NumericLiteral => transform_numeric_literal(node),
         Kind::ObjectLiteralExpression => transform_object_literal_expression(state, prereqs, node),
@@ -108,8 +110,7 @@ pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereq
         | Kind::JsxElement
         | Kind::JsxExpression
         | Kind::JsxFragment
-        | Kind::JsxSelfClosingElement
-        | Kind::NewExpression => return state.unsupported_subtree(node, &kind_name(node.kind())),
+        | Kind::JsxSelfClosingElement => return state.unsupported_subtree(node, &kind_name(node.kind())),
 
         kind => {
             // roblox-ts asserts here; a diagnostic keeps the build going
