@@ -131,3 +131,28 @@ References: the tests project against the tsrs-backed roblox-ts build (`exp/out-
 project against `refs/real-noplugin-tsrs`. Every file that uses only T1 kinds is identical in both corpora, and so
 are the 10 files of a hand-written T1 fixture (scratchpad `rbxts-rs/t1/fixture`) against the same tsrs-backed
 pipeline.
+
+## S2: incremental and watch rebuilds (`rbxts-bench watch-parity`, `rbxtsc build` with `"incremental": true`)
+
+The real project without Flamework (`tsconfig.noplugin.json`, `--optimizedLoops --allowCommentDirectives`), on a
+scratch copy, profile `measure`, one checker, 2026-10-21, machine busy (another session's builds, ms). A leaf is a
+file nothing imports; the hub is imported by 76 files, and its closure (the reversed-import closure, DESIGN §14) is
+205 of the 605 project files.
+
+| build | wall | program | setup | invalidate | check | transform | render | write | working set |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| watch: initial (clean) build | 3229 | 488 | 108 | 14 | 883 | 684 | 28 | 1003 | 179 MiB |
+| watch: leaf edit (median of 41) | 66 | 0 | 0 | 25 | 1 | 0 | 0 | 25 | +1 MiB each |
+| watch: hub edit (median of 11) | 874 | 21 | 0 | 23 | 419 | 304 | 15 | 40 | +48 MiB each |
+| `rbxtsc build`, incremental, nothing changed (new process) | 278-294 | | | | | | | | |
+| `rbxtsc build`, incremental, leaf edit | 259-261 | | | | | | | | |
+| `rbxtsc build`, incremental, hub edit | 969-1004 | | | | | | | | |
+| `rbxtsc build`, clean (no incremental state) | 1428-2143 | | | | | | | | |
+
+- A watch rebuild of edited files updates the program in place (tsrs `reuse_program`) and keeps the project setup;
+  "invalidate" is the file facts of all 886 program files, the closure and the listing of the output directory;
+  "write" is the Luau, the asset sync and the clean of stale outputs.
+- Programs are never freed (tsrs's `free_program` is `unsafe`), so the watcher's working set grows by the checker
+  of each rebuild: about 1 MiB per leaf edit and 48 MiB per hub edit here. `rbxtsc -w` restarts its process past
+  `RBXTS_WATCH_MEMORY_LIMIT_MB` (default 2048).
+- Stock roblox-ts takes about 29 s (quiet machine) for any build of this project.

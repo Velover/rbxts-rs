@@ -87,8 +87,8 @@ in `RBXTS_RS_FIXTURE_NODE_MODULES` (default: the roblox-ts tests project's `node
 `crates/rbxts_plugin` is the plugin API (DESIGN §11); `rbxts_transform::plugins` is the compiler side: the backends,
 the dispatch tables built from each instance's `Interest`, and the build lifecycle (activation from the tsconfig's
 `plugins` entries, `setup`, `finish`, the late-string key check, render after finish, the commit with atomic writes,
-`explain_checker_diagnostic` on files that fail checking). Builds are clean builds; incremental and watch builds are
-S2 (DESIGN §14, `// rbxts-rs: S2` markers).
+`explain_checker_diagnostic` on files that fail checking). The lifecycle across builds (kept `Shared`s, committed
+states, cached file parts and late values) is `rbxts_transform::build` (below).
 
 A binary with plugins:
 
@@ -103,3 +103,33 @@ plugins of `crates/rbxts_test_plugins` (the `rbxts_plugin` crate's `stamp`, and 
 primitive), with `--timings` for per-plugin hook times and `--claims-all` (or `RBXTS_PLUGIN_CLAIMS=all`) to report
 double claims. `cargo test -p rbxts_transform --test plugins` builds `tests/plugin_fixtures/probe` with them against
 hand-checked `expected/` Luau, and runs their failure modes.
+
+## Incremental and watch builds (`rbxts_transform::build`, `rbxtsc -w`)
+
+`BuildSession` (DESIGN §14) runs every build: `rbxtsc build` is one session with one build, `rbxtsc -w` one session
+rebuilt on file system events. A build is clean (every file), incremental (a new process for an `incremental` or
+`composite` project, reading `<base>.rbxts-rs.buildinfo`, which sits beside roblox-ts's build info) or a watch rebuild.
+
+- **What is transformed:** every file after a change of the salt (the compiler binary, options, tsconfig and Rojo
+  texts, the plugin list and tsconfig entries) or when a plugin's `setup` runs again; otherwise roblox-ts's closure
+  (changed files plus everything that reaches them through the reversed references), TypeScript's global rule (a
+  changed script file, `declare global` or ambient module declaration invalidates every file), the augmentation
+  edges, and the files whose output is missing. `assumeChangesOnlyAffectDirectDependencies` is refused.
+- **What is kept:** each file's facts (text version, references, augmentations), its plugin file parts and the late
+  strings its Luau uses (in memory; the Luau of files with late strings, for re-rendering), the plugins' committed
+  states with the `Shared` made from them and the build inputs their `setup` read, and the artifacts of the last
+  build. Only a build without errors commits; a failing build writes nothing and changes none of it.
+- **The commit:** Luau and assets, plugin artifacts, then deletions (stale outputs, as roblox-ts's clean of the
+  output directory, keeping the include folder; artifacts of the last build that this one did not write), plugin
+  state files, the incremental state last.
+- **Watch mode:** `notify` events, a trailing 100 ms debounce, `--usePolling`, `--events json` (`build-start` and
+  `build-end` lines), and a restart of the watcher process past `RBXTS_WATCH_MEMORY_LIMIT_MB` (default 2048; 0 turns
+  it off), since programs are never freed. A crashed rebuild is reported and the next one starts clean.
+
+**Watch parity** (W1): `rbxts-bench watch-parity --source <project> --script <file.json> --scratch <dir> [...]` copies
+the project, applies a scripted edit sequence to the copy as watch rebuilds (or `--incremental` builds), and after
+every step compares the output tree with a clean build of the same sources seeded with the watcher's plugin states
+(a failing step must write nothing and report the clean build's errors). Scripts: `crates/rbxts_bench/watch-scripts`
+(roblox-ts's tests project) and `crates/rbxts_transform/tests/watch_fixtures` (`cargo test -p rbxts_transform --test
+watch`, with the `stamp` plugin, without plugins and incremental). `--no-clean` runs the watcher's builds alone, for
+timings and the working set (`bench/RESULTS.md`, S2).
