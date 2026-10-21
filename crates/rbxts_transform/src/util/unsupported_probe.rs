@@ -12,12 +12,9 @@ use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::kind_name;
 use crate::util::types::get_first_defined_symbol;
 
-/// Statement kinds the transform reports as unsupported.
-pub fn is_unsupported_statement_kind(kind: Kind) -> bool {
-    matches!(
-        kind,
-        Kind::DoStatement | Kind::ForOfStatement | Kind::ForStatement | Kind::WhileStatement
-    )
+/// Statement kinds the transform reports as unsupported: none, since the loops area.
+pub fn is_unsupported_statement_kind(_kind: Kind) -> bool {
+    false
 }
 
 /// Expression kinds the transform reports as unsupported (none since JSX was ported).

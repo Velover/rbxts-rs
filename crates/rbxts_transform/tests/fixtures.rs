@@ -16,6 +16,9 @@
 //! - `literals`: object and array literals, methods in object literals, spread in objects, arrays and calls, every
 //!   iterable kind an array spread accepts. TypeScript 5 lists exported functions first and TypeScript 7 in source
 //!   order, so the fixture declares its exported functions first.
+//! - `loops`: numeric `for` loops under `--optimizedLoops` and the `while` fallback (copies of captured loop
+//!   variables, finalizers before `continue`), every for-of loop builder and `$range`, `while`, `do`-`while`, and
+//!   `continue` / `break` inside `try` in loops.
 //! - `macros`: every call, identifier, constructor and property-call macro, as values and statements, on optional
 //!   chains and with evaluation-order cases.
 
@@ -156,6 +159,11 @@ fn jsx() {
 #[test]
 fn literals() {
     check("literals");
+}
+
+#[test]
+fn loops() {
+    check("loops");
 }
 
 #[test]

@@ -13,10 +13,13 @@ use super::transform_block::transform_block;
 use super::transform_break_statement::transform_break_statement;
 use super::transform_class_declaration::transform_class_declaration;
 use super::transform_continue_statement::transform_continue_statement;
+use super::transform_do_statement::transform_do_statement;
 use super::transform_enum_declaration::transform_enum_declaration;
 use super::transform_export_assignment::transform_export_assignment;
 use super::transform_export_declaration::transform_export_declaration;
 use super::transform_expression_statement::transform_expression_statement;
+use super::transform_for_of_statement::transform_for_of_statement;
+use super::transform_for_statement::transform_for_statement;
 use super::transform_function_declaration::transform_function_declaration;
 use super::transform_if_statement::transform_if_statement;
 use super::transform_import_declaration::transform_import_declaration;
@@ -27,6 +30,7 @@ use super::transform_switch_statement::transform_switch_statement;
 use super::transform_throw_statement::transform_throw_statement;
 use super::transform_try_statement::transform_try_statement;
 use super::transform_variable_statement::transform_variable_statement;
+use super::transform_while_statement::transform_while_statement;
 
 /// `transformStatement`
 pub fn transform_statement(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stmt> {
@@ -58,10 +62,13 @@ pub fn transform_statement(state: &mut TransformState<'_>, node: P<Node>) -> Vec
         Kind::BreakStatement => transform_break_statement(state, node),
         Kind::ClassDeclaration => transform_class_declaration(state, node),
         Kind::ContinueStatement => transform_continue_statement(state, node),
+        Kind::DoStatement => transform_do_statement(state, node),
         Kind::EnumDeclaration => transform_enum_declaration(state, node),
         Kind::ExportAssignment => transform_export_assignment(state, node),
         Kind::ExportDeclaration => transform_export_declaration(state, node),
         Kind::ExpressionStatement => transform_expression_statement(state, node),
+        Kind::ForOfStatement => transform_for_of_statement(state, node),
+        Kind::ForStatement => transform_for_statement(state, node),
         Kind::FunctionDeclaration => transform_function_declaration(state, node),
         Kind::IfStatement => transform_if_statement(state, node),
         Kind::ImportDeclaration => transform_import_declaration(state, node),
@@ -72,15 +79,7 @@ pub fn transform_statement(state: &mut TransformState<'_>, node: P<Node>) -> Vec
         Kind::ThrowStatement => transform_throw_statement(state, node),
         Kind::TryStatement => transform_try_statement(state, node),
         Kind::VariableStatement => transform_variable_statement(state, node),
-
-        // rbxts-rs: kinds roblox-ts transforms that are not ported yet
-        Kind::DoStatement
-        | Kind::ForOfStatement
-        | Kind::ForStatement
-        | Kind::WhileStatement => {
-            state.unsupported_subtree(node, &kind_name(node.kind()));
-            Vec::new()
-        }
+        Kind::WhileStatement => transform_while_statement(state, node),
 
         kind => {
             state.internal_error(node, &format!("Unknown statement: {}", kind_name(kind)));
