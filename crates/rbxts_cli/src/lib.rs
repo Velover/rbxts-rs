@@ -11,10 +11,11 @@
 //!
 //! [`Cli::run`] parses roblox-ts's `build` arguments (`-p`, `--verbose`, `--rojo`, `--includePath`, `--type`,
 //! `--optimizedLoops`, `--allowCommentDirectives`, `--noInclude`, `--logTruthyChanges`, `--writeOnlyChanged`,
-//! `--writeTransformedFiles`, `--luau`), builds on a thread with a 512 MiB stack, prints the diagnostics as
-//! TypeScript's pretty reporter does, and returns roblox-ts's exit codes: 0 when the build succeeded, 1 otherwise.
-//! `-w` / `--watch` runs watch mode ([`watch`], DESIGN §14), with `--usePolling` and `--events json` (machine-readable
-//! build events on stdout).
+//! `--writeTransformedFiles`, `--luau`) as yargs does, builds on a thread with a 512 MiB stack, and returns
+//! roblox-ts's exit codes: 0 when the build succeeded, 1 otherwise. Output follows roblox-ts's CLI: on stdout, every
+//! diagnostic as TypeScript's pretty reporter prints it (fatal errors and "Unable to find tsconfig.json!" as roblox-ts
+//! text diagnostics), and argument errors as yargs's message alone. `-w` / `--watch` runs watch mode ([`watch`],
+//! DESIGN §14), with `--usePolling` and `--events json` (machine-readable build events on stdout).
 //!
 //! `RBXTS_PLUGIN_CLAIMS=all` asks every matching plugin for each claimable node and reports double claims.
 
@@ -26,8 +27,11 @@ use std::process::ExitCode;
 use rbxts_plugin::Plugin;
 use rbxts_plugin::erased::{DynPlugin, erase};
 use rbxts_project::{ProjectOptionLayer, ProjectType, STACK_SIZE, nodepath};
+use rbxts_transform::shared::diagnostics::text_diagnostic;
 use rbxts_transform::{CompileOptions, CompileReport, PluginOptions, compile_project_with};
-use tsrs_compiler::diagnosticwriter::{FormattingOptions, format_diagnostics_with_color_and_context};
+use tsrs_ast::Diagnostic;
+use tsrs_compiler::diagnosticwriter::{FormattingOptions, format_diagnostic_with_color_and_context};
+use tsrs_core::P;
 use tsrs_core::tspath::ComparePathsOptions;
 use tsrs_diagnostics::Category;
 
@@ -90,16 +94,33 @@ fn split_flag(arg: &str) -> (&str, Option<&str>) {
     }
 }
 
-fn parse_bool(name: &str, value: Option<&str>) -> Result<bool, String> {
-    match value {
-        None | Some("true") => Ok(true),
-        Some("false") => Ok(false),
-        Some(other) => Err(format!("Invalid value for {name}: {other:?} (expected true or false)")),
+/// The boolean options and their negated form (`--no-<name>`, yargs's boolean negation).
+fn boolean_flag(name: &str) -> Option<(&str, bool)> {
+    const BOOLEANS: &[&str] = &[
+        "--verbose",
+        "--timings",
+        "--noInclude",
+        "--logTruthyChanges",
+        "--writeOnlyChanged",
+        "--writeTransformedFiles",
+        "--optimizedLoops",
+        "--allowCommentDirectives",
+        "--luau",
+        "--watch",
+        "--usePolling",
+    ];
+    if let Some(&flag) = BOOLEANS.iter().find(|&&flag| flag == name) {
+        return Some((flag, true));
     }
+    let negated = format!("--{}", name.strip_prefix("--no-")?);
+    BOOLEANS.iter().find(|&&flag| flag == negated).map(|&flag| (flag, false))
 }
 
-/// Parses roblox-ts's `build` arguments (the leading `build` is optional, as `$0` is its alias). Paths are resolved
-/// against `cwd`, as `path.resolve` does in roblox-ts.
+/// Parses roblox-ts's `build` arguments (the leading `build` is optional, as `$0` is its alias) as yargs does: a
+/// boolean takes `=true` / `=false` or a following `true` / `false`, and `--no-<name>` negates it; a string option
+/// takes `=value` or the next argument unless that is a flag, else it is empty. Paths are resolved against `cwd`, as
+/// `path.resolve` does in roblox-ts; an empty `--includePath` or `--rojo` means the default, as there. Errors carry
+/// yargs's message.
 pub fn parse_args(args: impl IntoIterator<Item = String>, cwd: &str) -> Result<Command, String> {
     let mut args = args.into_iter().peekable();
     if args.peek().is_some_and(|a| a == "build") {
@@ -108,49 +129,72 @@ pub fn parse_args(args: impl IntoIterator<Item = String>, cwd: &str) -> Result<C
     let mut out = BuildArgs { project: ".".to_owned(), ..BuildArgs::default() };
     while let Some(arg) = args.next() {
         let (name, inline) = split_flag(&arg);
-        let mut value = |name: &str| -> Result<String, String> {
+        if !name.starts_with('-') {
+            return Err(format!("Unknown argument: {name}"));
+        }
+        if let Some((flag, positive)) = boolean_flag(if name == "-w" { "--watch" } else { name }) {
+            let value = match inline {
+                Some(v) => Some(v.to_owned()),
+                None if args.peek().is_some_and(|a| a == "true" || a == "false") => args.next(),
+                None => None,
+            };
+            let value = match value.as_deref() {
+                None | Some("true") => positive,
+                Some("false") => !positive,
+                Some(other) => return Err(format!("Invalid value for {flag}: {other:?} (expected true or false)")),
+            };
+            match flag {
+                "--verbose" => out.verbose = value,
+                "--timings" => out.timings = value,
+                "--noInclude" => out.options.no_include = Some(value),
+                "--logTruthyChanges" => out.options.log_truthy_changes = Some(value),
+                "--writeOnlyChanged" => out.options.write_only_changed = Some(value),
+                "--writeTransformedFiles" => out.options.write_transformed_files = Some(value),
+                "--optimizedLoops" => out.options.optimized_loops = Some(value),
+                "--allowCommentDirectives" => out.options.allow_comment_directives = Some(value),
+                "--watch" => out.watch = value,
+                "--usePolling" => out.use_polling = value,
+                _ => out.options.luau = Some(value),
+            }
+            continue;
+        }
+        // a string option's value: inline, or the next argument unless it is a flag (None: no value at all)
+        let mut value = || -> Option<String> {
             match inline {
-                Some(v) => Ok(v.to_owned()),
-                None => args
-                    .next()
-                    .ok_or_else(|| format!("Not enough arguments following: {}", name.trim_start_matches('-'))),
+                Some(v) => Some(v.to_owned()),
+                None if args.peek().is_some_and(|a| !a.starts_with('-')) => args.next(),
+                None => None,
             }
         };
-        let resolve = |path: String| nodepath::resolve(&[cwd, &path]);
+        let path = |value: Option<String>| match value.unwrap_or_default() {
+            empty if empty.is_empty() => empty,
+            path => nodepath::resolve(&[cwd, &path]),
+        };
         match name {
             "-h" | "--help" => return Ok(Command::Help),
             "-v" | "--version" => return Ok(Command::Version),
-            "-p" | "--project" => out.project = value(name)?,
-            "--verbose" => out.verbose = parse_bool(name, inline)?,
-            "--timings" => out.timings = parse_bool(name, inline)?,
-            "-w" | "--watch" => out.watch = parse_bool(name, inline)?,
-            "--usePolling" => out.use_polling = parse_bool(name, inline)?,
+            "-p" | "--project" => out.project = value().unwrap_or_default(),
             "--events" => {
-                let v = value(name)?;
-                if v != "json" {
-                    return Err(format!("Invalid values:\n  Argument: events, Given: {v:?}, Choices: \"json\""));
+                let v = value();
+                if v.as_deref() != Some("json") {
+                    let given = v.as_ref().map_or_else(|| "true".to_owned(), |v| format!("{v:?}"));
+                    return Err(format!("Invalid values:\n  Argument: events, Given: {given}, Choices: \"json\""));
                 }
                 out.events_json = true;
             }
-            "--noInclude" => out.options.no_include = Some(parse_bool(name, inline)?),
-            "--logTruthyChanges" => out.options.log_truthy_changes = Some(parse_bool(name, inline)?),
-            "--writeOnlyChanged" => out.options.write_only_changed = Some(parse_bool(name, inline)?),
-            "--writeTransformedFiles" => out.options.write_transformed_files = Some(parse_bool(name, inline)?),
-            "--optimizedLoops" => out.options.optimized_loops = Some(parse_bool(name, inline)?),
-            "--allowCommentDirectives" => out.options.allow_comment_directives = Some(parse_bool(name, inline)?),
-            "--luau" => out.options.luau = Some(parse_bool(name, inline)?),
             "--type" => {
-                let v = value(name)?;
-                let t = ProjectType::parse(&v).ok_or_else(|| {
+                let v = value();
+                let t = v.as_deref().and_then(ProjectType::parse).ok_or_else(|| {
+                    let given = v.as_ref().map_or_else(|| "true".to_owned(), |v| format!("{v:?}"));
                     format!(
-                        "Invalid values:\n  Argument: type, Given: {v:?}, Choices: \"game\", \"model\", \"package\""
+                        "Invalid values:\n  Argument: type, Given: {given}, Choices: \"game\", \"model\", \"package\""
                     )
                 })?;
                 out.options.project_type = Some(t);
             }
-            "-i" | "--includePath" => out.options.include_path = Some(resolve(value(name)?)),
-            "--rojo" => out.options.rojo = Some(resolve(value(name)?)),
-            _ => return Err(format!("Unknown argument: {}", arg.trim_start_matches('-'))),
+            "-i" | "--includePath" => out.options.include_path = Some(path(value())),
+            "--rojo" => out.options.rojo = Some(path(value())),
+            _ => return Err(format!("Unknown argument: {}", name.trim_start_matches('-'))),
         }
     }
     Ok(Command::Build(out))
@@ -212,14 +256,17 @@ impl Cli {
                 return 0;
             }
             Err(message) => {
-                eprintln!("{USAGE}\n\n{message}");
+                // yargs's `.fail()` in roblox-ts's CLI: the message alone, on stdout
+                println!("{message}");
                 return 1;
             }
         };
         let tsconfig = match rbxts_project::setup::find_tsconfig_path(&build.project, &cwd) {
             Ok(path) => path,
             Err(_) => {
-                eprintln!("Unable to find tsconfig.json!");
+                // a `CLIError`, logged with `LogService.writeLine`: the formatted diagnostic, then "\n"
+                let error = text_diagnostic("Unable to find tsconfig.json!", Category::Error);
+                println!("{}", format_diagnostic(error, &cwd));
                 return 1;
             }
         };
@@ -241,6 +288,32 @@ impl Cli {
     }
 }
 
+/// `ts.sys.newLine`.
+const NEW_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
+
+/// One diagnostic as TypeScript's `formatDiagnosticsWithColorAndContext` formats it (ending with a line end), with
+/// the OS's line ends. rbxts-rs: roblox-ts's own diagnostics, ad hoc messages here, show roblox-ts's code
+/// (`TS roblox-ts`, from `createTextDiagnostic` and `createDiagnosticWithLocation`) instead of tsrs's `TS-1`.
+pub fn format_diagnostic(diagnostic: P<Diagnostic>, cwd: &str) -> String {
+    let options = FormattingOptions {
+        compare_paths_options: ComparePathsOptions {
+            use_case_sensitive_file_names: false,
+            current_directory: tsrs_core::tspath::normalize_path(cwd),
+        },
+        new_line: NEW_LINE.to_owned(),
+    };
+    let mut out = Vec::new();
+    format_diagnostic_with_color_and_context(&mut out, diagnostic, &options);
+    let mut text = String::from_utf8_lossy(&out).into_owned();
+    if diagnostic.code() == -1 {
+        text = text.replacen("\u{1b}[90m TS-1: ", "\u{1b}[90m TS roblox-ts: ", 1);
+    }
+    if !text.ends_with(NEW_LINE) {
+        text.push_str(NEW_LINE);
+    }
+    text
+}
+
 /// Prints the build's outcome: warnings, plugin messages (`--verbose`), diagnostics with TypeScript's pretty
 /// reporter, fatal errors, and the plugin timings (`--timings`).
 pub fn print_report(report: &CompileReport, cwd: &str, build: &BuildArgs) {
@@ -256,23 +329,11 @@ pub fn print_report(report: &CompileReport, cwd: &str, build: &BuildArgs) {
     for file in &report.files {
         diagnostics.extend(file.diagnostics.iter().copied());
     }
-    if !diagnostics.is_empty() {
-        let options = FormattingOptions {
-            compare_paths_options: ComparePathsOptions {
-                use_case_sensitive_file_names: false,
-                current_directory: tsrs_core::tspath::normalize_path(cwd),
-            },
-            new_line: "\n".to_owned(),
-        };
-        let mut out = Vec::new();
-        format_diagnostics_with_color_and_context(&mut out, &diagnostics, &options);
-        print!("{}", String::from_utf8_lossy(&out));
-        if !out.ends_with(b"\n") {
-            println!();
-        }
-    }
-    for message in &report.fatal {
-        eprintln!("\u{1b}[31mProject Error:\u{1b}[0m {message}");
+    // roblox-ts reports its fatal errors (`ProjectError`, `emitResultFailure`) as text diagnostics too
+    let fatal = report.fatal.iter().map(|message| text_diagnostic(message, Category::Error));
+    for diagnostic in diagnostics.iter().copied().chain(fatal) {
+        // `ts.createDiagnosticReporter(ts.sys, true)`: the formatted diagnostic, then a line end
+        print!("{}{NEW_LINE}", format_diagnostic(diagnostic, cwd));
     }
     if build.verbose {
         let errors = diagnostics.iter().filter(|d| d.category() == Category::Error).count();
@@ -351,8 +412,35 @@ mod tests {
         let Command::Build(watch) = parse(&["-w", "--usePolling", "--events", "json"]).unwrap() else { panic!() };
         assert!(watch.watch && watch.use_polling && watch.events_json);
         assert!(parse(&["--events", "xml"]).unwrap_err().contains("Choices"));
-        assert!(parse(&["--type", "place"]).unwrap_err().contains("Choices"));
-        assert!(parse(&["--bogus"]).unwrap_err().contains("Unknown argument"));
-        assert!(parse(&["-p"]).unwrap_err().contains("Not enough arguments"));
+        assert!(parse(&["-w", "false"]).is_ok_and(|c| matches!(c, Command::Build(b) if !b.watch)));
+        assert!(parse(&["--type", "place"]).unwrap_err().contains("Given: \"place\", Choices"));
+        assert!(parse(&["--type"]).unwrap_err().contains("Given: true, Choices"));
+        assert_eq!(parse(&["--bogus=1"]).unwrap_err(), "Unknown argument: bogus");
+        assert_eq!(parse(&["-x"]).unwrap_err(), "Unknown argument: x");
+        assert_eq!(parse(&["build", "build"]).unwrap_err(), "Unknown argument: build");
+    }
+
+    /// yargs's value rules, as roblox-ts's CLI parses them.
+    #[test]
+    fn yargs_values() {
+        let build = |args: &[&str]| match parse(args).unwrap() {
+            Command::Build(build) => build,
+            other => panic!("a build, not {other:?}"),
+        };
+        // a string option without a value is empty: `-p` alone builds the working directory
+        assert_eq!(build(&["-p"]).project, "");
+        let b = build(&["-p", "--noInclude"]);
+        assert_eq!((b.project.as_str(), b.options.no_include), ("", Some(true)));
+        // an empty include path or Rojo file means the default
+        assert_eq!(build(&["-i"]).options.include_path.as_deref(), Some(""));
+        assert_eq!(build(&["--includePath="]).options.include_path.as_deref(), Some(""));
+        assert_eq!(build(&["--rojo", "--verbose"]).options.rojo.as_deref(), Some(""));
+        // booleans: a following true/false, `=value`, and `--no-<name>`
+        assert_eq!(build(&["--noInclude", "false"]).options.no_include, Some(false));
+        assert_eq!(build(&["--noInclude=false"]).options.no_include, Some(false));
+        assert_eq!(build(&["--no-noInclude"]).options.no_include, Some(false));
+        assert_eq!(build(&["--no-luau"]).options.luau, Some(false));
+        assert!(build(&["--verbose", "true"]).verbose);
+        assert!(parse(&["--verbose=maybe"]).unwrap_err().contains("expected true or false"));
     }
 }
