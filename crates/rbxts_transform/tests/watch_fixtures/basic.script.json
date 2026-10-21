@@ -1,0 +1,107 @@
+{
+	"steps": [
+		{
+			"name": "C → B → D: Inner.a array to map",
+			"do": [{ "patch": { "file": "src/shared/c.ts", "find": "a: Array<string>", "replace": "a: Map<string, string>" } }]
+		},
+		{
+			"name": "C → B → D: back to an array",
+			"do": [{ "patch": { "file": "src/shared/c.ts", "find": "a: Map<string, string>", "replace": "a: Array<string>" } }]
+		},
+		{
+			"name": "S1: a global .d.ts interface",
+			"do": [
+				{ "patch": { "file": "src/shared/globals.d.ts", "find": "a: Array<string>", "replace": "a: Map<string, string>" } }
+			]
+		},
+		{
+			"name": "S1b: declare global in a module",
+			"do": [
+				{ "patch": { "file": "src/shared/declGlobal.ts", "find": "a: Array<string>", "replace": "a: Set<string>" } }
+			]
+		},
+		{
+			"name": "S2: a module augmentation",
+			"do": [{ "patch": { "file": "src/shared/aug.ts", "find": "y: Array<number>", "replace": "y: Map<number, number>" } }]
+		},
+		{
+			"name": "a two-hop export * re-export",
+			"do": [{ "patch": { "file": "src/shared/hop1.ts", "find": "export * from \"./c\";", "replace": "export { Inner } from \"./c\";" } }]
+		},
+		{
+			"name": "rename a file",
+			"do": [{ "rename": { "from": "src/shared/importer.ts", "to": "src/shared/importer2.ts" } }]
+		},
+		{
+			"name": "delete an importer",
+			"do": [{ "delete": "src/shared/importer2.ts" }]
+		},
+		{
+			"name": "an output deleted by hand",
+			"do": [{ "delete-output": "out/shared/d.luau" }]
+		},
+		{
+			"name": "an error",
+			"do": [{ "patch": { "file": "src/shared/d.ts", "find": "return value.x.a.size();", "replace": "return value.x.a.sizee();" } }],
+			"expect": "error"
+		},
+		{
+			"name": "an error in one file, a valid edit in another",
+			"do": [{ "patch": { "file": "src/shared/c.ts", "find": "export const cValue = 1;", "replace": "export const cValue = 2;" } }],
+			"expect": "error"
+		},
+		{
+			"name": "the fix",
+			"do": [{ "patch": { "file": "src/shared/d.ts", "find": "return value.x.a.sizee();", "replace": "return value.x.a.size();" } }]
+		},
+		{
+			"name": "a burst of three edits to one file",
+			"do": [
+				{ "patch": { "file": "src/shared/useHop.ts", "find": "value.a.size()", "replace": "value.a.size() + 1" } },
+				{ "patch": { "file": "src/shared/useHop.ts", "find": "+ 1", "replace": "+ 2" } },
+				{ "patch": { "file": "src/shared/useHop.ts", "find": "+ 2", "replace": "+ 3" } }
+			]
+		},
+		{
+			"name": "a new late string renumbers cached files",
+			"do": [
+				{ "patch": { "file": "src/shared/stamped2.ts", "find": "export const second = buildId();", "replace": "export const second = buildId();\nexport const third = buildId();" } }
+			]
+		},
+		{
+			"name": "a new file",
+			"do": [{ "write": { "file": "src/shared/fresh.ts", "text": "import { sizeOf } from \"./d\";\n\nexport const fresh = sizeOf;\n" } }]
+		},
+		{
+			"name": "an asset edited, one added",
+			"do": [
+				{ "patch": { "file": "src/shared/asset.lua", "find": "return 1", "replace": "return 2" } },
+				{ "write": { "file": "src/shared/asset2.lua", "text": "return 3\n" } }
+			]
+		},
+		{
+			"name": "an asset deleted",
+			"do": [{ "delete": "src/shared/asset2.lua" }]
+		},
+		{
+			"name": "a file under a new folder",
+			"do": [{ "write": { "file": "src/shared/nested/deep.ts", "text": "export const deep = buildId();\n" } }]
+		},
+		{
+			"name": "the folder deleted",
+			"do": [{ "delete": "src/shared/nested" }]
+		},
+		{
+			"name": "a tsconfig edit (the plugin's options)",
+			"do": [{ "patch": { "file": "tsconfig.json", "find": "\"prefix\": \"watch \"", "replace": "\"prefix\": \"watch2 \"" } }]
+		},
+		{
+			"name": "a Rojo edit",
+			"do": [{ "patch": { "file": "default.project.json", "find": "\"shared\": {", "replace": "\"Extra\": { \"$className\": \"Folder\" },\n\t\t\t\"shared\": {" } }]
+		},
+		{
+			"name": "an unchanged save",
+			"do": [{ "touch": "src/shared/b.ts" }]
+		}
+	]
+}

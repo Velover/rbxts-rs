@@ -1,0 +1,80 @@
+{
+	"comment": "W1 harness script for roblox-ts's tests project (rbxts-bench watch-parity -p tsconfig.bench.json --optimizedLoops --allowCommentDirectives --copy src,include,projects,tsconfig.json,tsconfig.bench.json,default.project.json,package.json). projectReferences.spec is removed first: project references are not ported, so that file fails every build.",
+	"prepare": [{ "delete": "src/tests/projectReferences.spec.ts" }],
+	"steps": [
+		{
+			"name": "a type through two export hops",
+			"do": [{ "patch": { "file": "src/tests/moduleSyntax/renamedExport.ts", "find": "export type RenamedType = number;", "replace": "export type RenamedType = number | string;" } }]
+		},
+		{
+			"name": "a value through export *",
+			"do": [{ "patch": { "file": "src/tests/moduleSyntax/renamedExport.ts", "find": "const plain = 2;", "replace": "const plain = 3;" } }]
+		},
+		{
+			"name": "a leaf spec edit",
+			"do": [{ "patch": { "file": "src/tests/string.spec.ts", "find": "\"should support string methods\"", "replace": "\"should support string methods!\"" } }]
+		},
+		{
+			"name": "an error",
+			"do": [{ "patch": { "file": "src/tests/string.spec.ts", "find": "\"Hello, world\".sub(1, 1)", "replace": "\"Hello, world\".subb(1, 1)" } }],
+			"expect": "error"
+		},
+		{
+			"name": "the fix",
+			"do": [{ "patch": { "file": "src/tests/string.spec.ts", "find": "\"Hello, world\".subb(1, 1)", "replace": "\"Hello, world\".sub(1, 1)" } }]
+		},
+		{
+			"name": "new files: C → B → D",
+			"do": [
+				{ "write": { "file": "src/tests/chain/c.ts", "text": "export interface Inner {\n\ta: Array<string>;\n}\n" } },
+				{ "write": { "file": "src/tests/chain/b.ts", "text": "import { Inner } from \"./c\";\n\nexport interface A {\n\tx: Inner;\n}\n" } },
+				{ "write": { "file": "src/tests/chain/d.ts", "text": "import { A } from \"./b\";\n\nexport function sizeOf(value: A) {\n\treturn value.x.a.size();\n}\n" } },
+				{ "write": { "file": "src/tests/chain/e.ts", "text": "import { sizeOf } from \"./d\";\n\nexport const measure = sizeOf;\n" } }
+			]
+		},
+		{
+			"name": "C → B → D: Inner.a array to map",
+			"do": [{ "patch": { "file": "src/tests/chain/c.ts", "find": "a: Array<string>", "replace": "a: Map<string, string>" } }]
+		},
+		{
+			"name": "rename the last importer",
+			"do": [{ "rename": { "from": "src/tests/chain/e.ts", "to": "src/tests/chain/f.ts" } }]
+		},
+		{
+			"name": "delete it",
+			"do": [{ "delete": "src/tests/chain/f.ts" }]
+		},
+		{
+			"name": "an output deleted by hand",
+			"do": [{ "delete-output": "out/tests/string.spec.luau" }]
+		},
+		{
+			"name": "a burst of three edits",
+			"do": [
+				{ "patch": { "file": "src/tests/string.spec.ts", "find": "string methods!", "replace": "string methods!!" } },
+				{ "patch": { "file": "src/tests/string.spec.ts", "find": "string methods!!", "replace": "string methods!!!" } },
+				{ "patch": { "file": "src/tests/string.spec.ts", "find": "string methods!!!", "replace": "string methods" } }
+			]
+		},
+		{
+			"name": "a new global declaration file",
+			"do": [{ "write": { "file": "src/chainGlobals.d.ts", "text": "interface ChainGlobal {\n\ta: Array<string>;\n}\n" } }]
+		},
+		{
+			"name": "its use",
+			"do": [{ "write": { "file": "src/tests/chain/g.ts", "text": "export function globalSize(value: ChainGlobal) {\n\treturn value.a.size();\n}\n" } }]
+		},
+		{
+			"name": "S1: the global interface changes",
+			"do": [{ "patch": { "file": "src/chainGlobals.d.ts", "find": "a: Array<string>", "replace": "a: Set<string>" } }]
+		},
+		{
+			"name": "a tsconfig edit excludes a file",
+			"do": [{ "patch": { "file": "tsconfig.bench.json", "find": "\"exclude\": [\"src/diagnostics\"]", "replace": "\"exclude\": [\"src/diagnostics\", \"src/tests/chain/g.ts\"]" } }]
+		},
+		{
+			"name": "a Rojo edit",
+			"do": [{ "patch": { "file": "default.project.json", "find": "\"ServerScriptService\": {", "replace": "\"Extra\": { \"$className\": \"Folder\" },\n\t\t\"ServerScriptService\": {" } }]
+		}
+	]
+}

@@ -17,6 +17,7 @@
 mod build;
 mod luau_parity;
 mod project_parity;
+mod watch_parity;
 
 #[global_allocator]
 static GLOBAL: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
@@ -45,7 +46,8 @@ struct Args {
     json: bool,
 }
 
-const USAGE: &str = "usage: rbxts-bench load [-p tsconfig.json] [--checkers N] [--check project|all|none] [--lazy-dts] [--json]\n       rbxts-bench build [-p tsconfig.json] [--out-dir DIR] [--parity REF_DIR] [--report FILE] [--json] (see `rbxts-bench build --help`)\n       rbxts-bench luau-parity <dump.jsonl>... [--show N] [--repeat N] [--threads N]\n       rbxts-bench project-parity <dump.json> [--runs N] [--max-diffs N]";
+const USAGE: &str = "usage: rbxts-bench load [-p tsconfig.json] [--checkers N] [--check project|all|none] [--lazy-dts] [--json]\n       rbxts-bench build [-p tsconfig.json] [--out-dir DIR] [--parity REF_DIR] [--report FILE] [--json] (see `rbxts-bench build --help`)\n       rbxts-bench luau-parity <dump.jsonl>... [--show N] [--repeat N] [--threads N]\n       rbxts-bench project-parity <dump.json> [--runs N] [--max-diffs N]
+       rbxts-bench watch-parity --source DIR --script FILE --scratch DIR (see `rbxts-bench watch-parity --help`)";
 
 fn parse_args() -> Result<Args, String> {
     let mut args = std::env::args().skip(1);
@@ -234,6 +236,16 @@ fn run(args: &Args) -> i32 {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("watch-parity") {
+        let status = std::thread::Builder::new()
+            .name("watch-parity".into())
+            .stack_size(STACK_SIZE)
+            .spawn(|| watch_parity::main(std::env::args().skip(2).collect()))
+            .expect("spawn the harness thread")
+            .join()
+            .unwrap_or(1);
+        std::process::exit(status);
+    }
     if std::env::args().nth(1).as_deref() == Some("project-parity") {
         std::process::exit(project_parity::main(std::env::args().skip(2).collect()));
     }
