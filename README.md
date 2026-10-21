@@ -98,7 +98,17 @@ fn main() -> std::process::ExitCode {
 }
 ```
 
-`rbxtsc` (crate `rbxts_cli`) is that binary without plugins. `rbxts-bench build --plugin <name>` registers the test
+`rbxtsc` (crate `rbxts_cli`) is that binary without plugins. It is called as stock `rbxtsc` is (no arguments in the
+project folder, `-p <dir | tsconfig>`, `--verbose`, `--type`, `-i`, `--noInclude`, `--rojo`, …, parsed by yargs's
+rules) and answers as stock does: exit code 0 or 1, diagnostics on stdout in TypeScript's pretty format, roblox-ts's
+own errors as `TS roblox-ts` text diagnostics. A successful build copies the runtime include files (`copyInclude`)
+from the roblox-ts package the project resolves (the first `node_modules/roblox-ts` from the project folder upwards),
+so the include folder equals stock's; without one, from the files embedded from roblox-ts master 68648b0
+(`crates/rbxts_transform/include`). The tsconfig must suit TypeScript 7: `module: "preserve"` with
+`moduleResolution: "bundler"`, `paths` instead of `baseUrl`, no `downlevelIteration`, and `types` listed (TypeScript 7
+includes no type roots by default), e.g. `"types": ["types", "compiler-types"]`.
+
+`rbxts-bench build --plugin <name>` registers the test
 plugins of `crates/rbxts_test_plugins` (the `rbxts_plugin` crate's `stamp`, and `probe`, which reaches every compiler
 primitive), with `--timings` for per-plugin hook times and `--claims-all` (or `RBXTS_PLUGIN_CLAIMS=all`) to report
 double claims. `cargo test -p rbxts_transform --test plugins` builds `tests/plugin_fixtures/probe` with them against
