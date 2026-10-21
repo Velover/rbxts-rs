@@ -26,6 +26,7 @@ rbxts_luau = { path = "crates/rbxts_luau" }
 # preserve_order: Rojo trees iterate children in file order, as JavaScript objects do.
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 tsrs_module = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_module" }
+tsrs_contentmapper = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_contentmapper" }
 rbxts_transform = { path = "crates/rbxts_transform" }
 rbxts_plugin = { path = "crates/rbxts_plugin" }
 rbxts_cli = { path = "crates/rbxts_cli" }

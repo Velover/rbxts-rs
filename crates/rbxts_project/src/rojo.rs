@@ -191,6 +191,9 @@ pub struct RojoResolver {
     partitions: Vec<Partition>,
     file_path_to_rbx_path: HashMap<String, RbxPath>,
     warnings: Vec<String>,
+    /// Every project file the resolver read or looked for, in reading order (watched and hashed by incremental and
+    /// watch builds: a nested project file's edit changes the resolver).
+    config_files: Vec<String>,
     /// The tree's root `$className` is `DataModel` (any nested project's counts too, as in the package).
     pub is_game: bool,
 }
@@ -201,6 +204,7 @@ struct Builder {
     partitions: Vec<Partition>,
     file_path_to_rbx_path: HashMap<String, RbxPath>,
     warnings: Vec<String>,
+    config_files: Vec<String>,
     is_game: bool,
     /// Directories being searched, to stop at a symbolic-link cycle (where the package recurses until the stack
     /// overflows). Canonical paths, computed only once a link is met.
@@ -263,6 +267,11 @@ impl RojoResolver {
     /// Warnings collected while reading (invalid or missing project files).
     pub fn warnings(&self) -> &[String] {
         &self.warnings
+    }
+
+    /// Every project file read or looked for (missing ones included), in reading order.
+    pub fn config_files(&self) -> &[String] {
+        &self.config_files
     }
 
     /// Synced directories, most recently discovered first (the order lookups try them).
@@ -423,6 +432,7 @@ impl Builder {
             partitions: Vec::new(),
             file_path_to_rbx_path: HashMap::new(),
             warnings: Vec::new(),
+            config_files: Vec::new(),
             is_game: false,
             search_stack: Vec::new(),
             config_stack: Vec::new(),
@@ -435,11 +445,13 @@ impl Builder {
             partitions: self.partitions,
             file_path_to_rbx_path: self.file_path_to_rbx_path,
             warnings: self.warnings,
+            config_files: self.config_files,
             is_game: self.is_game,
         }
     }
 
     fn parse_config(&mut self, rojo_config_file_path: &str, do_not_push: bool) -> Result<(), RojoError> {
+        self.config_files.push(rojo_config_file_path.to_owned());
         if !Path::new(rojo_config_file_path).exists() {
             self.warnings.push(format!("RojoResolver: Path does not exist \"{rojo_config_file_path}\""));
             return Ok(());
@@ -506,6 +518,9 @@ impl Builder {
         if is_rojo_project_file_name(nodepath::basename(&item_path)) {
             if Path::new(&item_path).exists() {
                 self.parse_config(&item_path, true)?;
+            } else {
+                // its creation changes the resolver
+                self.config_files.push(item_path);
             }
             return Ok(());
         }

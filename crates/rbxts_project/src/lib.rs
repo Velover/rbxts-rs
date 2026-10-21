@@ -7,6 +7,7 @@ pub mod packages;
 pub mod path_translator;
 pub mod rojo;
 pub mod setup;
+pub mod source_cache;
 
 pub use packages::{ModuleResolver, PackageInfo, PackageJsonCache, ResolvedModuleInfo};
 pub use path_translator::PathTranslator;
@@ -15,6 +16,7 @@ pub use setup::{
     FileRojoInfo, InputFile, ProjectData, ProjectDiagnostic, ProjectError, ProjectOptionLayer, ProjectOptions,
     ProjectServices, ProjectSetup, ProjectType, Severity,
 };
+pub use source_cache::SourceFileCache;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -51,6 +53,10 @@ pub struct Project {
     /// The working directory the project was loaded from (TypeScript spelling).
     pub cwd: String,
     module_resolver: OnceLock<ModuleResolver>,
+    /// The file system the program reads through (each program gets its own caching layer over it).
+    fs: Arc<dyn FS>,
+    /// The parsed files kept across builds, when the program was loaded with one ([`load_cached`]).
+    source_cache: Option<Arc<SourceFileCache>>,
 }
 
 struct ConfigHost {
@@ -72,6 +78,12 @@ impl ParseConfigHost for ConfigHost {
 /// `lazy_dts` switches a process-wide tsrs mode on for good: only for one-shot processes that never check a
 /// declaration file.
 pub fn load(opts: &LoadOptions) -> Result<Project, Vec<P<Diagnostic>>> {
+    load_cached(opts, None)
+}
+
+/// [`load`] with parsed files kept in `cache` across loads (watch mode): a file whose modification time, size
+/// and parse options are unchanged is the same `SourceFile` in the new program.
+pub fn load_cached(opts: &LoadOptions, cache: Option<&Arc<SourceFileCache>>) -> Result<Project, Vec<P<Diagnostic>>> {
     let cwd = tspath::normalize_path(&opts.cwd);
     let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(osvfs::fs()));
     let host: &'static ConfigHost = Box::leak(Box::new(ConfigHost { fs: Arc::clone(&fs), cwd: cwd.clone() }));
@@ -91,16 +103,64 @@ pub fn load(opts: &LoadOptions) -> Result<Project, Vec<P<Diagnostic>>> {
     if opts.lazy_dts && tsrs_compiler::lazy_dts_allowed() {
         tsrs_compiler::enable_lazy_dts();
     }
-    let compiler_host =
-        new_cached_fs_compiler_host(&cwd, fs, &bundled::default_lib_path(), None, None, None);
+    let compiler_host = new_host(&cwd, &fs, cache);
     let start = Instant::now();
     let program = new_program(ProgramOptions::new(config, compiler_host));
     let program_time = start.elapsed();
 
-    Ok(Project { config, program, checkers: opts.checkers, config_time, program_time, cwd, module_resolver: OnceLock::new() })
+    Ok(Project {
+        config,
+        program,
+        checkers: opts.checkers,
+        config_time,
+        program_time,
+        cwd,
+        module_resolver: OnceLock::new(),
+        fs,
+        source_cache: cache.cloned(),
+    })
+}
+
+/// A compiler host for one program: a fresh caching layer over the file system (directory listings and reads are
+/// cached for the program's lifetime), serving parsed files from `cache` when there is one.
+fn new_host(cwd: &str, fs: &Arc<dyn FS>, cache: Option<&Arc<SourceFileCache>>) -> Arc<dyn tsrs_compiler::CompilerHost> {
+    let host = new_cached_fs_compiler_host(cwd, Arc::clone(fs), &bundled::default_lib_path(), None, None, None);
+    match cache {
+        Some(cache) => Arc::new(source_cache::CachingHost { inner: host, cache: Arc::clone(cache) }),
+        None => host,
+    }
 }
 
 impl Project {
+    /// A program for edited files, made from this one with tsrs's `reuse_program` (the path tsrs's own watcher takes):
+    /// each file in `changed` is parsed again and replaces its old version; every other file, the module resolution
+    /// and the options are this program's. `None` when tsrs cannot reuse the program for one of the files (its
+    /// imports, references or module augmentations changed, or it is not in the program): load the project again.
+    /// The parsed files go to this project's source cache. Neither program is freed (see [`source_cache`]).
+    pub fn reuse(&self, changed: &[String]) -> Option<Project> {
+        let host = new_host(&self.cwd, &self.fs, self.source_cache.as_ref());
+        let case_sensitive = self.fs.use_case_sensitive_file_names();
+        let start = Instant::now();
+        let mut program = self.program;
+        for file_name in changed {
+            let path = tspath::to_path(file_name, &self.cwd, case_sensitive);
+            program.get_source_file_by_path(&path)?;
+            let (reused, _, ok) = program.reuse_program(&path, Arc::clone(&host), None, None);
+            program = reused.filter(|_| ok)?;
+        }
+        Some(Project {
+            config: self.config,
+            program,
+            checkers: self.checkers,
+            config_time: Duration::ZERO,
+            program_time: start.elapsed(),
+            cwd: self.cwd.clone(),
+            module_resolver: OnceLock::new(),
+            fs: Arc::clone(&self.fs),
+            source_cache: self.source_cache.clone(),
+        })
+    }
+
     /// The files roblox-ts compiles: not declaration files, not JSON modules, not from external libraries
     /// (node_modules).
     pub fn project_files(&self) -> Vec<P<SourceFile>> {
