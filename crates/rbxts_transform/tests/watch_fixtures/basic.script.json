@@ -396,6 +396,23 @@
 			]
 		},
 		{
+			"name": "B2: the package's main moved, its types unchanged (no event, no save): the requires follow",
+			"do": [
+				{
+					"write": {
+						"file": "node_modules/@rbxts/vpkg/lib/init.lua",
+						"text": "return { v = {} }\n"
+					}
+				},
+				{
+					"write": {
+						"file": "node_modules/@rbxts/vpkg/package.json",
+						"text": "{ \"name\": \"@rbxts/vpkg\", \"version\": \"2.0.1\", \"main\": \"lib/init.lua\", \"types\": \"lib/index.d.ts\" }\n"
+					}
+				}
+			]
+		},
+		{
 			"name": "K7: an asset beside a source, both emitting to one output (nothing written)",
 			"expect": "error",
 			"do": [

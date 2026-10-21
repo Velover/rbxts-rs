@@ -45,6 +45,12 @@ impl SourceFileCache {
     pub fn parses(&self) -> usize {
         self.parses.load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    /// The modification time and size a file had when it was parsed into the cache: what the last program that
+    /// loaded it read (a watcher compares it with the disk).
+    pub fn stamp(&self, path: &Path) -> Option<(Option<SystemTime>, i64)> {
+        self.files.lock().expect("source file cache").get(path).map(|e| (e.mod_time, e.size))
+    }
 }
 
 /// A compiler host over another one that serves unchanged files from a [`SourceFileCache`].

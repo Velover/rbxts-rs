@@ -5,12 +5,14 @@
 pub mod nodepath;
 pub mod packages;
 pub mod path_translator;
+pub mod read_log;
 pub mod rojo;
 pub mod setup;
 pub mod source_cache;
 
 pub use packages::{ModuleResolver, PackageInfo, PackageJsonCache, ResolvedModuleInfo};
 pub use path_translator::PathTranslator;
+pub use read_log::{ReadLog, Seen};
 pub use rojo::{FileRelation, NetworkType, Partition, RbxPath, RbxType, RelativeRbxPathPart, RojoError, RojoResolver};
 pub use setup::{
     FileRojoInfo, InputFile, ProjectData, ProjectDiagnostic, ProjectError, ProjectOptionLayer, ProjectOptions,
@@ -52,6 +54,8 @@ pub struct Project {
     pub program_time: Duration,
     /// The working directory the project was loaded from (TypeScript spelling).
     pub cwd: String,
+    /// What the tsconfig parse and the program load read from the file system, when the load was asked to record it.
+    pub reads: Option<Arc<ReadLog>>,
     module_resolver: OnceLock<ModuleResolver>,
 }
 
@@ -74,14 +78,22 @@ impl ParseConfigHost for ConfigHost {
 /// `lazy_dts` switches a process-wide tsrs mode on for good: only for one-shot processes that never check a
 /// declaration file.
 pub fn load(opts: &LoadOptions) -> Result<Project, Vec<P<Diagnostic>>> {
-    load_cached(opts, None)
+    load_cached(opts, None, None)
 }
 
 /// [`load`] with parsed files kept in `cache` across loads (watch mode): a file whose modification time, size
-/// and parse options are unchanged is the same `SourceFile` in the new program.
-pub fn load_cached(opts: &LoadOptions, cache: Option<&Arc<SourceFileCache>>) -> Result<Project, Vec<P<Diagnostic>>> {
+/// and parse options are unchanged is the same `SourceFile` in the new program. `reads`: where to record what the
+/// tsconfig parse and the program load read (filled even when the load fails).
+pub fn load_cached(
+    opts: &LoadOptions,
+    cache: Option<&Arc<SourceFileCache>>,
+    reads: Option<Arc<ReadLog>>,
+) -> Result<Project, Vec<P<Diagnostic>>> {
     let cwd = tspath::normalize_path(&opts.cwd);
-    let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(osvfs::fs()));
+    let fs: Arc<dyn FS> = match &reads {
+        Some(log) => Arc::new(read_log::RecordingFs { inner: bundled::wrap_fs(osvfs::fs()), log: Arc::clone(log) }),
+        None => Arc::new(bundled::wrap_fs(osvfs::fs())),
+    };
     let host: &'static ConfigHost = Box::leak(Box::new(ConfigHost { fs: Arc::clone(&fs), cwd: cwd.clone() }));
 
     // Only the checker count: `single_threaded` would also make reading, parsing and binding serial.
@@ -111,6 +123,7 @@ pub fn load_cached(opts: &LoadOptions, cache: Option<&Arc<SourceFileCache>>) -> 
         config_time,
         program_time,
         cwd,
+        reads,
         module_resolver: OnceLock::new(),
     })
 }

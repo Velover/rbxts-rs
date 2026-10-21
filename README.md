@@ -128,11 +128,15 @@ resolution sees packages installed or upgraded since the last build.
 - **Errors before writes:** the output set (roblox-ts's `getProjectOutputs`: two inputs emitting to one output, an
   output root holding sources) is computed before anything is compiled, and the assets are read before the first
   write, so a failing build writes nothing; only I/O errors can stop a commit midway.
-- **Watch mode:** `notify` events (the sources, configs, Rojo files, plugin inputs and `watch_dir` roots; under
-  `node_modules`, never recursively: `node_modules` and its scopes for packages added or removed, and the packages in
-  use, named by an unresolved import or by a plugin's `resolve_module` for their `package.json` and declaration
-  files; a directory created or moved in counts, a directory's own modification does not), a trailing 100 ms
-  debounce, `--usePolling`, `--events json` (`build-start` and
+- **Watch mode:** `notify` events on the sources, configs, Rojo files, plugin inputs and `watch_dir` roots, and on
+  everything the last program load read (logged as tsrs's own watch mode does: files, directories and the paths
+  module resolution probed that did not exist, in every ancestor's `node_modules`, `@types`, `typeRoots` and
+  `paths`). Packages the build depends on (used, in a type root, named by an unresolved import or by a plugin's
+  `resolve_module`) are watched recursively for their `package.json`, JSON, TypeScript and Luau files and folders;
+  `node_modules`, its scopes and the type roots for packages added or removed, and for appearing or going themselves
+  (also before the first install). A directory watched for the first time is compared with what the build read
+  (entries created since the build started, the directory's own modification time, reads the disk now contradicts,
+  program files' times and sizes). A trailing 100 ms debounce, `--usePolling`, `--events json` (`build-start` and
   `build-end` lines), and a restart of the watcher process past `RBXTS_WATCH_MEMORY_LIMIT_MB` (default 2048; 0 turns
   it off), since programs are never freed. A crashed rebuild is reported and the next one starts clean.
 

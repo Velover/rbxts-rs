@@ -1,22 +1,29 @@
 //! Watch mode (`rbxtsc -w`, DESIGN §14 "Watcher"): one [`BuildSession`] rebuilt on file system events.
 //!
-//! - **Events.** A `notify` watcher (ReadDirectoryChangesW on Windows, or polling with `--usePolling`) on the root
-//!   directories (recursive), the tsconfig's directory and the directories of the configs it extends, of the Rojo
-//!   project files and of the plugins' input files (not recursive), the directories plugins asked to watch
-//!   (`watch_dir`, recursive), and the directories of program files outside those. Under `node_modules` (never
-//!   recursively): `node_modules` and its `@scope` directories, where an added or removed package counts; the
-//!   root and the declaration directories of every package the program uses, of every package an unresolved import
-//!   names, and of every package plugin `resolve_module` calls went through, where a changed `package.json` or
-//!   declaration file counts (and, for a package or scope folder, the folder's own modification: files written
-//!   into a package folder not watched yet). Config files and build inputs always count. Other events are dropped:
-//!   under the output roots (never a root holding the project, a source root or the tsconfig), the include folder
-//!   and `.git`; the rest of `node_modules`, dot entries there (`.package-lock.json`, `.cache`) included; a
-//!   directory's own modification elsewhere (its entries' events say more; a directory created or moved in counts);
-//!   rbxts-rs's own temporary files; and writes of this watcher's own artifacts.
+//! - **Events.** A `notify` watcher (ReadDirectoryChangesW on Windows, or polling with `--usePolling`). Watched:
+//!   - recursively: the root directories, the directories plugins asked to watch (`watch_dir`), and every package
+//!     directory the build depends on (a package a program file is in or a read went into, every package of a
+//!     type root, a package an unresolved import names, a package plugin `resolve_module` calls went through);
+//!   - not recursively: the project directory, the directories of program files outside packages,
+//!     `node_modules` and its `@scope` directories and the type roots (created, removed or renamed, and the packages
+//!     in them), and, for every path the last program load read (tsrs's `trackingvfs` view: files, directories
+//!     and the paths module resolution probed that did not exist, so `node_modules/<name>` in every ancestor,
+//!     `@types`, `typeRoots` and `paths` locations), the nearest existing directory at or above it. A missing
+//!     `node_modules` counts too (a fresh clone, then an install).
+//! - **What counts.** Config files and build inputs always; nothing under the output roots (never a root holding
+//!   the project, a source root or the tsconfig) or the include folder; then: a path the load read, or a missing
+//!   directory on the way to one; an entry added, removed or renamed in a module directory (not dot entries:
+//!   `.package-lock.json`, `.cache`); inside a package, `package.json` and other JSON (Rojo project files),
+//!   TypeScript and Luau files and directories; under a root (not in its `node_modules` or `.git`) or in an open
+//!   directory, anything. A directory's own modification never counts (its entries' events say more; a directory
+//!   created or moved in does), nor do rbxts-rs's temporary files or this watcher's own artifacts as it wrote them.
 //! - **New watches.** The watched directories are brought up to date after each build, before it is reported. A
-//!   directory watched for the first time is compared with the build's start: what changed in it since (written
-//!   while the build ran, before any watch could see it) starts another rebuild. A build that loads no project
-//!   keeps the last good watches.
+//!   directory watched for the first time is compared with the build: a file written or created, or a directory
+//!   created, since the build started; for a module, package or root directory its own modification time (an entry
+//!   added, removed or renamed whatever the entry's times: an archive extracted with old times), unless this watcher
+//!   wrote into it; a path the load read that is there now and was not, or the other way round; a program file
+//!   whose time or size is not the one it was parsed at. Any of those starts another rebuild. A build that loads no
+//!   project keeps the last good watches, plus what its failed load read.
 //! - **Debounce.** Trailing, 100 ms as roblox-ts: each event restarts the wait, and the paths of one burst become
 //!   one rebuild. A rename is its two paths (the session sees a deletion and an addition).
 //! - **Errors.** A panic in a rebuild is reported and the session starts over with a clean build; the watcher
@@ -38,7 +45,7 @@ use notify::event::ModifyKind;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use rbxts_project::nodepath;
+use rbxts_project::{Seen, nodepath};
 use rbxts_transform::build::graph::Version;
 use rbxts_transform::{BuildSession, BuildSummary, CompileOptions, CompileReport, PluginOptions};
 use tsrs_diagnostics::Category;
@@ -166,7 +173,7 @@ fn status_line_restart() {
     status("The watcher reached its memory limit; restarting it (RBXTS_WATCH_MEMORY_LIMIT_MB).");
 }
 
-/// What the watcher watches and ignores.
+/// What the watcher watches, and which events count.
 #[derive(Clone, Default)]
 struct Watched {
     /// Path keys of the tsconfig, the configs it extends, the Rojo project files and the plugins' input files: their
@@ -176,43 +183,213 @@ struct Watched {
     flat: BTreeSet<String>,
     /// Path keys of the directories whose events are dropped (output roots, include folder).
     ignored_roots: Vec<String>,
-    /// Path keys of `node_modules` and its scope directories: any entry added, removed or renamed counts.
+    /// Path keys of the recursive roots (source roots, plugin `watch_dir`s): any event under them counts (but
+    /// under a `node_modules` or `.git` in them).
+    root_keys: Vec<String>,
+    /// Path keys of the directories where any entry counts (the project directory, the directories of program
+    /// files outside packages, the directories the tsconfig's include globs listed).
+    open_dirs: FxHashSet<String>,
+    /// Path keys of `node_modules`, its scope directories and the type roots: the directory itself, and any entry
+    /// added, removed or renamed in it (but dot entries) counts, whether it exists yet or not.
     module_dirs: FxHashSet<String>,
-    /// Path keys of package directories: a changed `package.json` or TypeScript file counts.
+    /// Path keys of package directories, watched recursively: a `package.json` or other JSON file (Rojo project
+    /// files), a TypeScript or Luau file or a directory anywhere in them counts.
     package_dirs: FxHashSet<String>,
     /// Path keys of the package directories plugin resolutions go through: any event counts.
     plugin_package_dirs: FxHashSet<String>,
+    /// Path keys whose own events count: every path the last load read, the paths module resolution probed that did
+    /// not exist included, and the missing directories on the way to them.
+    anchors: FxHashSet<String>,
+    /// What the last load read (path, what it learned), for comparing a directory watched for the first time.
+    reads: Vec<(String, Seen)>,
+    /// The program's files with the modification time and size they were parsed at.
+    stamps: Vec<(String, Option<SystemTime>, i64)>,
 }
 
 /// The package root of a path under `node_modules`: `…/node_modules/name` or `…/node_modules/@scope/name`.
 fn package_root(path: &str) -> Option<String> {
+    if !path.contains("node_modules") {
+        return None;
+    }
     let normalized = nodepath::normalize(path).replace('\\', "/");
     let at = normalized.rfind("/node_modules/")? + "/node_modules/".len();
     let rest = &normalized[at..];
     let mut parts = rest.split('/');
-    let first = parts.next()?;
-    let length = if first.starts_with('@') { first.len() + 1 + parts.next()?.len() } else { first.len() };
+    let first = parts.next().filter(|f| !f.is_empty())?;
+    let length = if first.starts_with('@') {
+        first.len() + 1 + parts.next().filter(|p| !p.is_empty())?.len()
+    } else {
+        first.len()
+    };
     Some(normalized[..at + length].to_owned())
 }
 
 fn key(path: &str) -> String {
-    nodepath::normalize(path).replace('\\', "/").to_lowercase()
+    // TypeScript's spellings (most of the read log) are normalized already
+    let plain = !path.contains('\\') && !path.contains("/.") && !path.contains("//") && !path.ends_with('/');
+    if plain { path.to_lowercase() } else { nodepath::normalize(path).replace('\\', "/").to_lowercase() }
 }
 
 fn is_under(path_key: &str, root_key: &str) -> bool {
     path_key == root_key
         || (path_key.len() > root_key.len()
             && path_key.starts_with(root_key)
-            && path_key.as_bytes()[root_key.len()] == b'/')
+            && (root_key.ends_with('/') || path_key.as_bytes()[root_key.len()] == b'/'))
 }
 
-/// The tsconfig's path and directory, watched before any project could be loaded (a broken tsconfig at the first
-/// build).
+/// The parent of a path key or path, `None` at a root.
+fn parent_of(path: &str) -> Option<&str> {
+    let parent = nodepath::dirname(path);
+    (parent != path && !parent.is_empty()).then_some(parent)
+}
+
+fn is_dir(path: &str) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| m.is_dir())
+}
+
+/// Whether an entry of a package counts: package.json and other JSON (Rojo project files, JSON modules), TypeScript
+/// and Luau files, directories (one created, moved in or removed: on Windows a directory moved in is one event).
+fn package_entry_counts(path: &str, name: &str) -> bool {
+    if name.starts_with('.') {
+        return false;
+    }
+    const EXTENSIONS: [&str; 9] = [".json", ".ts", ".tsx", ".mts", ".cts", ".lua", ".luau", ".toml", ".d.ts"];
+    if EXTENSIONS.iter().any(|e| name.ends_with(e)) {
+        return true;
+    }
+    match std::fs::metadata(path) {
+        Ok(metadata) => metadata.is_dir(),
+        // gone: a directory removed or renamed away (its name has no extension) counts
+        Err(_) => !name.contains('.'),
+    }
+}
+
+impl Watched {
+    /// Watches `path`'s deepest existing directory (its own directory when it exists, else the nearest existing
+    /// ancestor), and makes the path and every missing directory on the way to it count: a file or directory
+    /// appearing there (or going) changes what a load reads.
+    fn cover(&mut self, path: &str, dirs: &mut FxHashMap<String, bool>) {
+        let mut exists = |p: &str| *dirs.entry(key(p)).or_insert_with(|| is_dir(p));
+        self.anchors.insert(key(path));
+        let mut dir = match parent_of(path) {
+            Some(parent) => parent.to_owned(),
+            None => return,
+        };
+        // the common case: the directory was watched already for another path
+        if self.flat.contains(&dir) {
+            return;
+        }
+        while !exists(&dir) {
+            self.anchors.insert(key(&dir));
+            match parent_of(&dir) {
+                Some(parent) => dir = parent.to_owned(),
+                None => return,
+            }
+        }
+        self.flat.insert(dir);
+    }
+
+    /// Adds what a load read: each path counts and is covered; directories the tsconfig's globs or the program
+    /// listed are watched, their entries counting; the packages read from are package directories.
+    fn add_reads(&mut self, reads: Vec<(String, Seen)>, dirs: &mut FxHashMap<String, bool>) {
+        // the directories the load found (a directory, or a file's directory) need no look of their own; one gone
+        // since is caught when its watch is made (`Subscriptions::update`)
+        for (path, seen) in &reads {
+            if seen.has(Seen::DIR) {
+                dirs.insert(key(path), true);
+            }
+            if seen.has(Seen::FILE)
+                && let Some(parent) = parent_of(path)
+            {
+                dirs.insert(key(parent), true);
+            }
+        }
+        for (path, seen) in &reads {
+            let k = key(path);
+            if self.ignored_roots.iter().any(|root| is_under(&k, root)) {
+                continue;
+            }
+            self.cover(path, dirs);
+            if seen.has(Seen::LISTED) && *dirs.entry(k.clone()).or_insert_with(|| is_dir(path)) {
+                self.flat.insert(path.clone());
+                if k.split('/').any(|c| c == "node_modules") {
+                    self.module_dirs.insert(k.clone());
+                } else {
+                    self.open_dirs.insert(k.clone());
+                }
+            }
+            if let Some(root) = package_root(path) {
+                self.add_package(&root, dirs);
+            }
+        }
+        self.reads.extend(reads);
+    }
+
+    /// A package directory: watched recursively when it exists; it and its contents count.
+    fn add_package(&mut self, dir: &str, dirs: &mut FxHashMap<String, bool>) {
+        let k = key(dir);
+        if self.package_dirs.insert(k.clone()) {
+            let exists = *dirs.entry(k.clone()).or_insert_with(|| is_dir(dir));
+            self.anchors.insert(k);
+            if exists {
+                self.recursive.insert(dir.to_owned());
+            }
+        }
+    }
+
+    /// A `node_modules` or scope directory: it and its entries count, watched when it exists, its parent watched
+    /// (or the nearest existing ancestor) so it appearing or going is seen.
+    fn add_module_dir(&mut self, dir: &str, dirs: &mut FxHashMap<String, bool>) {
+        self.module_dirs.insert(key(dir));
+        self.cover(dir, dirs);
+        if is_dir(dir) {
+            self.flat.insert(dir.to_owned());
+        }
+    }
+
+    /// The package directory a path key is in, if any.
+    fn in_package(&self, path_key: &str) -> bool {
+        let mut dir = path_key;
+        while let Some(parent) = parent_of(dir) {
+            if self.package_dirs.contains(parent) {
+                return true;
+            }
+            dir = parent;
+        }
+        false
+    }
+
+    /// One watch per directory, whatever its spelling; none for a directory inside a recursive watch.
+    fn dedupe(&mut self) {
+        let mut seen = FxHashSet::default();
+        self.recursive.retain(|dir| seen.insert(key(dir)));
+        let recursive_keys = seen;
+        let mut seen = FxHashSet::default();
+        self.flat.retain(|dir| {
+            let k = key(dir);
+            let mut ancestor = Some(k.as_str());
+            while let Some(a) = ancestor {
+                if recursive_keys.contains(a) {
+                    return false;
+                }
+                ancestor = parent_of(a);
+            }
+            seen.insert(k)
+        });
+    }
+}
+
+/// The tsconfig's directory, watched before any project could be loaded (a broken tsconfig at the first build), and
+/// the `node_modules` beside it, which counts even when it does not exist yet (a fresh clone, then an install).
 fn minimal_set(session: &BuildSession<'_>) -> Watched {
     let mut watched = Watched::default();
     let tsconfig = nodepath::resolve(&[&session.options.cwd, &session.options.tsconfig]);
-    watched.flat.insert(nodepath::dirname(&tsconfig).to_owned());
+    let project_dir = nodepath::dirname(&tsconfig).to_owned();
+    watched.flat.insert(project_dir.clone());
+    watched.open_dirs.insert(key(&project_dir));
     watched.config_inputs.insert(key(&tsconfig));
+    let mut dirs = FxHashMap::default();
+    watched.add_module_dir(&nodepath::join(&[&project_dir, "node_modules"]), &mut dirs);
     watched
 }
 
@@ -220,6 +397,7 @@ fn minimal_set(session: &BuildSession<'_>) -> Watched {
 /// kept: a failing load says nothing about where the sources are).
 fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
     let mut watched = minimal_set(session);
+    let mut dirs: FxHashMap<String, bool> = FxHashMap::default();
     let (services, program_files, root_dirs) = session.watch_roots()?;
     let project_dir = services.data.project_path.clone();
     let out_dir = session.options.out_dir_override.clone().unwrap_or_else(|| services.path_translator.out_dir.clone());
@@ -240,91 +418,89 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
     }
     for input in session.config_inputs() {
         watched.config_inputs.insert(key(&input));
+        watched.cover(&input, &mut dirs);
     }
-    for root in &root_dirs {
-        watched.recursive.insert(nodepath::resolve(&[root]));
+    for root in root_dirs.iter().map(|r| nodepath::resolve(&[r])).chain(session.plugin_watch_dirs()) {
+        watched.root_keys.push(key(&root));
+        watched.recursive.insert(root);
     }
-    for dir in session.plugin_watch_dirs() {
-        watched.recursive.insert(dir);
-    }
-    watched.flat.insert(project_dir);
-    for input in session.config_inputs() {
-        watched.flat.insert(nodepath::dirname(&input).to_owned());
-    }
-    // plugin module resolutions are build inputs: watch the package directories they go through (not recursive:
-    // a package added, removed or reinstalled, its package.json, its types entry), so a change rebuilds
+    watched.flat.insert(project_dir.clone());
+    watched.open_dirs.insert(key(&project_dir));
+    // node_modules, its scopes and the type roots: packages appearing or going
     let node_modules = services.data.node_modules_path.clone();
-    for (specifier, _from, resolved) in session.plugin_resolutions() {
-        let mut dirs = Vec::new();
-        if let Some(resolved) = &resolved {
-            dirs.push(nodepath::dirname(resolved).to_owned());
-        }
-        if !specifier.starts_with('.') && !nodepath::is_absolute(&specifier) {
-            dirs.push(node_modules.clone());
-            let mut package = node_modules.clone();
-            for part in specifier.split('/').take(if specifier.starts_with('@') { 2 } else { 1 }) {
-                package = nodepath::join(&[&package, part]);
-                dirs.push(package.clone());
-            }
-        }
-        for dir in dirs {
-            watched.plugin_package_dirs.insert(key(&dir));
-            watched.flat.insert(dir);
-        }
-    }
-    // packages: node_modules and its scopes for packages appearing or going, the packages in use (and those an
-    // unresolved import names) for their package.json and declaration files
-    let mut module_dirs = vec![node_modules.clone()];
+    watched.add_module_dir(&node_modules, &mut dirs);
     if let Ok(entries) = std::fs::read_dir(&node_modules) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with('@') && std::fs::metadata(entry.path()).is_ok_and(|m| m.is_dir()) {
-                module_dirs.push(nodepath::join(&[&node_modules, &name]));
+                watched.add_module_dir(&nodepath::join(&[&node_modules, &name]), &mut dirs);
             }
         }
     }
-    for dir in module_dirs {
-        watched.module_dirs.insert(key(&dir));
-        watched.flat.insert(dir);
+    // every package in a type root is read by the setup (its package.json for the path mapping, its folders for
+    // nested Rojo projects) and, without `types`, loaded by TypeScript
+    for type_root in &services.type_roots {
+        watched.add_module_dir(type_root, &mut dirs);
+        if let Ok(entries) = std::fs::read_dir(type_root) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !name.starts_with('.') && std::fs::metadata(entry.path()).is_ok_and(|m| m.is_dir()) {
+                    watched.add_package(&nodepath::join(&[type_root, &name]), &mut dirs);
+                }
+            }
+        }
     }
-    let mut package_dirs: BTreeSet<String> = BTreeSet::new();
+    // plugin module resolutions are build inputs: the package directories they go through count whole
+    for (specifier, _from, resolved) in session.plugin_resolutions() {
+        if let Some(resolved) = &resolved {
+            let dir = nodepath::dirname(resolved).to_owned();
+            watched.plugin_package_dirs.insert(key(&dir));
+            watched.cover(resolved, &mut dirs);
+            if let Some(root) = package_root(resolved) {
+                watched.add_package(&root, &mut dirs);
+            }
+        }
+        if !specifier.starts_with('.') && !nodepath::is_absolute(&specifier) {
+            let mut package = node_modules.clone();
+            for part in specifier.split('/').take(if specifier.starts_with('@') { 2 } else { 1 }) {
+                package = nodepath::join(&[&package, part]);
+                watched.plugin_package_dirs.insert(key(&package));
+                watched.cover(&package, &mut dirs);
+            }
+            watched.add_package(&package, &mut dirs);
+        }
+    }
+    // the packages an unresolved import names, where they would be installed
     for name in session.unresolved_packages() {
-        let package: Vec<&str> = name.split('/').take(if name.starts_with('@') { 2 } else { 1 }).collect();
         let mut dir = node_modules.clone();
-        for part in package {
+        for part in name.split('/').take(if name.starts_with('@') { 2 } else { 1 }) {
             dir = nodepath::join(&[&dir, part]);
         }
-        package_dirs.insert(dir);
+        watched.cover(&dir, &mut dirs);
+        watched.add_package(&dir, &mut dirs);
     }
     for file in &program_files {
         if file.starts_with("bundled:") {
             continue;
         }
-        if key(file).contains("/node_modules/") {
-            package_dirs.insert(nodepath::dirname(file).to_owned());
-            if let Some(root) = package_root(file) {
-                package_dirs.insert(root);
-            }
+        if let Some(root) = package_root(file) {
+            watched.add_package(&root, &mut dirs);
             continue;
         }
-        watched.flat.insert(nodepath::dirname(file).to_owned());
-    }
-    for dir in package_dirs {
-        watched.package_dirs.insert(key(&dir));
+        let dir = nodepath::dirname(file).to_owned();
+        watched.open_dirs.insert(key(&dir));
         watched.flat.insert(dir);
     }
-    // a directory inside a recursive root needs no watch of its own
-    let recursive_keys: Vec<String> = watched.recursive.iter().map(|r| key(r)).collect();
-    watched.flat.retain(|dir| !recursive_keys.iter().any(|r| is_under(&key(dir), r)));
-    // one watch per directory, whatever its spelling
-    let mut seen = FxHashSet::default();
-    watched.flat.retain(|dir| seen.insert(key(dir)));
+    if let Some(log) = session.read_log() {
+        watched.add_reads(log.entries(), &mut dirs);
+    }
+    watched.stamps = session.loaded_stamps();
+    watched.dedupe();
     Some(watched)
 }
 
-/// Whether an event path matters. `folder_modify`: the event is only a modification of an existing directory
-/// (its entries changed), which counts for a package or scope folder only (files written into a package folder
-/// that is not watched yet surface as that), never elsewhere (its entries' own events say more).
+/// Whether an event path matters. `folder_modify`: the event is only a modification of an existing directory (its
+/// entries changed), which counts only for a plugin package directory (the events of the entries say more).
 fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &FxHashMap<String, Version>) -> bool {
     let k = key(path);
     // configs and build inputs first: roblox-ts's watcher checks isConfigPath before its output-path ignore
@@ -334,23 +510,10 @@ fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &FxHashMap<
     if watched.ignored_roots.iter().any(|root| is_under(&k, root)) {
         return false;
     }
-    let parent = nodepath::dirname(&k);
-    let name = nodepath::basename(&k);
-    // package names never start with a dot: `node_modules/.package-lock.json`, `.cache`, `.bin` are churn
-    if watched.module_dirs.contains(parent) && name.starts_with('.') {
-        return false;
-    }
     if folder_modify {
-        return watched.module_dirs.contains(parent) || watched.plugin_package_dirs.contains(&k);
+        return watched.plugin_package_dirs.contains(&k);
     }
-    let package_event = watched.module_dirs.contains(parent)
-        || watched.plugin_package_dirs.contains(parent)
-        || watched.plugin_package_dirs.contains(&k)
-        || (watched.package_dirs.contains(parent)
-            && (name == "package.json" || name.ends_with(".ts") || name.ends_with(".tsx") || name.ends_with(".mts")));
-    if !package_event && k.split('/').any(|c| c == "node_modules" || c == ".git") {
-        return false;
-    }
+    let parent = nodepath::dirname(&k);
     let name = nodepath::basename(&k);
     if name.starts_with('.') && name.contains(".rbxts-tmp-") {
         return false;
@@ -361,12 +524,46 @@ fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &FxHashMap<
     {
         return false;
     }
-    true
+    // package names never start with a dot: `node_modules/.package-lock.json`, `.cache`, `.bin` are churn
+    let in_module_dir = watched.module_dirs.contains(parent);
+    if in_module_dir {
+        return !name.starts_with('.');
+    }
+    if watched.anchors.contains(&k) || watched.module_dirs.contains(&k) {
+        return true;
+    }
+    if watched.plugin_package_dirs.contains(parent) || watched.plugin_package_dirs.contains(&k) {
+        return true;
+    }
+    if watched.in_package(&k) {
+        return package_entry_counts(path, name);
+    }
+    if k.split('/').any(|c| c == "node_modules" || c == ".git") {
+        return false;
+    }
+    watched.root_keys.iter().any(|root| is_under(&k, root)) || watched.open_dirs.contains(parent)
 }
+
+/// The watches of the last build that loaded a project, and those in use after a build that loaded none.
+struct Watches {
+    good: Watched,
+    failed: Option<Watched>,
+}
+
+impl Watches {
+    fn current(&self) -> &Watched {
+        self.failed.as_ref().unwrap_or(&self.good)
+    }
+}
+
+/// A watched directory and whether its watch is recursive.
+type Watch = (String, bool);
 
 struct Subscriptions {
     watcher: Box<dyn Watcher>,
     active: FxHashSet<(String, bool)>,
+    /// The wanted directories that were not there at the last update.
+    missing: FxHashSet<String>,
 }
 
 impl Subscriptions {
@@ -378,31 +575,35 @@ impl Subscriptions {
         if debug() {
             eprintln!("[rbxtsc watch] recursive {:?}\n[rbxtsc watch] flat {:?}", watched.recursive, watched.flat);
         }
-        let wanted: FxHashSet<(String, bool)> = watched
+        let (wanted, missing): (FxHashSet<Watch>, FxHashSet<Watch>) = watched
             .recursive
             .iter()
             .map(|d| (d.clone(), true))
             .chain(watched.flat.iter().map(|d| (d.clone(), false)))
-            .filter(|(d, _)| Path::new(d).is_dir())
-            .collect();
-        for (dir, recursive) in self.active.iter().filter(|w| !wanted.contains(w)) {
-            let _ = recursive;
+            .partition(|(d, _)| Path::new(d).is_dir());
+        // a directory the build found that is gone already (removed in between: its removal raised no event here)
+        // starts a rebuild, once
+        let missing: FxHashSet<String> = missing.into_iter().map(|(d, _)| d).collect();
+        let mut stale: Vec<String> = missing.iter().filter(|d| !self.missing.contains(*d)).cloned().collect();
+        self.missing = missing;
+        for (dir, _) in self.active.iter().filter(|w| !wanted.contains(w)) {
             let _ = self.watcher.unwatch(Path::new(dir));
         }
-        let mut stale = Vec::new();
-        for (dir, recursive) in wanted.iter().filter(|w| !self.active.contains(w)) {
-            let mode = if *recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
-            if let Err(e) = self.watcher.watch(Path::new(dir), mode) {
-                eprintln!("rbxtsc: cannot watch {dir}: {e}");
-            }
-            changed_since(Path::new(dir), *recursive, since, &mut |path| {
-                let text = path_text(path);
-                if relevant(&text, false, watched, own) {
-                    stale.push(text);
+        let new: Vec<&(String, bool)> = wanted.iter().filter(|w| !self.active.contains(w)).collect();
+        if !new.is_empty() {
+            let scan = Scan::new(watched, since, own);
+            for (dir, recursive) in new {
+                let mode = if *recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
+                if let Err(e) = self.watcher.watch(Path::new(dir), mode) {
+                    eprintln!("rbxtsc: cannot watch {dir}: {e}");
                 }
-            });
+                let whole = *recursive || watched.module_dirs.contains(&key(dir));
+                scan.dir(Path::new(dir), *recursive, whole, &mut stale);
+            }
         }
         self.active = wanted;
+        stale.sort();
+        stale.dedup();
         if debug() && !stale.is_empty() {
             eprintln!("[rbxtsc watch] changed before their directory was watched: {stale:?}");
         }
@@ -410,23 +611,100 @@ impl Subscriptions {
     }
 }
 
-/// Calls `found` with every entry under `dir` (recursively or not) modified at or after `since`. Links are not
-/// followed into.
-fn changed_since(dir: &Path, recursive: bool, since: SystemTime, found: &mut dyn FnMut(&Path)) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let Ok(metadata) = entry.metadata() else { continue };
-        if metadata.modified().is_ok_and(|m| m >= since) {
-            found(&entry.path());
+/// A program file, with the modification time and size it was parsed at.
+type Stamp<'a> = (&'a str, Option<SystemTime>, i64);
+
+/// Compares a directory watched for the first time with what the build read: what changed there since the build
+/// started raised no event (the watch did not exist yet).
+struct Scan<'a> {
+    watched: &'a Watched,
+    since: SystemTime,
+    own: &'a FxHashMap<String, Version>,
+    /// What the load read, by the path key of the directory holding it.
+    reads: FxHashMap<String, Vec<(&'a str, Seen)>>,
+    /// The program's files as parsed, by the path key of their directory.
+    stamps: FxHashMap<String, Vec<Stamp<'a>>>,
+    /// Path keys of the directories this watcher wrote into (their modification time is its own).
+    own_dirs: FxHashSet<String>,
+}
+
+impl<'a> Scan<'a> {
+    fn new(watched: &'a Watched, since: SystemTime, own: &'a FxHashMap<String, Version>) -> Scan<'a> {
+        let mut reads: FxHashMap<String, Vec<(&str, Seen)>> = FxHashMap::default();
+        for (path, seen) in &watched.reads {
+            if let Some(parent) = parent_of(path) {
+                reads.entry(key(parent)).or_default().push((path, *seen));
+            }
         }
-        let name = entry.file_name();
-        if recursive
-            && metadata.is_dir()
-            && !metadata.file_type().is_symlink()
-            && name != "node_modules"
-            && name != ".git"
-        {
-            changed_since(&entry.path(), true, since, found);
+        let mut stamps: FxHashMap<String, Vec<Stamp<'_>>> = FxHashMap::default();
+        for (path, time, size) in &watched.stamps {
+            if let Some(parent) = parent_of(path) {
+                stamps.entry(key(parent)).or_default().push((path, *time, *size));
+            }
+        }
+        let own_dirs = own.keys().filter_map(|k| parent_of(k).map(str::to_owned)).collect();
+        Scan { watched, since, own, reads, stamps, own_dirs }
+    }
+
+    /// A file written or created since the build started, or a directory created since (a directory's modification
+    /// time is its entries': those are judged on their own, or by the directory's own scan).
+    fn recent(&self, metadata: &std::fs::Metadata) -> bool {
+        metadata.created().is_ok_and(|t| t >= self.since)
+            || (!metadata.is_dir() && metadata.modified().is_ok_and(|t| t >= self.since))
+    }
+
+    /// Adds to `stale` what in `dir` (and below it when `recursive`) differs from what the build read or changed
+    /// since it started. `whole`: any entry of the directory counts (a module, package or root directory), so its
+    /// own modification time counts too (an entry added, removed or renamed, whatever the entry's times).
+    fn dir(&self, dir: &Path, recursive: bool, whole: bool, stale: &mut Vec<String>) {
+        let text = path_text(dir);
+        let k = key(&text);
+        if self.watched.ignored_roots.iter().any(|root| is_under(&k, root)) {
+            return;
+        }
+        let Ok(metadata) = std::fs::metadata(dir) else { return };
+        // the directory itself is new since the build started
+        if metadata.created().is_ok_and(|t| t >= self.since) {
+            stale.push(text);
+            return;
+        }
+        if whole && metadata.modified().is_ok_and(|t| t >= self.since) && !self.own_dirs.contains(&k) {
+            stale.push(text.clone());
+        }
+        // what the load read here: a file or directory there or not, as it was
+        for (path, seen) in self.reads.get(&k).into_iter().flatten() {
+            let metadata = std::fs::metadata(path);
+            let (is_file, is_dir) = metadata.map_or((false, false), |m| (m.is_file(), m.is_dir()));
+            if seen.contradicted(is_file, is_dir) {
+                stale.push((*path).to_owned());
+            }
+        }
+        // the program's files: the time and size they were parsed at (a file replaced with an old time)
+        for (path, time, size) in self.stamps.get(&k).into_iter().flatten() {
+            let now = std::fs::metadata(path).ok().map(|m| (m.modified().ok(), m.len() as i64));
+            if now != Some((*time, *size)) {
+                stale.push((*path).to_owned());
+            }
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let Ok(metadata) = entry.metadata() else { continue };
+            let path = entry.path();
+            let path_string = path_text(&path);
+            if self.recent(&metadata) && relevant(&path_string, false, self.watched, self.own) {
+                stale.push(path_string.clone());
+            }
+            let name = entry.file_name();
+            // links are not followed into; a source root's node_modules is not a package (packages are scanned
+            // as their own watches)
+            if recursive
+                && metadata.is_dir()
+                && !metadata.file_type().is_symlink()
+                && name != ".git"
+                && (name != "node_modules" || self.watched.in_package(&key(&path_string)))
+            {
+                self.dir(&path, true, whole, stale);
+            }
         }
     }
 }
@@ -459,27 +737,26 @@ fn watch(
             }
         }
     };
-    let mut subscriptions = Subscriptions { watcher, active: FxHashSet::default() };
+    let mut subscriptions = Subscriptions { watcher, active: FxHashSet::default(), missing: FxHashSet::default() };
     let mut own: FxHashMap<String, Version> = FxHashMap::default();
     // a restarted watcher goes on from the last generation of the one before
     let mut generation = if first_generation > 0 { first_generation + 1 } else { 0 };
 
-    let mut watched = minimal_set(&session);
+    let mut watched = Watches { good: minimal_set(&session), failed: None };
     status("Starting compilation in watch mode...");
     let mut stale = rebuild(&mut session, &mut subscriptions, &mut watched, build, cwd, generation, &[], &mut own);
     loop {
-        // paths that changed before their directory was watched start a rebuild of their own
-        let events: Vec<(String, bool)> = if stale.is_empty() {
+        // paths that changed before their directory was watched (already judged) start a rebuild of their own
+        let mut paths: Vec<String> = if stale.is_empty() {
             let Some(events) = collect(&receiver) else { return 0 };
             events
+                .into_iter()
+                .filter(|(p, folder_modify)| p == RESCAN || relevant(p, *folder_modify, watched.current(), &own))
+                .map(|(p, _)| p)
+                .collect()
         } else {
-            std::mem::take(&mut stale).into_iter().map(|p| (p, false)).collect()
+            std::mem::take(&mut stale)
         };
-        let mut paths: Vec<String> = events
-            .into_iter()
-            .filter(|(p, folder_modify)| p == RESCAN || relevant(p, *folder_modify, &watched, &own))
-            .map(|(p, _)| p)
-            .collect();
         paths.sort();
         paths.dedup();
         // a directory as a touched path makes the session load the project again, with every file's facts
@@ -507,7 +784,9 @@ fn watch(
 /// Waits for an event, then for the burst to end (each event restarts the wait); the paths of the burst, sorted,
 /// each flagged when all its events were modifications of an existing directory (see [`relevant`]). A directory
 /// created, moved in or renamed is a plain event (on Windows a directory moved in is one event for the directory).
-/// `None` when the watcher stopped.
+/// Whether a path is a directory is looked at once the burst ended, not while it runs: opening a directory being
+/// deleted leaves it pending deletion while the handle is open, and the deleting tool (`npm`, `rm -rf`) failing
+/// on it with EPERM. `None` when the watcher stopped.
 fn collect(receiver: &Receiver<notify::Result<Event>>) -> Option<Vec<(String, bool)>> {
     let mut paths: BTreeMap<String, bool> = BTreeMap::new();
     let add = |event: notify::Result<Event>, paths: &mut BTreeMap<String, bool>| match event {
@@ -527,10 +806,10 @@ fn collect(receiver: &Receiver<notify::Result<Event>>) -> Option<Vec<(String, bo
                 event.kind,
                 EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_) | ModifyKind::Metadata(_) | ModifyKind::Other)
             );
+            // a path's flag: every event of it so far was a modification
             for path in event.paths {
-                let folder_modify = modify && std::fs::metadata(&path).is_ok_and(|m| m.is_dir());
-                let entry = paths.entry(path_text(&path)).or_insert(folder_modify);
-                *entry &= folder_modify;
+                let entry = paths.entry(path_text(&path)).or_insert(modify);
+                *entry &= modify;
             }
         }
         Ok(_) => {}
@@ -539,7 +818,11 @@ fn collect(receiver: &Receiver<notify::Result<Event>>) -> Option<Vec<(String, bo
     loop {
         match receiver.recv_timeout(DEBOUNCE) {
             Ok(event) => add(event, &mut paths),
-            Err(RecvTimeoutError::Timeout) => return Some(paths.into_iter().collect()),
+            Err(RecvTimeoutError::Timeout) => {
+                return Some(
+                    paths.into_iter().map(|(p, modify)| (p.clone(), modify && Path::new(&p).is_dir())).collect(),
+                );
+            }
             Err(RecvTimeoutError::Disconnected) => return None,
         }
     }
@@ -557,7 +840,7 @@ fn path_text(path: &Path) -> String {
 fn rebuild(
     session: &mut BuildSession<'_>,
     subscriptions: &mut Subscriptions,
-    watched: &mut Watched,
+    watched: &mut Watches,
     build: &BuildArgs,
     cwd: &str,
     generation: u64,
@@ -580,10 +863,38 @@ fn rebuild(
             }
         }
     }
-    if let Some(set) = watched_set(session) {
-        *watched = set;
+    let start = std::time::Instant::now();
+    match watched_set(session) {
+        Some(set) => {
+            watched.good = set;
+            watched.failed = None;
+        }
+        // no project loaded: the last good set, and what the failed load read (a tsconfig extending a package not
+        // installed yet)
+        None => {
+            let mut set = watched.good.clone();
+            if let Some(log) = session.read_log() {
+                set.add_reads(log.entries(), &mut FxHashMap::default());
+                set.dedupe();
+            }
+            watched.failed = Some(set);
+        }
     }
-    let stale = subscriptions.update(watched, since, own);
+    let computed = start.elapsed();
+    let stale = subscriptions.update(watched.current(), since, own);
+    if debug() {
+        let current = watched.current();
+        eprintln!(
+            "[rbxtsc watch] watch set {:.1} ms, update and scan {:.1} ms: {} reads, {} anchors, {} packages, {} recursive, {} flat",
+            computed.as_secs_f64() * 1000.0,
+            (start.elapsed() - computed).as_secs_f64() * 1000.0,
+            current.reads.len(),
+            current.anchors.len(),
+            current.package_dirs.len(),
+            current.recursive.len(),
+            current.flat.len()
+        );
+    }
     let (report, summary) = match result {
         Ok(result) => result,
         Err(panic) => {
@@ -625,7 +936,7 @@ fn print_end(generation: u64, report: &CompileReport, summary: &BuildSummary, er
 
 #[cfg(test)]
 mod tests {
-    use super::package_root;
+    use super::{Watched, is_under, package_entry_counts, package_root, relevant};
 
     #[test]
     fn package_roots() {
@@ -635,5 +946,61 @@ mod tests {
         );
         assert_eq!(package_root("E:/p/node_modules/pkg/lib/x.d.ts").as_deref(), Some("E:/p/node_modules/pkg"));
         assert_eq!(package_root("E:/p/src/x.ts"), None);
+        // module directories themselves are no packages
+        assert_eq!(package_root("E:/p/node_modules/@rbxts"), None);
+        assert_eq!(package_root("E:/p/node_modules/@rbxts/"), None);
+        assert_eq!(package_root("E:/p/node_modules/a/node_modules"), Some("E:/p/node_modules/a".to_owned()));
+    }
+
+    #[test]
+    fn under() {
+        assert!(is_under("e:/p/src/a.ts", "e:/p/src"));
+        assert!(!is_under("e:/p/srcx/a.ts", "e:/p/src"));
+        assert!(is_under("e:/p", "e:/"));
+    }
+
+    #[test]
+    fn package_entries() {
+        for name in ["package.json", "default.project.json", "index.d.ts", "init.lua", "init.luau", "x.tsx"] {
+            assert!(package_entry_counts(&format!("Z:/none/{name}"), name), "{name}");
+        }
+        for name in ["README.md", ".npmignore", "LICENSE.txt", "x.js"] {
+            assert!(!package_entry_counts(&format!("Z:/none/{name}"), name), "{name}");
+        }
+        // gone, no extension: a directory removed or renamed away
+        assert!(package_entry_counts("Z:/none/out", "out"));
+    }
+
+    #[test]
+    fn relevance() {
+        let mut w = Watched::default();
+        w.module_dirs.insert("e:/p/node_modules".into());
+        w.module_dirs.insert("e:/p/node_modules/@rbxts".into());
+        w.package_dirs.insert("e:/p/node_modules/@rbxts/pkg".into());
+        w.anchors.insert("e:/node_modules".into());
+        w.root_keys.push("e:/p/src".into());
+        w.open_dirs.insert("e:/p".into());
+        w.ignored_roots.push("e:/p/out".into());
+        let own = Default::default();
+        let yes = |p: &str| relevant(p, false, &w, &own);
+        // the module directories themselves, and packages appearing or going in them
+        assert!(yes("E:/p/node_modules"));
+        assert!(yes("E:/p/node_modules/@rbxts/newpkg"));
+        assert!(yes("E:/p/node_modules/@new"));
+        assert!(!yes("E:/p/node_modules/.package-lock.json"));
+        // inside a package, by kind; elsewhere under node_modules nothing
+        assert!(yes("E:/p/node_modules/@rbxts/pkg/out/index.d.ts"));
+        assert!(!yes("E:/p/node_modules/@rbxts/pkg/README.md"));
+        assert!(!yes("E:/p/node_modules/other/index.d.ts"));
+        // a probed location outside the project, and its neighbours
+        assert!(yes("E:/node_modules"));
+        assert!(!yes("E:/elsewhere.txt"));
+        // roots, open directories, outputs
+        assert!(yes("E:/p/src/a/b.ts"));
+        assert!(yes("E:/p/package.json"));
+        assert!(!yes("E:/p/out/a.luau"));
+        assert!(!yes("E:/p/sub/x.ts"));
+        // a directory's own modification never counts here
+        assert!(!relevant("E:/p/node_modules/@rbxts/pkg", true, &w, &own));
     }
 }

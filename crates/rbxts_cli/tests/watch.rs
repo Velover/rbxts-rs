@@ -343,10 +343,22 @@ fn linked_project(label: &str) -> Option<(PathBuf, PathBuf, Vec<PathBuf>)> {
         "\"plugins\": []",
     );
     std::fs::write(root.join("tsconfig.json"), tsconfig).unwrap();
-    let scope = root.join("node_modules/@rbxts");
-    std::fs::create_dir_all(&scope).unwrap();
+    let links = link_packages(&root.join("node_modules/@rbxts"));
+    Some((base, root, links))
+}
+
+/// The fixture's `node_modules`: `RBXTS_RS_FIXTURE_NODE_MODULES` or roblox-ts's tests project's.
+fn fixture_node_modules() -> PathBuf {
+    std::env::var_os("RBXTS_RS_FIXTURE_NODE_MODULES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_NODE_MODULES))
+}
+
+/// Makes `scope` (a real directory) with one junction per package of the fixture's `@rbxts`; the junctions.
+fn link_packages(scope: &Path) -> Vec<PathBuf> {
+    std::fs::create_dir_all(scope).unwrap();
     let mut links = Vec::new();
-    for entry in std::fs::read_dir(node_modules.join("@rbxts")).unwrap().flatten() {
+    for entry in std::fs::read_dir(fixture_node_modules().join("@rbxts")).unwrap().flatten() {
         let link = scope.join(entry.file_name());
         let status = Command::new("cmd")
             .args(["/C", "mklink", "/J"])
@@ -358,7 +370,7 @@ fn linked_project(label: &str) -> Option<(PathBuf, PathBuf, Vec<PathBuf>)> {
         assert!(status.success());
         links.push(link);
     }
-    Some((base, root, links))
+    links
 }
 
 /// A package folder created (one rebuild starts), its files written while that rebuild runs: the folder is
@@ -432,6 +444,186 @@ fn the_watcher_hears_the_tsconfig_after_an_out_dir_holding_the_project() {
     let end = watcher.build_end(3);
     assert_eq!(end["ok"], true, "{end}");
     assert!(root.join("out/shared/later.luau").is_file());
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+fn write(path: &Path, text: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
+}
+
+/// Sets a file's modification time to 1985, as an archive extraction or `cp -p` of an old tree leaves it.
+fn set_old(path: &Path) {
+    let old = std::time::UNIX_EPOCH + Duration::from_secs(499_162_500);
+    std::fs::File::options().write(true).open(path).unwrap().set_modified(old).unwrap();
+}
+
+/// Removes a directory tree, retrying while a watch handle holds a directory in it pending deletion.
+fn remove_tree(path: &Path) {
+    for _ in 0..50 {
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => return,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+            Err(_) => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+    panic!("could not remove {}", path.display());
+}
+
+impl Watcher {
+    /// Waits for the next build to start (within 60 s).
+    fn build_start(&self) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match self.events.recv_timeout(left) {
+                Ok(event) if event["event"] == "build-start" => return,
+                Ok(_) => {}
+                Err(_) => panic!("no build started within 60 s"),
+            }
+        }
+    }
+
+    /// Settles (no build for 1.5 s) and checks that the last build succeeded.
+    fn settled_ok(&self, label: &str) {
+        let last = self.settle();
+        assert!(last.as_ref().is_some_and(|end| end["ok"] == true), "{label}: the last build failed: {last:?}");
+    }
+
+    /// After a successful build: settles, and checks that any build since succeeded too.
+    fn still_ok(&self, label: &str) {
+        let last = self.settle();
+        assert!(last.as_ref().is_none_or(|end| end["ok"] == true), "{label}: the last build failed: {last:?}");
+    }
+}
+
+fn package_json(name: &str) -> String {
+    format!("{{ \"name\": \"@rbxts/{name}\", \"main\": \"out/init.lua\", \"types\": \"out/index.d.ts\" }}\n")
+}
+
+/// Package files in a subfolder of the package (`types: out/index.d.ts`): written after the watch started, or while
+/// the rebuild their package folder started runs (several delays), or with a 1985 modification time (an extracted
+/// archive) while it runs. Each is seen: the watcher ends on a successful build.
+#[test]
+fn package_files_in_subfolders_late_or_old_are_seen() {
+    let Some((base, root, links)) = linked_project("nested") else { return };
+    let scope = root.join("node_modules/@rbxts");
+    // package.json and an empty out/ before the watch, the types file later
+    write(&scope.join("neststatic/package.json"), &package_json("neststatic"));
+    std::fs::create_dir_all(scope.join("neststatic/out")).unwrap();
+    write(
+        &root.join("src/shared/nestStatic.ts"),
+        "import { v } from \"@rbxts/neststatic\";\n\nexport const w = v.size();\n",
+    );
+    let watcher = start(&root);
+    assert_eq!(watcher.build_end(0)["ok"], false, "the types are missing");
+    write(&scope.join("neststatic/out/index.d.ts"), "export declare const v: Array<number>;\n");
+    write(&scope.join("neststatic/out/init.lua"), "return { v = {} }\n");
+    watcher.until_ok();
+    watcher.still_ok("neststatic");
+    assert!(root.join("out/shared/nestStatic.luau").is_file());
+
+    // package.json and out/ start a rebuild; the types land while it runs
+    for (i, delay) in [0u64, 15, 40, 100].into_iter().enumerate() {
+        let name = format!("nestrace{i}");
+        write(
+            &root.join(format!("src/shared/{name}.ts")),
+            &format!("import {{ v }} from \"@rbxts/{name}\";\n\nexport const w = v.size();\n"),
+        );
+        let end = watcher.settle();
+        assert!(end.as_ref().is_some_and(|e| e["ok"] == false), "{name} is missing: {end:?}");
+        write(&scope.join(format!("{name}/package.json")), &package_json(&name));
+        std::fs::create_dir_all(scope.join(format!("{name}/out"))).unwrap();
+        watcher.build_start();
+        std::thread::sleep(Duration::from_millis(delay));
+        write(&scope.join(format!("{name}/out/index.d.ts")), "export declare const v: Array<number>;\n");
+        write(&scope.join(format!("{name}/out/init.lua")), "return { v = {} }\n");
+        watcher.settled_ok(&format!("types {delay} ms into the rebuild"));
+    }
+
+    // the types re-export a file that lands, with an old modification time, while the rebuild runs
+    for (i, delay) in [0u64, 30, 80].into_iter().enumerate() {
+        let name = format!("oldm{i}");
+        write(
+            &root.join(format!("src/shared/{name}.ts")),
+            &format!("import {{ extra }} from \"@rbxts/{name}\";\n\nexport const w = extra;\n"),
+        );
+        let end = watcher.settle();
+        assert!(end.as_ref().is_some_and(|e| e["ok"] == false), "{name} is missing: {end:?}");
+        write(&scope.join(format!("{name}/package.json")), &package_json(&name));
+        write(&scope.join(format!("{name}/out/index.d.ts")), "export * from \"./extra\";\n");
+        write(&scope.join(format!("{name}/out/init.lua")), "return {}\n");
+        watcher.build_start();
+        std::thread::sleep(Duration::from_millis(delay));
+        let extra = scope.join(format!("{name}/out/extra.d.ts"));
+        write(&extra, "export declare const extra: number;\n");
+        set_old(&extra);
+        watcher.settled_ok(&format!("an old file {delay} ms into the rebuild"));
+    }
+
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// node_modules removed (`npm ci`, `rm -rf node_modules`), a source edited while it is gone, then node_modules back:
+/// made again folder by folder, or renamed in whole. The watcher ends on a successful build with the edit.
+#[test]
+fn node_modules_removed_and_reinstalled_is_seen() {
+    for mode in ["copy", "rename"] {
+        let Some((base, root, links)) = linked_project(&format!("nmwipe-{mode}")) else { return };
+        let watcher = start(&root);
+        assert_eq!(watcher.build_end(0)["ok"], true);
+        for link in &links {
+            unlink(link);
+        }
+        remove_tree(&root.join("node_modules"));
+        let end = watcher.settle();
+        assert!(end.as_ref().is_some_and(|e| e["ok"] == false), "{mode}: no node_modules: {end:?}");
+        let b = std::fs::read_to_string(root.join("src/shared/b.ts")).unwrap();
+        std::fs::write(root.join("src/shared/b.ts"), b + "\nexport const whileGone = 1;\n").unwrap();
+        let end = watcher.settle();
+        assert!(end.as_ref().is_some_and(|e| e["ok"] == false), "{mode}: the edit while it is gone: {end:?}");
+        let links = if mode == "copy" {
+            link_packages(&root.join("node_modules/@rbxts"))
+        } else {
+            let staged = base.join("staged-node_modules");
+            let links = link_packages(&staged.join("@rbxts"));
+            std::fs::rename(&staged, root.join("node_modules")).unwrap();
+            links.iter().map(|l| root.join("node_modules").join(l.strip_prefix(&staged).unwrap())).collect()
+        };
+        watcher.until_ok();
+        watcher.still_ok(mode);
+        let b = std::fs::read_to_string(root.join("out/shared/b.luau")).unwrap();
+        assert!(b.contains("whileGone"), "{mode}: the edit made while node_modules was gone:\n{b}");
+        for link in links {
+            unlink(&link);
+        }
+        drop(watcher);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+/// A watch started before node_modules exists (a fresh clone), then the install: rebuilt.
+#[test]
+fn a_watch_started_before_the_install_sees_it() {
+    let Some((base, root, links)) = linked_project("nmfirst") else { return };
+    for link in &links {
+        unlink(link);
+    }
+    remove_tree(&root.join("node_modules"));
+    let watcher = start(&root);
+    assert_eq!(watcher.build_end(0)["ok"], false, "no node_modules");
+    let links = link_packages(&root.join("node_modules/@rbxts"));
+    watcher.until_ok();
+    watcher.still_ok("installed");
+    assert!(root.join("out/shared/d.luau").is_file());
     for link in links {
         unlink(&link);
     }

@@ -122,6 +122,8 @@ pub struct BuildSession<'p> {
     seed: Option<Vec<(&'static str, ErasedState)>>,
     /// The incremental state was looked at (only the first build reads it).
     disk_checked: bool,
+    /// What the last load read (recorded in watch sessions only), kept when the load failed.
+    reads: Option<Arc<rbxts_project::ReadLog>>,
 }
 
 /// What one build decided, for reports and events.
@@ -155,6 +157,7 @@ impl<'p> BuildSession<'p> {
             rebuilds: 0,
             seed: None,
             disk_checked: false,
+            reads: None,
         }
     }
 
@@ -241,6 +244,29 @@ impl<'p> BuildSession<'p> {
         names
     }
 
+    /// What the last program load read from the file system (the tsconfig parse and the program: files, directories
+    /// and the paths module resolution probed that did not exist), for a watcher; also when that load failed (a
+    /// tsconfig extending a package not installed yet).
+    pub fn read_log(&self) -> Option<Arc<rbxts_project::ReadLog>> {
+        self.reads.clone()
+    }
+
+    /// The last program's files on disk, each with the modification time and size it had when parsed (a watcher
+    /// compares them with the disk for directories it starts watching).
+    pub fn loaded_stamps(&self) -> Vec<(String, Option<std::time::SystemTime>, i64)> {
+        let Some(last) = &self.last else { return Vec::new() };
+        last.project
+            .program
+            .source_files()
+            .iter()
+            .filter_map(|f| {
+                let file = f.get();
+                let (time, size) = self.cache.stamp(file.path())?;
+                Some((file.file_name().to_owned(), time, size))
+            })
+            .collect()
+    }
+
     /// The directories plugins asked the last committed build to watch (`FinishCx::watch_dir`).
     pub fn plugin_watch_dirs(&self) -> Vec<String> {
         self.committed.as_ref().map_or_else(Vec::new, |c| c.watch_dirs.clone())
@@ -278,7 +304,8 @@ impl<'p> BuildSession<'p> {
     }
 
     /// Loads the program and the project setup.
-    fn load(&self, report: &mut CompileReport, versions: FxHashMap<P<SourceFile>, Version>) -> Option<Loaded> {
+    fn load(&mut self, report: &mut CompileReport, versions: FxHashMap<P<SourceFile>, Version>) -> Option<Loaded> {
+        self.reads = self.watch.then(|| Arc::new(rbxts_project::ReadLog::default()));
         let project = match rbxts_project::load_cached(
             &LoadOptions {
                 tsconfig: self.options.tsconfig.clone(),
@@ -287,6 +314,7 @@ impl<'p> BuildSession<'p> {
                 lazy_dts: false,
             },
             Some(&self.cache),
+            self.reads.clone(),
         ) {
             Ok(project) => project,
             Err(diagnostics) => {
@@ -330,6 +358,11 @@ impl<'p> BuildSession<'p> {
         salt.push('\n');
         salt.push_str(&format!("{:?}\n{:?}\n", services.data.options, self.options.out_dir_override));
         salt.push_str(&format!("{:?}\n", services.project_type));
+        // createNodeModulesPathMapping reads every type-root package's package.json: a changed main or types entry
+        // changes the requires of the files importing it, with no change to any program file
+        let mut mapping: Vec<_> = services.node_modules_path_mapping.iter().collect();
+        mapping.sort();
+        salt.push_str(&format!("{mapping:?}\n"));
         let mut texts = |paths: &[String]| {
             for path in paths {
                 salt.push_str(path);
