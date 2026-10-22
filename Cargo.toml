@@ -49,6 +49,12 @@ lto = "off"
 codegen-units = 256
 incremental = true
 
+# Luau (rbxts_luau_check, built by luau0-src) without its asserts in every profile: luau0-src turns them on under
+# debug_assertions, and a failed one ends in __debugbreak (a crash) instead of an error. A build dependency, so this
+# package override (it wins over build-override) is what reaches it.
+[profile.dev.package.luau0-src]
+debug-assertions = false
+
 # Measurements: release optimisation without LTO, like tsrs's `ci` profile (the tsrs.exe we compare against).
 [profile.measure]
 inherits = "release"

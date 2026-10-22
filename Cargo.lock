@@ -604,6 +604,7 @@ name = "rbxts_transform"
 version = "0.0.0"
 dependencies = [
  "rbxts_luau",
+ "rbxts_luau_check",
  "rbxts_plugin",
  "rbxts_project",
  "rbxts_test_plugins",
