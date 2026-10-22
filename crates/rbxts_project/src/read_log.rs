@@ -3,6 +3,9 @@
 //! `SeenFiles`). Paths that did not exist count as much as files read: they are the places module resolution
 //! probed (`node_modules/<name>` in every ancestor, `@types`, `typeRoots`, `paths`), where a file appearing changes
 //! the program.
+//!
+//! JSON files read (package.json, configs) also keep a hash of their text: a rewrite with the same bytes changes
+//! nothing the load saw.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -56,10 +59,25 @@ impl std::ops::BitOr for Seen {
 #[derive(Default)]
 pub struct ReadLog {
     paths: Mutex<HashMap<String, Seen>>,
+    /// [`text_hash`] of the JSON files read, by their spelling in the reads.
+    texts: Mutex<HashMap<String, u64>>,
+}
+
+/// The hash a read log keeps of a JSON file's text (FNV-1a over the UTF-8 bytes, a leading byte-order mark left
+/// out): equal hashes of a file's text now and as read mean the same text.
+pub fn text_hash(text: &str) -> u64 {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    hash ^ (text.len() as u64).rotate_left(32)
 }
 
 impl ReadLog {
-    fn see(&self, path: &str, seen: Seen) {
+    /// Records what a read of `path` learned (setup's reads outside the program's file system go here too).
+    pub fn see(&self, path: &str, seen: Seen) {
         // the bundled lib files are not on disk
         if path.starts_with("bundled:") {
             return;
@@ -71,6 +89,21 @@ impl ReadLog {
                 paths.insert(path.to_owned(), seen);
             }
         }
+    }
+
+    /// Records a file read: there with `text`, or not there. A JSON file's text is hashed ([`text_hash`]).
+    pub fn see_text(&self, path: &str, text: Option<&str>) {
+        self.see(path, if text.is_some() { Seen::FILE } else { Seen::NO_FILE });
+        if let Some(text) = text
+            && path.ends_with(".json")
+        {
+            self.texts.lock().expect("read log").insert(path.to_owned(), text_hash(text));
+        }
+    }
+
+    /// The JSON files read with the hash of their text (unordered).
+    pub fn texts(&self) -> Vec<(String, u64)> {
+        self.texts.lock().expect("read log").iter().map(|(p, h)| (p.clone(), *h)).collect()
     }
 
     /// Every path read, with what was learned (unordered).
@@ -108,7 +141,7 @@ impl<T: FS> FS for RecordingFs<T> {
 
     fn read_file(&self, path: &str) -> Option<String> {
         let text = self.inner.read_file(path);
-        self.log.see(path, if text.is_some() { Seen::FILE } else { Seen::NO_FILE });
+        self.log.see_text(path, text.as_deref());
         text
     }
 
@@ -158,7 +191,7 @@ impl<T: FS> FS for RecordingFs<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::Seen;
+    use super::{Seen, text_hash};
 
     #[test]
     fn contradictions() {
@@ -168,5 +201,12 @@ mod tests {
         assert!(Seen::FILE.contradicted(false, false));
         assert!(!Seen::DIR.contradicted(false, true));
         assert!(!Seen::LISTED.contradicted(false, false));
+    }
+
+    #[test]
+    fn text_hashes() {
+        assert_eq!(text_hash("{}"), text_hash("\u{feff}{}"));
+        assert_ne!(text_hash("{}"), text_hash("{ }"));
+        assert_ne!(text_hash(""), text_hash("\0"));
     }
 }

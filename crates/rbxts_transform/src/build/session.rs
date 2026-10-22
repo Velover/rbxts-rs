@@ -259,13 +259,16 @@ impl<'p> BuildSession<'p> {
         self.disk_checked = true;
     }
 
-    /// The tsconfig and `extends` files, the Rojo project files and the plugin build inputs of the last loaded
-    /// build: what a watcher watches besides the sources.
+    /// The tsconfig and `extends` files, the Rojo project files (the project's and the package resolvers') and the
+    /// plugin build inputs of the last loaded build: what a watcher watches besides the sources.
     pub fn config_inputs(&self) -> Vec<String> {
         let mut inputs = Vec::new();
         if let Some(last) = &self.last {
             inputs.extend(last.config_paths.iter().cloned());
             inputs.extend(last.services.rojo_resolver.config_files().iter().cloned());
+            for resolver in &last.services.pkg_rojo_resolvers {
+                inputs.extend(resolver.config_files().iter().cloned());
+            }
         }
         if let Some(committed) = &self.committed {
             for plugin in &committed.plugins {
@@ -374,6 +377,22 @@ impl<'p> BuildSession<'p> {
             _ => None,
         });
         files.chain(setup).filter(|glob| glob.matcher.is_some())
+    }
+
+    /// The places the last loaded project's Rojo resolvers mount (`$path` folders, missing ones included; the type
+    /// roots for the package resolvers): they search these folders for project files, so one created or removed
+    /// there changes them.
+    pub fn rojo_partitions(&self) -> Vec<String> {
+        let Some(last) = &self.last else { return Vec::new() };
+        std::iter::once(&last.services.rojo_resolver)
+            .chain(&last.services.pkg_rojo_resolvers)
+            .flat_map(|resolver| resolver.partitions().iter().map(|p| p.fs_path.clone()))
+            .collect()
+    }
+
+    /// Whether a file would be one of the last loaded project's root files (its tsconfig's `files` and `include`).
+    pub fn include_matcher(&self) -> Option<rbxts_project::IncludeMatcher> {
+        self.last.as_ref().map(|last| last.project.include_matcher())
     }
 
     /// The directories plugins asked the last committed build to watch (`FinishCx::watch_dir`).

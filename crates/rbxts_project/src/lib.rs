@@ -12,7 +12,7 @@ pub mod source_cache;
 
 pub use packages::{ModuleResolver, PackageInfo, PackageJsonCache, ResolvedModuleInfo};
 pub use path_translator::PathTranslator;
-pub use read_log::{ReadLog, Seen};
+pub use read_log::{ReadLog, Seen, text_hash};
 pub use rojo::{FileRelation, NetworkType, Partition, RbxPath, RbxType, RelativeRbxPathPart, RojoError, RojoResolver};
 pub use setup::{
     FileRojoInfo, InputFile, ProjectData, ProjectDiagnostic, ProjectError, ProjectOptionLayer, ProjectOptions,
@@ -138,7 +138,25 @@ fn new_host(cwd: &str, fs: &Arc<dyn FS>, cache: Option<&Arc<SourceFileCache>>) -
     }
 }
 
+/// Whether a file is, or would be once created, part of a project's root files: TypeScript's
+/// `possiblyMatchesFileName` over the tsconfig's `files` and `include` globs (false positives possible, never a
+/// false negative). A copyable handle on the parsed tsconfig, which lives as long as the process.
+#[derive(Clone, Copy)]
+pub struct IncludeMatcher(P<ParsedCommandLine>);
+
+impl IncludeMatcher {
+    /// `file_name` in any spelling.
+    pub fn possibly_includes(&self, file_name: &str) -> bool {
+        self.0.possibly_matches_file_name(&tspath::normalize_slashes(file_name))
+    }
+}
+
 impl Project {
+    /// What [`IncludeMatcher`] checks, for this project's tsconfig.
+    pub fn include_matcher(&self) -> IncludeMatcher {
+        IncludeMatcher(self.config)
+    }
+
     /// The declaration outputs TypeScript would emit for a project file (`ts.getOutputFileNames` filtered to
     /// `.d.ts` and `.d.ts.map`, as roblox-ts keeps them): none unless declarations are emitted, and none for JSON
     /// or declaration files.
@@ -265,7 +283,8 @@ impl Project {
         // as TypeScript's solution builder spells the config path for roblox-ts (forward slashes, in messages)
         let rbxts = setup::read_project_options(&tspath::normalize_path(&tsconfig_path))?;
         let options = ProjectOptions::from_layers(&[&rbxts.options, overrides]);
-        let mut data = setup::create_project_data(&tsconfig_path, options)?;
+        let reads = self.reads.as_deref();
+        let mut data = setup::create_project_data_recorded(&tsconfig_path, options, reads)?;
         data.warnings.splice(0..0, rbxts.warnings);
         let raw_options = self.program.options();
         // getParsedCommandLine: a composite project without rootDir gets the tsconfig's directory, before validation
@@ -277,6 +296,6 @@ impl Project {
         setup::validate_compiler_options(&options, &data.project_path)?;
         let case_sensitive = osvfs::fs().use_case_sensitive_file_names();
         let translator = setup::create_path_translator(&raw_options, self.config.file_names(), &data, case_sensitive);
-        ProjectSetup::new(data, translator, &options, &self.input_files(), case_sensitive)
+        ProjectSetup::new_recorded(data, translator, &options, &self.input_files(), case_sensitive, reads)
     }
 }

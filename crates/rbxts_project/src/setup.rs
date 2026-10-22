@@ -14,6 +14,7 @@ use tsrs_tsoptions::{CompilerOptionsValue, parse_config_file_text_to_json};
 
 use crate::nodepath;
 use crate::path_translator::PathTranslator;
+use crate::read_log::{ReadLog, Seen};
 use crate::rojo::{NetworkType, RbxPath, RojoError, RojoResolver, js_object_keys};
 
 const NODE_MODULES: &str = "node_modules";
@@ -439,10 +440,19 @@ fn is_scoped_package_name(name: &str) -> bool {
 
 /// `ts.findPackageJson`: the nearest package.json from `directory` upwards.
 pub fn find_package_json(directory: &str) -> Option<String> {
+    find_package_json_recorded(directory, None)
+}
+
+/// [`find_package_json`], each place looked at recorded in `reads` (a watcher watches them).
+pub fn find_package_json_recorded(directory: &str, reads: Option<&ReadLog>) -> Option<String> {
     let mut dir = directory.to_string();
     loop {
         let candidate = tspath::combine_paths(&dir, &["package.json"]);
-        if fs::metadata(&candidate).is_ok_and(|m| m.is_file()) {
+        let found = fs::metadata(&candidate).is_ok_and(|m| m.is_file());
+        if let Some(reads) = reads {
+            reads.see(&candidate, if found { Seen::FILE } else { Seen::NO_FILE });
+        }
+        if found {
             return Some(candidate);
         }
         let parent = tspath::get_directory_path(&tspath::normalize_slashes(&dir));
@@ -454,14 +464,26 @@ pub fn find_package_json(directory: &str) -> Option<String> {
 }
 
 /// `createProjectData`.
-pub fn create_project_data(tsconfig_path: &str, mut options: ProjectOptions) -> Result<ProjectData, ProjectError> {
+pub fn create_project_data(tsconfig_path: &str, options: ProjectOptions) -> Result<ProjectData, ProjectError> {
+    create_project_data_recorded(tsconfig_path, options, None)
+}
+
+/// [`create_project_data`], the package.json lookup and read recorded in `reads`.
+pub fn create_project_data_recorded(
+    tsconfig_path: &str,
+    mut options: ProjectOptions,
+    reads: Option<&ReadLog>,
+) -> Result<ProjectData, ProjectError> {
     let project_path = nodepath::dirname(tsconfig_path).to_owned();
-    let pkg_json_path =
-        find_package_json(&project_path).ok_or_else(|| ProjectError::new("Unable to find package.json"))?;
+    let pkg_json_path = find_package_json_recorded(&project_path, reads)
+        .ok_or_else(|| ProjectError::new("Unable to find package.json"))?;
 
     // a package.json that cannot be read or parsed means "not a package"
-    let is_package = fs::read_to_string(&pkg_json_path)
-        .ok()
+    let text = fs::read_to_string(&pkg_json_path).ok();
+    if let Some(reads) = reads {
+        reads.see_text(&pkg_json_path, text.as_deref());
+    }
+    let is_package = text
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
         .is_some_and(|json| json.get("name").and_then(Value::as_str).is_some_and(is_scoped_package_name));
 
@@ -698,9 +720,22 @@ pub fn create_node_modules_path_mapping(
     type_roots: &[String],
     use_case_sensitive_file_names: bool,
 ) -> Result<HashMap<String, String>, ProjectError> {
+    create_node_modules_path_mapping_recorded(type_roots, use_case_sensitive_file_names, None)
+}
+
+/// [`create_node_modules_path_mapping`], the type roots and the package.json files read recorded in `reads`.
+pub fn create_node_modules_path_mapping_recorded(
+    type_roots: &[String],
+    use_case_sensitive_file_names: bool,
+    reads: Option<&ReadLog>,
+) -> Result<HashMap<String, String>, ProjectError> {
     let mut mapping = HashMap::new();
     for scope_path in type_roots {
-        if !Path::new(scope_path).exists() {
+        let exists = Path::new(scope_path).exists();
+        if let Some(reads) = reads {
+            reads.see(scope_path, if exists { Seen::DIR } else { Seen::NO_DIR });
+        }
+        if !exists {
             continue;
         }
         let entries = fs::read_dir(scope_path)
@@ -714,10 +749,16 @@ pub fn create_node_modules_path_mapping(
             let pkg_path = nodepath::join(&[scope_path, &pkg_name]);
             let pkg_json_path = nodepath::join(&[&pkg_path, "package.json"]);
             if !Path::new(&pkg_json_path).exists() {
+                if let Some(reads) = reads {
+                    reads.see(&pkg_json_path, Seen::NO_FILE);
+                }
                 continue;
             }
-            let text =
-                fs::read_to_string(&pkg_json_path).map_err(|e| ProjectError::new(format!("{pkg_json_path}: {e}")))?;
+            let text = fs::read_to_string(&pkg_json_path);
+            if let Some(reads) = reads {
+                reads.see_text(&pkg_json_path, text.as_deref().ok());
+            }
+            let text = text.map_err(|e| ProjectError::new(format!("{pkg_json_path}: {e}")))?;
             // fs-extra's readJsonSync strips a byte-order mark
             let json: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
                 .map_err(|e| ProjectError::new(format!("{pkg_json_path}: {e}")))?;
@@ -820,6 +861,19 @@ impl ProjectSetup {
         files: &[InputFile<'_>],
         use_case_sensitive_file_names: bool,
     ) -> Result<ProjectSetup, ProjectError> {
+        Self::new_recorded(data, path_translator, opts, files, use_case_sensitive_file_names, None)
+    }
+
+    /// [`ProjectSetup::new`], recording in `reads` the package.json files the package mapping reads (the Rojo
+    /// resolvers keep their own record: [`RojoResolver::config_files`], [`RojoResolver::partitions`]).
+    pub fn new_recorded(
+        data: ProjectData,
+        path_translator: PathTranslator,
+        opts: &CompilerOptions,
+        files: &[InputFile<'_>],
+        use_case_sensitive_file_names: bool,
+        reads: Option<&ReadLog>,
+    ) -> Result<ProjectSetup, ProjectError> {
         let rojo_error =
             |path: &str, e: RojoError| ProjectError::new(format!("Unable to read Rojo project \"{path}\": {e}"));
         let type_roots = opts.type_roots.clone().unwrap_or_default();
@@ -835,7 +889,8 @@ impl ProjectSetup {
                     .map(|h| h.join().expect("package resolver thread"))
                     .collect::<Result<Vec<_>, _>>()
             });
-            let mapping = scope.spawn(|| create_node_modules_path_mapping(&type_roots, use_case_sensitive_file_names));
+            let mapping = scope
+                .spawn(|| create_node_modules_path_mapping_recorded(&type_roots, use_case_sensitive_file_names, reads));
             let main = match &data.rojo_config_path {
                 Some(path) => {
                     // getRojoProject reads the file before the resolver does, so a missing file is an error here
