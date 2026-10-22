@@ -24,14 +24,13 @@ use rbxts_luau::{
     AnyIdentifier, BinaryOperator, ElseBody, Expr, IfStatement, InterpolatedStringPart, Stmt, TableField, create,
 };
 use rbxts_luau_check::{CompileError, LUAU_VERSION};
-use rbxts_plugin::PluginDiagnostic;
-use tsrs_ast::{Diagnostic, Node};
-use tsrs_core::P;
+use tsrs_ast::{Diagnostic, Node, SourceFile, new_diagnostic};
+use tsrs_core::{P, TextRange};
+use tsrs_diagnostics::{Category, new_ad_hoc_message};
 
-use super::backend::to_diagnostic;
 use crate::classes::prereqs::temp_id;
 use crate::classes::transform_state::TransformState;
-use crate::shared::diagnostics::internal_error;
+use crate::shared::diagnostics::{internal_error, node_range};
 
 /// The most local registers Luau allows in one function, the main chunk included.
 pub const LUAU_MAX_LOCALS: u32 = 200;
@@ -241,17 +240,19 @@ fn optimize_directive(statements: &[Stmt]) -> Option<u32> {
 }
 
 /// A file a plugin emitted into, for the load check: where its TS statements' Luau ends in the final statement list
-/// (for each, the index past its last statement), and its `--!optimize` directive's level.
+/// (for each, the index past its last statement, and the statement's text range), and its `--!optimize` directive's
+/// level. Text ranges rather than nodes: a watch build keeps the mark with a cached file's Luau (its late strings may
+/// change value and decide whether it loads), and the file's text, not its node objects, is what stays the same.
+#[derive(Clone, Debug)]
 pub(crate) struct LoadCheck {
-    statement_ends: Vec<(usize, P<Node>)>,
-    file: P<Node>,
+    statement_ends: Vec<(usize, TextRange)>,
     directive: Option<u32>,
 }
 
 impl LoadCheck {
-    /// The TS statement whose Luau holds the final statement `index` (the file, before the first).
-    fn anchor(&self, index: usize) -> P<Node> {
-        self.statement_ends.iter().find(|(end, _)| *end > index).map_or(self.file, |(_, node)| *node)
+    /// The text of the TS statement whose Luau holds the final statement `index` (the file's start, before the first).
+    fn anchor(&self, index: usize) -> TextRange {
+        self.statement_ends.iter().find(|(end, _)| *end > index).map_or(TextRange::new(0, 0), |(_, range)| *range)
     }
 
     /// The file has a `--!optimize` directive (the load check then compiles at every level it needs).
@@ -276,7 +277,6 @@ pub(crate) fn check_main_chunk(state: &mut TransformState<'_>, statements: &mut 
     }
     state.plugin_file.load_check = Some(LoadCheck {
         statement_ends: statement_ends(state, spilled_at),
-        file: state.source_file.as_node(),
         directive: optimize_directive(statements),
     });
 }
@@ -384,12 +384,18 @@ pub(crate) fn decide_all(jobs: &[(&str, bool)]) -> Vec<Verdict> {
 }
 
 /// The diagnostic for a rendered file's verdict: an error when Luau refuses it where Roblox runs it, a warning when it
-/// loads only with Luau's constant folding. `lines` is the line each final statement starts on.
-pub(crate) fn load_check_diagnostic(check: &LoadCheck, verdict: &Verdict, lines: &[u32]) -> Option<P<Diagnostic>> {
+/// loads only with Luau's constant folding. `lines` is the line each final statement starts on; `file` is the TS
+/// file (of the program being built: for a cached file, the same text the mark was made from).
+pub(crate) fn load_check_diagnostic(
+    check: &LoadCheck,
+    verdict: &Verdict,
+    lines: &[u32],
+    file: P<SourceFile>,
+) -> Option<P<Diagnostic>> {
     let refusal = match verdict {
         Verdict::Loads => return None,
         Verdict::Panicked(message) => {
-            return Some(internal_error(check.file, &format!("the Luau load check panicked: {message}")));
+            return Some(internal_error(file.as_node(), &format!("the Luau load check panicked: {message}")));
         }
         Verdict::Fails(refusal) | Verdict::FoldingOnly(refusal) => refusal,
     };
@@ -400,15 +406,15 @@ pub(crate) fn load_check_diagnostic(check: &LoadCheck, verdict: &Verdict, lines:
         Some(directive) => format!("optimisation level {directive} (the file's --!optimize directive)"),
         None => format!("optimisation level {optimization_level}"),
     };
-    let diagnostic = match verdict {
+    let (category, message) = match verdict {
         Verdict::Fails(refusal) => {
             let r#where = if refusal.optimization_level == 1 {
                 "Roblox's default when testing in Studio"
             } else {
                 "what live games run"
             };
-            PluginDiagnostic::error(
-                anchor,
+            (
+                Category::Error,
                 format!(
                     "Luau {LUAU_VERSION} refuses this file at {} and debug level 1, {where}: {luau_says}. It would \
                      build, then fail to load.",
@@ -419,8 +425,8 @@ pub(crate) fn load_check_diagnostic(check: &LoadCheck, verdict: &Verdict, lines:
         _ => {
             // a directive sets the optimisation level, so only the debug level can make the file fail
             let fails_at = if check.directive.is_some() { "debug level 2" } else { "--!optimize 0 or debug level 2" };
-            PluginDiagnostic::warning(
-                anchor,
+            (
+                Category::Warning,
                 format!(
                     "This file loads only with Luau's constant folding: Luau {LUAU_VERSION} refuses it at {} and \
                      debug level {}: {luau_says}. It fails to load at {fails_at}.",
@@ -430,12 +436,16 @@ pub(crate) fn load_check_diagnostic(check: &LoadCheck, verdict: &Verdict, lines:
             )
         }
     };
-    Some(to_diagnostic(&diagnostic))
+    let diagnostic = new_diagnostic(Some(file), anchor, new_ad_hoc_message(&message), &[]);
+    if category != Category::Error {
+        diagnostic.set_category(category);
+    }
+    Some(diagnostic)
 }
 
 /// For each top-level TS statement, the index past its Luau in the final statement list: the root ranges, moved by
 /// the statements inserted in front of them since (`plugin_file.front_inserts`) and by the spill table.
-fn statement_ends(state: &TransformState<'_>, spilled_at: Option<usize>) -> Vec<(usize, P<Node>)> {
+fn statement_ends(state: &TransformState<'_>, spilled_at: Option<usize>) -> Vec<(usize, TextRange)> {
     let shift = |mut i: usize| {
         for &(at, count) in &state.plugin_file.front_inserts {
             if i >= at {
@@ -449,7 +459,7 @@ fn statement_ends(state: &TransformState<'_>, spilled_at: Option<usize>) -> Vec<
         }
         i
     };
-    state.plugin_file.root_ranges.iter().map(|range| (shift(range.end), range.node)).collect()
+    state.plugin_file.root_ranges.iter().map(|range| (shift(range.end), node_range(range.node).1)).collect()
 }
 
 /// The spilled hoists' table and fields.

@@ -56,6 +56,7 @@ use crate::plugins::lifecycle::{
     ActivePlugin, BuildInput, CommitQueue, Finish, PluginOptions, Setup, activate, commit_artifacts, commit_removals,
     commit_state_files, output_key, plain_late_key, run_finish, run_setup, write_if_changed,
 };
+use crate::plugins::spill::LoadCheck;
 use crate::plugins::{HookKind, PluginHost};
 use crate::project::copy_include::{IncludeCopy, prepare_copy_include};
 use crate::shared::diagnostics::{internal_error, text_diagnostic};
@@ -83,6 +84,9 @@ struct CommittedFile {
     late: Vec<(usize, String, String)>,
     /// The file's Luau, kept in watch mode when it uses late strings (for the re-render).
     ast: Option<Vec<Stmt>>,
+    /// Its load-check mark, kept with `ast` when a plugin emitted into it: a late string's new value can decide whether
+    /// Luau accepts the re-rendered file (a folded comparison, a dead branch).
+    load_check: Option<LoadCheck>,
 }
 
 /// A plugin's committed state, and the `Shared` made from it with the inputs its `setup` read.
@@ -458,7 +462,18 @@ impl<'p> BuildSession<'p> {
                     files: disk
                         .files
                         .into_iter()
-                        .map(|(k, facts)| (k, CommittedFile { facts, parts: Vec::new(), late: Vec::new(), ast: None }))
+                        .map(|(k, facts)| {
+                            (
+                                k,
+                                CommittedFile {
+                                    facts,
+                                    parts: Vec::new(),
+                                    late: Vec::new(),
+                                    ast: None,
+                                    load_check: None,
+                                },
+                            )
+                        })
                         .collect(),
                     plugins: Vec::new(),
                     artifacts: disk.artifacts,
@@ -906,6 +921,8 @@ impl<'p> BuildSession<'p> {
             }
         }
         let mut rerendered: Vec<(String, String)> = Vec::new();
+        // per re-rendered file with a load-check mark: (index in `rerendered`, its file, statement lines, mark)
+        let mut rerendered_checks: Vec<(usize, P<SourceFile>, Vec<u32>, &LoadCheck)> = Vec::new();
         if finished && let Some(c) = &committed {
             for &file in &files {
                 if transformed_at.contains_key(&file) {
@@ -916,14 +933,25 @@ impl<'p> BuildSession<'p> {
                     continue;
                 }
                 let name = file.get().file_name();
-                match &cached.ast {
-                    Some(ast) => rerendered.push((
-                        output_path(services, name, self.options.out_dir_override.as_deref()),
-                        rbxts_luau::render(ast, &late_strings),
-                    )),
-                    None => report.fatal.push(format!(
+                let Some(ast) = &cached.ast else {
+                    report.fatal.push(format!(
                         "internal error: the late strings of {name} changed value, but its Luau was not kept"
-                    )),
+                    ));
+                    continue;
+                };
+                // rbxts-rs: rendered as a transformed file is, under the panic guard and with statement lines when a
+                // plugin emitted into it (the load check runs on it below)
+                match quietly(|| rbxts_luau::render_with_lines(ast, &late_strings)) {
+                    Ok((luau, lines)) => {
+                        if let Some(check) = &cached.load_check {
+                            rerendered_checks.push((rerendered.len(), file, lines, check));
+                        }
+                        rerendered.push((output_path(services, name, self.options.out_dir_override.as_deref()), luau));
+                    }
+                    Err(panic) => {
+                        let message = format!("rendering the Luau panicked: {}", panic_message(&*panic));
+                        report.diagnostics.push(internal_error(file.as_node(), &message));
+                    }
                 }
             }
         }
@@ -933,17 +961,24 @@ impl<'p> BuildSession<'p> {
         let checked: Vec<usize> = (0..report.files.len())
             .filter(|&i| load_checks[i].is_some() && statement_lines[i].is_some() && report.files[i].luau.is_some())
             .collect();
+        // the transformed files, then the cached files re-rendered with new late-string values
         let jobs: Vec<(&str, bool)> = checked
             .iter()
             .map(|&i| {
                 let luau = report.files[i].luau.as_deref().expect("filtered above");
                 (luau, load_checks[i].as_ref().expect("filtered above").has_directive())
             })
+            .chain(
+                rerendered_checks.iter().map(|(at, _, _, check)| (rerendered[*at].1.as_str(), check.has_directive())),
+            )
             .collect();
         let verdicts = crate::plugins::spill::decide_all(&jobs);
-        for (&i, verdict) in checked.iter().zip(&verdicts) {
+        let (transformed_verdicts, rerendered_verdicts) = verdicts.split_at(checked.len());
+        for (&i, verdict) in checked.iter().zip(transformed_verdicts) {
             let (Some(check), Some(lines)) = (&load_checks[i], &statement_lines[i]) else { continue };
-            if let Some(diagnostic) = crate::plugins::spill::load_check_diagnostic(check, verdict, lines) {
+            if let Some(diagnostic) =
+                crate::plugins::spill::load_check_diagnostic(check, verdict, lines, to_transform[i])
+            {
                 let outcome = &mut report.files[i];
                 if diagnostic.category() == Category::Error {
                     outcome.luau = None;
@@ -951,7 +986,13 @@ impl<'p> BuildSession<'p> {
                 outcome.diagnostics.push(diagnostic);
             }
         }
-        report.timings.load_checked = checked.len() as u32;
+        // a re-rendered file has no outcome of its own: its diagnostics are the build's (an error stops the commit)
+        for ((_, file, lines, check), verdict) in rerendered_checks.iter().zip(rerendered_verdicts) {
+            if let Some(diagnostic) = crate::plugins::spill::load_check_diagnostic(check, verdict, lines, *file) {
+                report.diagnostics.push(diagnostic);
+            }
+        }
+        report.timings.load_checked = (checked.len() + rerendered_checks.len()) as u32;
         report.timings.load_check = start.elapsed();
         // a file that failed to render or Luau refuses fails the build as a transform error does
         if (!report.fatal.is_empty() || report.has_errors()) && !self.options.write_partial {
@@ -1062,6 +1103,8 @@ impl<'p> BuildSession<'p> {
             to_transform.iter().copied().zip(asts).collect();
         let late_by_file: FxHashMap<P<SourceFile>, Vec<(usize, String)>> =
             to_transform.iter().copied().zip(file_late_keys).collect();
+        let mut checks_by_file: FxHashMap<P<SourceFile>, Option<LoadCheck>> =
+            to_transform.iter().copied().zip(load_checks).collect();
         let program_files: FxHashMap<String, P<SourceFile>> =
             project.program.source_files().iter().map(|&f| (f.path().to_string(), f)).collect();
         for (key, facts) in facts {
@@ -1073,7 +1116,8 @@ impl<'p> BuildSession<'p> {
                         .map(|(p, k)| (*p, k.clone(), late_strings.get(k).unwrap_or_default().to_owned()))
                         .collect();
                     let ast = if self.watch && !late.is_empty() { asts_by_file.remove(&file).flatten() } else { None };
-                    CommittedFile { facts, parts, late, ast }
+                    let load_check = if ast.is_some() { checks_by_file.remove(&file).flatten() } else { None };
+                    CommittedFile { facts, parts, late, ast, load_check }
                 }
                 None => match old_files.remove(&key) {
                     Some(mut old) => {
@@ -1085,7 +1129,7 @@ impl<'p> BuildSession<'p> {
                         }
                         old
                     }
-                    None => CommittedFile { facts, parts: Vec::new(), late: Vec::new(), ast: None },
+                    None => CommittedFile { facts, parts: Vec::new(), late: Vec::new(), ast: None, load_check: None },
                 },
             };
             new_files.insert(key, entry);

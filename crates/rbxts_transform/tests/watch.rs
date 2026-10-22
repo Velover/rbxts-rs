@@ -537,3 +537,77 @@ fn a_watch_rebuild_load_checks_what_a_plugin_emitted_into() {
     });
     drop(copy);
 }
+
+#[test]
+fn a_late_string_that_makes_a_cached_file_refused_fails_the_watch_rebuild() {
+    let Some(node_modules) = node_modules() else {
+        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        return;
+    };
+    // round 7's validator case: `a.ts` compares the stamp plugin's build id (a late string) with a constant, and a
+    // branch of 201 locals hangs on it; Luau folds the comparison at optimisation level 1 and drops a dead branch
+    let root = std::env::temp_dir().join(format!("rbxts-rs-watch-late-{}", std::process::id()));
+    parity::remove_tree(&root);
+    let copy = Copy(root.clone());
+    let basic = fixtures().join("basic");
+    std::fs::create_dir_all(root.join("src/shared")).unwrap();
+    for f in ["default.project.json", "package.json", "tsconfig.json"] {
+        std::fs::copy(basic.join(f), root.join(f)).unwrap();
+    }
+    parity::junction(&root.join("node_modules"), &node_modules).unwrap();
+    let plugins = vec![rbxts_test_plugins::by_name("stamp").expect("the stamp plugin")];
+    let path = |p: &str| root.join(p).to_string_lossy().replace('\\', "/");
+    let locals: String = (0..201).map(|i| format!("\tconst a{i} = mk();\n")).collect();
+    let a = format!(
+        "/** @stamp build */\ndeclare function buildId(): string;\ndeclare function mk(): number;\nprint(1);\n\
+         if (buildId() === \"watch #1/1\") {{\n{locals}\tprint(a0, a200);\n}}\nexport {{}};\n"
+    );
+    std::fs::write(root.join("src/shared/a.ts"), &a).unwrap();
+    let b_site = "/** @stamp build */\ndeclare function buildId(): string;\nexport const id = buildId();\n";
+    std::fs::write(root.join("src/shared/b.ts"), b_site).unwrap();
+    let output = root.join("out/shared/a.luau");
+    let messages = |report: &rbxts_transform::CompileReport| -> Vec<(String, String)> {
+        report
+            .diagnostics
+            .iter()
+            .chain(report.files.iter().flat_map(|f| f.diagnostics.iter()))
+            .map(|d| {
+                let at = d.pos().map(|p| a[p as usize..].lines().next().unwrap_or("").to_owned()).unwrap_or_default();
+                (tsrs_compiler::diagnosticwriter::flatten_diagnostic_message(*d, " "), at)
+            })
+            .collect()
+    };
+    big_stack(|| {
+        let options =
+            PluginOptions { plugins: &plugins, ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
+        let mut session = BuildSession::new(
+            CompileOptions {
+                tsconfig: "tsconfig.json".into(),
+                cwd: root.to_string_lossy().into_owned(),
+                project_options: ProjectOptionLayer::default(),
+                out_dir_override: None,
+                write_partial: false,
+                no_write: false,
+            },
+            &options,
+            true,
+        );
+        // two build sites: the id is "watch #1/2", the branch is dead (a warning: it loads only with folding)
+        let (report, _) = session.build(&[]);
+        assert!(!report.has_errors(), "{:?} {:?}", report.fatal, messages(&report));
+        let written = std::fs::read_to_string(&output).unwrap();
+        assert!(written.contains("\"watch #1/2\" == \"watch #1/1\""), "{written}");
+
+        // only b.ts changes: a.ts is cached and re-rendered with "watch #1/1", which keeps the branch
+        std::fs::write(root.join("src/shared/b.ts"), "export const id = \"none\";\n").unwrap();
+        let (report, summary) = session.build(&[path("src/shared/b.ts")]);
+        let refused: Vec<(String, String)> =
+            messages(&report).into_iter().filter(|(m, _)| m.contains("refuses this file")).collect();
+        assert_eq!(refused.len(), 1, "{:?}", messages(&report));
+        assert!(refused[0].0.contains("Out of local registers"), "{refused:?}");
+        assert!(refused[0].1.starts_with("if (buildId() === \"watch #1/1\")"), "anchored at the `if`: {refused:?}");
+        assert!(summary.written.is_empty(), "{:?}", summary.written);
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), written, "a failing rebuild writes nothing");
+    });
+    drop(copy);
+}
