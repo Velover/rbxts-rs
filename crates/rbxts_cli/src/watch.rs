@@ -24,6 +24,9 @@
 //!   wrote into it; a path the load read that is there now and was not, or the other way round; a program file
 //!   whose time or size is not the one it was parsed at. Any of those starts another rebuild. A build that loads no
 //!   project keeps the last good watches, plus what its failed load read.
+//! - **Plugin inputs** ([`inputs`]): the globs plugins recorded (files', `setup`'s, `finish`'s) and what `finish`
+//!   read are watched too; an event only they may care about starts a rebuild when the session finds an answer
+//!   changed.
 //! - **Debounce.** Trailing, 100 ms as roblox-ts: each event restarts the wait, and the paths of one burst become
 //!   one rebuild. A rename is its two paths (the session sees a deletion and an addition).
 //! - **Errors.** A panic in a rebuild is reported and the session starts over with a clean build; the watcher
@@ -51,6 +54,9 @@ use rbxts_transform::{BuildSession, BuildSummary, CompileOptions, CompileReport,
 use tsrs_diagnostics::Category;
 
 use crate::{BuildArgs, print_report};
+
+#[path = "watch_inputs.rs"]
+mod inputs;
 
 /// The exit code a watcher child uses to ask its supervisor for a restart.
 pub const RESTART_EXIT_CODE: i32 = 75;
@@ -204,6 +210,8 @@ struct Watched {
     reads: Vec<(String, Seen)>,
     /// The program's files with the modification time and size they were parsed at.
     stamps: Vec<(String, Option<SystemTime>, i64)>,
+    /// The plugins' recorded inputs.
+    inputs: inputs::InputWatches,
 }
 
 /// The package root of a path under `node_modules`: `…/node_modules/name` or `…/node_modules/@scope/name`.
@@ -495,6 +503,9 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
         watched.add_reads(log.entries(), &mut dirs);
     }
     watched.stamps = session.loaded_stamps();
+    watched.inputs = inputs::InputWatches::of(session);
+    watched.recursive.extend(watched.inputs.recursive.iter().cloned());
+    watched.flat.extend(watched.inputs.flat.iter().cloned());
     watched.dedupe();
     Some(watched)
 }
@@ -558,6 +569,9 @@ impl Watches {
 
 /// A watched directory and whether its watch is recursive.
 type Watch = (String, bool);
+
+/// An event path of a burst, flagged when all its events were modifications of an existing directory.
+type BurstPath = (String, bool);
 
 struct Subscriptions {
     watcher: Box<dyn Watcher>,
@@ -749,11 +763,22 @@ fn watch(
         // paths that changed before their directory was watched (already judged) start a rebuild of their own
         let mut paths: Vec<String> = if stale.is_empty() {
             let Some(events) = collect(&receiver) else { return 0 };
-            events
+            // a directory watched from now on is compared with the disk from here (the answers below read it)
+            let since = SystemTime::now();
+            let (relevant, dropped): (Vec<BurstPath>, Vec<BurstPath>) = events
                 .into_iter()
-                .filter(|(p, folder_modify)| p == RESCAN || relevant(p, *folder_modify, watched.current(), &own))
-                .map(|(p, _)| p)
-                .collect()
+                .partition(|(p, folder_modify)| p == RESCAN || relevant(p, *folder_modify, watched.current(), &own));
+            let mut paths: Vec<String> = relevant.into_iter().map(|(p, _)| p).collect();
+            // what only a plugin's recorded input may care about: with a rebuild anyway, or when an answer changed
+            let candidates = inputs::candidates(dropped, &watched.current().inputs, &own);
+            if !candidates.is_empty() {
+                if !paths.is_empty() || session.recorded_inputs_changed(Some(&candidates)) {
+                    paths.extend(candidates);
+                } else {
+                    stale = inputs::refresh(&session, &mut subscriptions, &mut watched, &own, since);
+                }
+            }
+            paths
         } else {
             std::mem::take(&mut stale)
         };
@@ -881,7 +906,12 @@ fn rebuild(
         }
     }
     let computed = start.elapsed();
-    let stale = subscriptions.update(watched.current(), since, own);
+    let new_input_watches = watched.current().inputs.has_new_watches(&subscriptions.active);
+    let mut stale = subscriptions.update(watched.current(), since, own);
+    // a recorded input read before its directory was watched: asked again now that it is
+    if result.is_ok() {
+        stale.extend(inputs::recheck(session, &watched.current().inputs, new_input_watches));
+    }
     if debug() {
         let current = watched.current();
         eprintln!(

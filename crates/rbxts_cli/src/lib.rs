@@ -252,7 +252,9 @@ const NEW_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
 
 /// One diagnostic as TypeScript's `formatDiagnosticsWithColorAndContext` formats it (ending with a line end), with
 /// the OS's line ends. rbxts-rs: roblox-ts's own diagnostics, ad hoc messages here, show roblox-ts's code
-/// (`TS roblox-ts`, from `createTextDiagnostic` and `createDiagnosticWithLocation`) instead of tsrs's `TS-1`.
+/// (`TS roblox-ts`, from `createTextDiagnostic` and `createDiagnosticWithLocation`) instead of tsrs's `TS-1`; a plugin
+/// diagnostic with a source (`Plugin::diagnostic_source`, `PluginDiagnostic::source`) shows that source instead
+/// (`TS @flamework-experimental/transformer`).
 pub fn format_diagnostic(diagnostic: P<Diagnostic>, cwd: &str) -> String {
     let options = FormattingOptions {
         compare_paths_options: ComparePathsOptions {
@@ -265,7 +267,9 @@ pub fn format_diagnostic(diagnostic: P<Diagnostic>, cwd: &str) -> String {
     format_diagnostic_with_color_and_context(&mut out, diagnostic, &options);
     let mut text = String::from_utf8_lossy(&out).into_owned();
     if diagnostic.code() == -1 {
-        text = text.replacen("\u{1b}[90m TS-1: ", "\u{1b}[90m TS roblox-ts: ", 1);
+        // a plugin diagnostic with a source shows it in the code slot, as the TS transformers' do (`code: " <name>"`)
+        let source = rbxts_transform::plugins::diagnostic_source(diagnostic).unwrap_or("roblox-ts");
+        text = text.replacen("\u{1b}[90m TS-1: ", &format!("\u{1b}[90m TS {source}: "), 1);
     }
     if !text.ends_with(NEW_LINE) {
         text.push_str(NEW_LINE);

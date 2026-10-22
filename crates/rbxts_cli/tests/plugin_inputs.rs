@@ -1,0 +1,282 @@
+//! The `probe-inputs` test plugin (`rbxts_test_plugins::inputs`) through the command line, in processes of its own:
+//! this test binary is the compiler when `RBXTS_TEST_CHILD_ARGS` is set (the `child` test).
+//! - an incremental build in a new process transforms again only the files whose `Cx::env` reads read another value
+//!   now; a plugin diagnostic shows its source in TypeScript's code slot (`TS @probe/inputs`);
+//! - the watcher: a file a finish glob matches, a listed directory's entries, a file a file's glob matches, a glob
+//!   root removed and created again; events that change no answer start nothing.
+
+#![cfg(windows)]
+
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{Receiver, channel};
+use std::time::Duration;
+
+use serde_json::Value;
+
+const DEFAULT_NODE_MODULES: &str = "E:/Projects/TS/Flamework/roblox-ts-test/roblox-ts/tests/node_modules";
+const CHILD_ARGS: &str = "RBXTS_TEST_CHILD_ARGS";
+
+/// The compiler with `probe-inputs`, when this process was started as one (its arguments in `RBXTS_TEST_CHILD_ARGS`,
+/// one per line); otherwise nothing.
+#[test]
+fn child() {
+    let Ok(args) = std::env::var(CHILD_ARGS) else { return };
+    let args: Vec<String> = args.lines().map(str::to_owned).collect();
+    let status =
+        rbxts_cli::Cli::new().erased_plugin(rbxts_test_plugins::by_name("probe-inputs").unwrap()).run_with(args);
+    std::process::exit(i32::from(status));
+}
+
+/// This test binary as the compiler, in `root`.
+fn compiler(root: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", "child", "--nocapture", "--test-threads=1"])
+        .env(CHILD_ARGS, args.join("\n"))
+        .env_remove("PROBE_FILE")
+        .env_remove("PROBE_SETUP")
+        .current_dir(root);
+    command
+}
+
+/// A copy of the basic watch fixture with a linked node_modules and the probe's directories; removed on drop.
+struct Project(PathBuf);
+
+impl Project {
+    fn new(label: &str, incremental: bool) -> Option<Project> {
+        let node_modules = std::env::var_os("RBXTS_RS_FIXTURE_NODE_MODULES")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_NODE_MODULES));
+        if !node_modules.join("@rbxts").join("compiler-types").is_dir() {
+            eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+            return None;
+        }
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../rbxts_transform/tests/watch_fixtures/basic");
+        let root = std::env::temp_dir().join(format!("rbxts-rs-cli-inputs-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        copy_dir(&fixture, &root);
+        let project = Project(root);
+        // the command line has no stamp plugin
+        let mut tsconfig = project.read("tsconfig.json").replace(
+            "\"plugins\": [{ \"transform\": \"rbxts-transform-stamp\", \"prefix\": \"watch \" }]",
+            "\"plugins\": []",
+        );
+        if incremental {
+            tsconfig =
+                tsconfig.replacen("\"compilerOptions\": {", "\"compilerOptions\": {\n\t\t\"incremental\": true,", 1);
+        }
+        project.write("tsconfig.json", &tsconfig);
+        for dir in ["setup-glob", "file-glob", "globs/finish", "finish-dir"] {
+            std::fs::create_dir_all(project.0.join(dir)).unwrap();
+        }
+        project.write("src/shared/marked.ts", "// probe-inputs\nexport const marked = 1;\n");
+        project.write("src/shared/globbed.ts", "// probe-inputs probe-glob\nexport const globbed = 1;\n");
+        let status = Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(project.0.join("node_modules").to_string_lossy().replace('/', "\\"))
+            .arg(node_modules.to_string_lossy().replace('/', "\\"))
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "could not link node_modules");
+        Some(project)
+    }
+
+    fn write(&self, relative: &str, text: &str) {
+        let path = self.0.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    fn read(&self, relative: &str) -> String {
+        std::fs::read_to_string(self.0.join(relative)).unwrap_or_default()
+    }
+
+    fn exists(&self, relative: &str) -> bool {
+        self.0.join(relative).exists()
+    }
+}
+
+impl Drop for Project {
+    fn drop(&mut self) {
+        let _ = Command::new("cmd")
+            .args(["/C", "rmdir"])
+            .arg(self.0.join("node_modules").to_string_lossy().replace('/', "\\"))
+            .stderr(Stdio::null())
+            .status();
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// One `rbxtsc --verbose` build: its output and the number of files it transformed.
+fn build(project: &Project, env: &[(&str, &str)]) -> (String, usize) {
+    let mut command = compiler(&project.0, &["--verbose"]);
+    command.envs(env.iter().copied());
+    let output = command.output().unwrap();
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(output.status.success(), "the build failed:\n{text}");
+    // `<n> files, <m> written, <e> errors` (after the test harness's own `test child ... `)
+    let files = text
+        .lines()
+        .filter(|line| line.ends_with(" errors"))
+        .find_map(|line| line.split_once(" files, ").and_then(|(n, _)| n.split_whitespace().last()))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("no file count in:\n{text}"));
+    (text, files)
+}
+
+#[test]
+fn a_new_process_transforms_the_files_whose_environment_changed() {
+    let Some(project) = Project::new("env", true) else { return };
+    project.write("src/shared/warned.ts", "// probe-warn probe-own-source\nexport const warned = 1;\n");
+    let (output, all) = build(&project, &[]);
+    assert!(all > 3);
+    // the plugin's source in the code slot, and a diagnostic's own
+    assert!(output.contains(" TS @probe/inputs: \u{1b}[0mprobe-inputs warning"), "{output}");
+    assert!(output.contains(" TS @probe/own: \u{1b}[0mprobe-inputs own source"), "{output}");
+    // nothing changed: the file with a glob only (its matcher is not persisted)
+    assert_eq!(build(&project, &[]).1, 1);
+    // PROBE_FILE set: the two files that read it (one has the glob too), and nothing else
+    assert_eq!(build(&project, &[("PROBE_FILE", "one")]).1, 2);
+    assert!(project.read("out/shared/marked.luau").contains("env Some(\"one\")"));
+    assert_eq!(build(&project, &[("PROBE_FILE", "one")]).1, 1);
+    // setup's environment is a build input: every file
+    assert_eq!(build(&project, &[("PROBE_FILE", "one"), ("PROBE_SETUP", "s")]).1, all);
+    assert!(project.read("probe-inputs.txt").contains("setup env Some(\"s\")"));
+}
+
+/// The watcher process; killed on drop.
+struct Watcher {
+    child: Child,
+    events: Receiver<Value>,
+    lines: Receiver<String>,
+}
+
+impl Drop for Watcher {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Watcher {
+    fn start(project: &Project) -> Watcher {
+        let mut child = compiler(&project.0, &["-w", "--events", "json"])
+            .env("RBXTS_WATCH_MEMORY_LIMIT_MB", "0")
+            .env("RBXTS_WATCH_CHILD", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (event_tx, events) = channel();
+        let (line_tx, lines) = channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if line.starts_with("{\"event\"")
+                    && let Ok(value) = serde_json::from_str::<Value>(&line)
+                {
+                    let _ = event_tx.send(value);
+                }
+                let _ = line_tx.send(line);
+            }
+        });
+        Watcher { child, events, lines }
+    }
+
+    /// The next `build-end` event, of any generation, within 60 s; it must have succeeded.
+    fn next_end(&self) -> Value {
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let Ok(event) = self.events.recv_timeout(left) else {
+                let output: Vec<String> = self.lines.try_iter().collect();
+                panic!("no build-end within 60 s; output:\n{}", output.join("\n"));
+            };
+            if event["event"] == "build-end" {
+                assert_eq!(event["ok"], true, "{event}");
+                return event;
+            }
+        }
+    }
+
+    /// Takes events until none comes for 1.5 s (a rebuild for a directory this watcher's own artifacts created or
+    /// removed in the project directory may follow a build).
+    fn settle(&self) {
+        while self.events.recv_timeout(Duration::from_millis(1500)).is_ok() {}
+    }
+
+    /// No build starts within `quiet`.
+    fn assert_quiet(&self, quiet: Duration) {
+        if let Ok(event) = self.events.recv_timeout(quiet) {
+            panic!("unexpected event {event}");
+        }
+    }
+}
+
+#[test]
+fn the_watcher_follows_the_recorded_inputs() {
+    let Some(project) = Project::new("watch", false) else { return };
+    let watcher = Watcher::start(&project);
+    watcher.next_end();
+    watcher.settle();
+    let quiet = Duration::from_millis(1500);
+
+    // a finish glob: a file it does not match is nothing, one it matches runs finish only
+    project.write("globs/finish/notes.md", "x");
+    watcher.assert_quiet(quiet);
+    project.write("globs/finish/a.json", "{}");
+    let end = watcher.next_end();
+    assert_eq!(end["transformed"], 0, "{end}");
+    assert!(project.read("probe-inputs.txt").contains("finish glob [\"a.json\"]"));
+    watcher.assert_quiet(quiet);
+
+    // a listed directory: an entry writes an artifact, its removal removes it and the directories it emptied
+    project.write("finish-dir/x.txt", "x");
+    watcher.next_end();
+    assert!(project.exists("probe-out/deep/x.txt.out"));
+    watcher.settle();
+    std::fs::remove_file(project.0.join("finish-dir/x.txt")).unwrap();
+    watcher.next_end();
+    assert!(!project.exists("probe-out"));
+    watcher.settle();
+
+    // a file's glob: that file only; a directory its matcher does not accept is nothing
+    std::fs::create_dir_all(project.0.join("file-glob/sub")).unwrap();
+    watcher.assert_quiet(quiet);
+    project.write("file-glob/a.txt", "x");
+    let end = watcher.next_end();
+    assert_eq!(end["transformed"], 1, "{end}");
+    assert!(project.read("out/shared/globbed.luau").contains("glob [\"a.txt\"]"));
+    watcher.assert_quiet(quiet);
+
+    // a glob root removed (its matches go), created again empty (nothing changes, but it is watched again), then
+    // given a match
+    std::fs::remove_dir_all(project.0.join("globs/finish")).unwrap();
+    watcher.next_end();
+    assert!(project.read("probe-inputs.txt").contains("finish glob []"));
+    watcher.assert_quiet(quiet);
+    std::fs::create_dir_all(project.0.join("globs/finish")).unwrap();
+    watcher.assert_quiet(quiet);
+    project.write("globs/finish/c.json", "{}");
+    watcher.next_end();
+    assert!(project.read("probe-inputs.txt").contains("finish glob [\"c.json\"]"));
+    watcher.assert_quiet(quiet);
+    drop(watcher);
+}
