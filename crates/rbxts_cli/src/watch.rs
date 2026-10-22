@@ -8,22 +8,30 @@
 //!     `node_modules` and its `@scope` directories and the type roots (created, removed or renamed, and the packages
 //!     in them), and, for every path the last program load read (tsrs's `trackingvfs` view: files, directories
 //!     and the paths module resolution probed that did not exist, so `node_modules/<name>` in every ancestor,
-//!     `@types`, `typeRoots` and `paths` locations), the nearest existing directory at or above it. A missing
-//!     `node_modules` counts too (a fresh clone, then an install).
-//! - **What counts.** Config files and build inputs always; nothing under the output roots (never a root holding
-//!   the project, a source root or the tsconfig) or the include folder; then: a path the load read, or a missing
-//!   directory on the way to one; an entry added, removed or renamed in a module directory (not dot entries:
-//!   `.package-lock.json`, `.cache`); inside a package, `package.json` and other JSON (Rojo project files),
-//!   TypeScript and Luau files and directories; under a root (not in its `node_modules` or `.git`) or in an open
-//!   directory, anything. A directory's own modification never counts (its entries' events say more; a directory
-//!   created or moved in does), nor do rbxts-rs's temporary files or this watcher's own artifacts as it wrote them.
+//!     `@types`, `typeRoots` and `paths` locations; setup's own reads: the project's package.json lookup, the
+//!     type-root packages' package.json), the nearest existing directory at or above it. A missing `node_modules`
+//!     counts too (a fresh clone, then an install). The folders the Rojo resolvers search for nested project files
+//!     (`$path` folders outside the output roots) are watched recursively too.
+//! - **What counts.** A JSON file the load read whose text is the same again never does (a package manager
+//!   rewriting package.json as it was). Config files and build inputs always; nothing under the output roots (never
+//!   a root holding the project, a source root or the tsconfig) or the include folder; then: a path the load read,
+//!   or a missing directory on the way to one; an entry added, removed or renamed in a module directory (not dot
+//!   entries: `.package-lock.json`, `.cache`); a Rojo project file in the project directory; in a folder a Rojo
+//!   resolver searches (type roots included), a project file, or a folder holding one or holding one it read;
+//!   inside a package the build uses, `package.json` and other JSON, TypeScript and Luau files and directories
+//!   (nothing else in a package that is only in a type root); under a root (not in its `node_modules` or `.git`),
+//!   anything; in the directory of a program file or one the include globs listed, a directory or a file the
+//!   tsconfig could take in (lockfiles in the project directory never count). A directory's own modification never
+//!   counts (its entries' events say more; a directory created or moved in does), nor do rbxts-rs's temporary files
+//!   or this watcher's own artifacts as it wrote them.
 //! - **New watches.** The watched directories are brought up to date after each build, before it is reported. A
 //!   directory watched for the first time is compared with the build: a file written or created, or a directory
 //!   created, since the build started; for a module, package or root directory its own modification time (an entry
 //!   added, removed or renamed whatever the entry's times: an archive extracted with old times), unless this watcher
 //!   wrote into it; a path the load read that is there now and was not, or the other way round; a program file
 //!   whose time or size is not the one it was parsed at. Any of those starts another rebuild. A build that loads no
-//!   project keeps the last good watches, plus what its failed load read.
+//!   project keeps the last good watches, plus what its failed load read. A watch that cannot be made is reported
+//!   once and tried again at each update.
 //! - **Plugin inputs** ([`inputs`]): the globs plugins recorded (files', `setup`'s, `finish`'s) and what `finish`
 //!   read are watched too; an event only they may care about starts a rebuild when the session finds an answer
 //!   changed.
@@ -48,7 +56,7 @@ use notify::event::ModifyKind;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use rbxts_project::{Seen, nodepath};
+use rbxts_project::{IncludeMatcher, ReadLog, Seen, nodepath, rojo, text_hash};
 use rbxts_transform::build::graph::Version;
 use rbxts_transform::{BuildSession, BuildSummary, CompileOptions, CompileReport, PluginOptions};
 use tsrs_diagnostics::Category;
@@ -192,15 +200,33 @@ struct Watched {
     /// Path keys of the recursive roots (source roots, plugin `watch_dir`s): any event under them counts (but
     /// under a `node_modules` or `.git` in them).
     root_keys: Vec<String>,
-    /// Path keys of the directories where any entry counts (the project directory, the directories of program
-    /// files outside packages, the directories the tsconfig's include globs listed).
+    /// Path keys of the directories whose entries count when the program could read them (the directories of
+    /// program files outside packages, the directories the tsconfig's include globs listed; the project directory
+    /// before any project loaded): a directory, or a file the tsconfig's `files` and `include` could take in
+    /// (every file while `include` is not known).
     open_dirs: FxHashSet<String>,
+    /// The project directory's path key: its Rojo project files count (the project's Rojo config is looked for
+    /// there), its other entries as any directory's (lockfiles and the like do not).
+    project_dir: String,
+    /// Path keys of the folders the Rojo resolvers search for nested project files (`$path` folders outside the
+    /// ignored roots, the type roots): a project file, or a folder holding one, created or removed there counts.
+    rojo_dirs: Vec<String>,
+    /// Which files the program could take in, for `open_dirs`.
+    matcher: Option<IncludeMatcher>,
+    /// Path keys of the JSON files the last load read, with the hash of their text: an event leaving the same text
+    /// does not count.
+    texts: FxHashMap<String, u64>,
     /// Path keys of `node_modules`, its scope directories and the type roots: the directory itself, and any entry
     /// added, removed or renamed in it (but dot entries) counts, whether it exists yet or not.
     module_dirs: FxHashSet<String>,
     /// Path keys of package directories, watched recursively: a `package.json` or other JSON file (Rojo project
-    /// files), a TypeScript or Luau file or a directory anywhere in them counts.
+    /// files), a TypeScript or Luau file or a directory anywhere in them counts when the package is used.
     package_dirs: FxHashSet<String>,
+    /// Path keys of the packages the build uses (a program file or a read of the load in them, a plugin resolution
+    /// through them, an unresolved import naming them). The other packages are in a type root only: setup reads
+    /// their `package.json` (an anchor) and the package resolver searches them for project files (`rojo_dirs`);
+    /// nothing else in them counts.
+    used_packages: FxHashSet<String>,
     /// Path keys of the package directories plugin resolutions go through: any event counts.
     plugin_package_dirs: FxHashSet<String>,
     /// Path keys whose own events count: every path the last load read, the paths module resolution probed that did
@@ -272,7 +298,54 @@ fn package_entry_counts(path: &str, name: &str) -> bool {
     }
 }
 
+/// Whether a folder holds a Rojo project file anywhere below it. A link counts (the resolvers follow links; this
+/// does not).
+fn holds_project_file(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else { return false };
+    entries.flatten().any(|entry| match entry.file_type() {
+        Ok(t) if t.is_symlink() => true,
+        Ok(t) if t.is_dir() => holds_project_file(&entry.path()),
+        Ok(_) => rojo::is_rojo_project_file_name(&entry.file_name().to_string_lossy()),
+        Err(_) => true,
+    })
+}
+
+/// Whether the text of `path` now is the one a load read (`hash`, [`text_hash`]).
+fn same_text(path: &str, hash: u64) -> bool {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .is_some_and(|text| text_hash(&text) == hash)
+}
+
 impl Watched {
+    /// Whether an entry of a folder a Rojo resolver searches changes what it finds: a project file, a folder holding
+    /// one (created or moved in; a link counts), or a folder a project file the resolvers read was in (removed or
+    /// moved away).
+    fn rojo_entry_counts(&self, path: &str, path_key: &str, name: &str) -> bool {
+        if rojo::is_rojo_project_file_name(name) {
+            return true;
+        }
+        match std::fs::symlink_metadata(path) {
+            Ok(m) if m.file_type().is_symlink() => true,
+            Ok(m) if m.is_dir() => holds_project_file(Path::new(path)),
+            Ok(_) => false,
+            Err(_) => self.config_inputs.iter().any(|input| is_under(input, path_key)),
+        }
+    }
+
+    /// Whether an entry of an open directory (not under a root) counts: a directory, or a file the program could
+    /// take in.
+    fn open_entry_counts(&self, path: &str, name: &str) -> bool {
+        let includable = || self.matcher.is_none_or(|m| m.possibly_includes(path));
+        match std::fs::metadata(path) {
+            Ok(m) if m.is_dir() => true,
+            Ok(_) => includable(),
+            // gone: a directory (no extension) or a file the program could have taken in
+            Err(_) => !name.contains('.') || includable(),
+        }
+    }
+
     /// Watches `path`'s deepest existing directory (its own directory when it exists, else the nearest existing
     /// ancestor), and makes the path and every missing directory on the way to it count: a file or directory
     /// appearing there (or going) changes what a load reads.
@@ -298,8 +371,12 @@ impl Watched {
     }
 
     /// Adds what a load read: each path counts and is covered; directories the tsconfig's globs or the program
-    /// listed are watched, their entries counting; the packages read from are package directories.
-    fn add_reads(&mut self, reads: Vec<(String, Seen)>, dirs: &mut FxHashMap<String, bool>) {
+    /// listed are watched, their entries counting; the packages read from are package directories, used unless
+    /// only their `package.json` was read (setup's package mapping reads every type-root package's); the JSON
+    /// texts read.
+    fn add_log(&mut self, log: &ReadLog, dirs: &mut FxHashMap<String, bool>) {
+        self.texts.extend(log.texts().into_iter().map(|(path, hash)| (key(&path), hash)));
+        let reads = log.entries();
         // the directories the load found (a directory, or a file's directory) need no look of their own; one gone
         // since is caught when its watch is made (`Subscriptions::update`)
         for (path, seen) in &reads {
@@ -327,15 +404,20 @@ impl Watched {
                 }
             }
             if let Some(root) = package_root(path) {
-                self.add_package(&root, dirs);
+                let root_key = key(&root);
+                let used = k != root_key && k != format!("{root_key}/package.json");
+                self.add_package(&root, dirs, used);
             }
         }
         self.reads.extend(reads);
     }
 
-    /// A package directory: watched recursively when it exists; it and its contents count.
-    fn add_package(&mut self, dir: &str, dirs: &mut FxHashMap<String, bool>) {
+    /// A package directory: watched recursively when it exists; it and its contents count (see `used_packages`).
+    fn add_package(&mut self, dir: &str, dirs: &mut FxHashMap<String, bool>, used: bool) {
         let k = key(dir);
+        if used {
+            self.used_packages.insert(k.clone());
+        }
         if self.package_dirs.insert(k.clone()) {
             let exists = *dirs.entry(k.clone()).or_insert_with(|| is_dir(dir));
             self.anchors.insert(k);
@@ -343,6 +425,39 @@ impl Watched {
                 self.recursive.insert(dir.to_owned());
             }
         }
+    }
+
+    /// The folders the Rojo resolvers search (`rojo_dirs`): watched recursively when they exist (unless a module
+    /// directory, whose packages are watched already, or inside a recursive watch), and covered (a `$path` folder
+    /// appearing or going).
+    fn add_rojo_dirs(&mut self, partitions: Vec<String>, dirs: &mut FxHashMap<String, bool>) {
+        let recursive: Vec<String> = self.recursive.iter().map(|d| key(d)).collect();
+        for partition in partitions {
+            let k = key(&partition);
+            if self.ignored_roots.iter().any(|root| is_under(&k, root)) || self.rojo_dirs.contains(&k) {
+                continue;
+            }
+            self.rojo_dirs.push(k.clone());
+            if self.module_dirs.contains(&k) {
+                continue;
+            }
+            self.cover(&partition, dirs);
+            if !recursive.iter().any(|r| is_under(&k, r)) && *dirs.entry(k).or_insert_with(|| is_dir(&partition)) {
+                self.recursive.insert(partition);
+            }
+        }
+    }
+
+    /// The package directory a path key is in, if any.
+    fn package_of(&self, path_key: &str) -> Option<&str> {
+        let mut dir = path_key;
+        while let Some(parent) = parent_of(dir) {
+            if let Some(package) = self.package_dirs.get(parent) {
+                return Some(package);
+            }
+            dir = parent;
+        }
+        None
     }
 
     /// A `node_modules` or scope directory: it and its entries count, watched when it exists, its parent watched
@@ -355,16 +470,9 @@ impl Watched {
         }
     }
 
-    /// The package directory a path key is in, if any.
+    /// Whether a path key is in a package directory.
     fn in_package(&self, path_key: &str) -> bool {
-        let mut dir = path_key;
-        while let Some(parent) = parent_of(dir) {
-            if self.package_dirs.contains(parent) {
-                return true;
-            }
-            dir = parent;
-        }
-        false
+        self.package_of(path_key).is_some()
     }
 
     /// One watch per directory, whatever its spelling; none for a directory inside a recursive watch.
@@ -387,14 +495,16 @@ impl Watched {
     }
 }
 
-/// The tsconfig's directory, watched before any project could be loaded (a broken tsconfig at the first build), and
-/// the `node_modules` beside it, which counts even when it does not exist yet (a fresh clone, then an install).
+/// The tsconfig's directory, watched before any project could be loaded (a broken tsconfig at the first build: any
+/// entry counts), and the `node_modules` beside it, which counts even when it does not exist yet (a fresh clone, then
+/// an install).
 fn minimal_set(session: &BuildSession<'_>) -> Watched {
     let mut watched = Watched::default();
     let tsconfig = nodepath::resolve(&[&session.options.cwd, &session.options.tsconfig]);
     let project_dir = nodepath::dirname(&tsconfig).to_owned();
     watched.flat.insert(project_dir.clone());
     watched.open_dirs.insert(key(&project_dir));
+    watched.project_dir = key(&project_dir);
     watched.config_inputs.insert(key(&tsconfig));
     let mut dirs = FxHashMap::default();
     watched.add_module_dir(&nodepath::join(&[&project_dir, "node_modules"]), &mut dirs);
@@ -408,6 +518,10 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
     let mut dirs: FxHashMap<String, bool> = FxHashMap::default();
     let (services, program_files, root_dirs) = session.watch_roots()?;
     let project_dir = services.data.project_path.clone();
+    // a project loaded: the project directory's entries count as the build could read them
+    watched.open_dirs.remove(&watched.project_dir);
+    watched.project_dir = key(&project_dir);
+    watched.matcher = session.include_matcher();
     let out_dir = session.options.out_dir_override.clone().unwrap_or_else(|| services.path_translator.out_dir.clone());
     // an output root holding the project, a source root or the tsconfig would drop the events that matter (the
     // build refuses such a root anyway): it is never ignored
@@ -433,7 +547,6 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
         watched.recursive.insert(root);
     }
     watched.flat.insert(project_dir.clone());
-    watched.open_dirs.insert(key(&project_dir));
     // node_modules, its scopes and the type roots: packages appearing or going
     let node_modules = services.data.node_modules_path.clone();
     watched.add_module_dir(&node_modules, &mut dirs);
@@ -453,7 +566,7 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
                 if !name.starts_with('.') && std::fs::metadata(entry.path()).is_ok_and(|m| m.is_dir()) {
-                    watched.add_package(&nodepath::join(&[type_root, &name]), &mut dirs);
+                    watched.add_package(&nodepath::join(&[type_root, &name]), &mut dirs, false);
                 }
             }
         }
@@ -465,7 +578,7 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
             watched.plugin_package_dirs.insert(key(&dir));
             watched.cover(resolved, &mut dirs);
             if let Some(root) = package_root(resolved) {
-                watched.add_package(&root, &mut dirs);
+                watched.add_package(&root, &mut dirs, true);
             }
         }
         if !specifier.starts_with('.') && !nodepath::is_absolute(&specifier) {
@@ -475,7 +588,7 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
                 watched.plugin_package_dirs.insert(key(&package));
                 watched.cover(&package, &mut dirs);
             }
-            watched.add_package(&package, &mut dirs);
+            watched.add_package(&package, &mut dirs, true);
         }
     }
     // the packages an unresolved import names, where they would be installed
@@ -485,14 +598,14 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
             dir = nodepath::join(&[&dir, part]);
         }
         watched.cover(&dir, &mut dirs);
-        watched.add_package(&dir, &mut dirs);
+        watched.add_package(&dir, &mut dirs, true);
     }
     for file in &program_files {
         if file.starts_with("bundled:") {
             continue;
         }
         if let Some(root) = package_root(file) {
-            watched.add_package(&root, &mut dirs);
+            watched.add_package(&root, &mut dirs, true);
             continue;
         }
         let dir = nodepath::dirname(file).to_owned();
@@ -500,8 +613,9 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
         watched.flat.insert(dir);
     }
     if let Some(log) = session.read_log() {
-        watched.add_reads(log.entries(), &mut dirs);
+        watched.add_log(&log, &mut dirs);
     }
+    watched.add_rojo_dirs(session.rojo_partitions(), &mut dirs);
     watched.stamps = session.loaded_stamps();
     watched.inputs = inputs::InputWatches::of(session);
     watched.recursive.extend(watched.inputs.recursive.iter().cloned());
@@ -514,6 +628,12 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
 /// entries changed), which counts only for a plugin package directory (the events of the entries say more).
 fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &FxHashMap<String, Version>) -> bool {
     let k = key(path);
+    // a JSON file the load read, with the same text again (a package manager rewriting package.json as it was)
+    if let Some(hash) = watched.texts.get(&k)
+        && same_text(path, *hash)
+    {
+        return false;
+    }
     // configs and build inputs first: roblox-ts's watcher checks isConfigPath before its output-path ignore
     if watched.config_inputs.contains(&k) {
         return true;
@@ -546,13 +666,23 @@ fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &FxHashMap<
     if watched.plugin_package_dirs.contains(parent) || watched.plugin_package_dirs.contains(&k) {
         return true;
     }
-    if watched.in_package(&k) {
-        return package_entry_counts(path, name);
+    // the project's Rojo config is looked for in the project directory
+    if parent == watched.project_dir && (rojo::is_rojo_project_file_name(name) || name == "roblox-project.json") {
+        return true;
+    }
+    if watched.rojo_dirs.iter().any(|dir| is_under(parent, dir)) && watched.rojo_entry_counts(path, &k, name) {
+        return true;
+    }
+    if let Some(package) = watched.package_of(&k) {
+        return watched.used_packages.contains(package) && package_entry_counts(path, name);
     }
     if k.split('/').any(|c| c == "node_modules" || c == ".git") {
         return false;
     }
-    watched.root_keys.iter().any(|root| is_under(&k, root)) || watched.open_dirs.contains(parent)
+    if watched.root_keys.iter().any(|root| is_under(&k, root)) {
+        return true;
+    }
+    watched.open_dirs.contains(parent) && watched.open_entry_counts(path, name)
 }
 
 /// The watches of the last build that loaded a project, and those in use after a build that loaded none.
@@ -575,9 +705,12 @@ type BurstPath = (String, bool);
 
 struct Subscriptions {
     watcher: Box<dyn Watcher>,
+    /// The watches made.
     active: FxHashSet<(String, bool)>,
     /// The wanted directories that were not there at the last update.
     missing: FxHashSet<String>,
+    /// The watches that failed, reported once; tried again at each update until one succeeds.
+    failed: FxHashSet<(String, bool)>,
 }
 
 impl Subscriptions {
@@ -604,18 +737,29 @@ impl Subscriptions {
             let _ = self.watcher.unwatch(Path::new(dir));
         }
         let new: Vec<&(String, bool)> = wanted.iter().filter(|w| !self.active.contains(w)).collect();
+        let mut active: FxHashSet<Watch> = self.active.intersection(&wanted).cloned().collect();
         if !new.is_empty() {
             let scan = Scan::new(watched, since, own);
-            for (dir, recursive) in new {
+            for watch @ (dir, recursive) in new {
                 let mode = if *recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
-                if let Err(e) = self.watcher.watch(Path::new(dir), mode) {
-                    eprintln!("rbxtsc: cannot watch {dir}: {e}");
+                match self.watcher.watch(Path::new(dir), mode) {
+                    Ok(()) => {
+                        self.failed.remove(watch);
+                        active.insert(watch.clone());
+                    }
+                    // not active: tried again at the next update (a failure is reported once)
+                    Err(e) => {
+                        if self.failed.insert(watch.clone()) {
+                            eprintln!("rbxtsc: cannot watch {dir}: {e}");
+                        }
+                    }
                 }
                 let whole = *recursive || watched.module_dirs.contains(&key(dir));
                 scan.dir(Path::new(dir), *recursive, whole, &mut stale);
             }
         }
-        self.active = wanted;
+        self.failed.retain(|w| wanted.contains(w));
+        self.active = active;
         stale.sort();
         stale.dedup();
         if debug() && !stale.is_empty() {
@@ -751,7 +895,12 @@ fn watch(
             }
         }
     };
-    let mut subscriptions = Subscriptions { watcher, active: FxHashSet::default(), missing: FxHashSet::default() };
+    let mut subscriptions = Subscriptions {
+        watcher,
+        active: FxHashSet::default(),
+        missing: FxHashSet::default(),
+        failed: FxHashSet::default(),
+    };
     let mut own: FxHashMap<String, Version> = FxHashMap::default();
     // a restarted watcher goes on from the last generation of the one before
     let mut generation = if first_generation > 0 { first_generation + 1 } else { 0 };
@@ -899,7 +1048,7 @@ fn rebuild(
         None => {
             let mut set = watched.good.clone();
             if let Some(log) = session.read_log() {
-                set.add_reads(log.entries(), &mut FxHashMap::default());
+                set.add_log(&log, &mut FxHashMap::default());
                 set.dedupe();
             }
             watched.failed = Some(set);
@@ -966,7 +1115,64 @@ fn print_end(generation: u64, report: &CompileReport, summary: &BuildSummary, er
 
 #[cfg(test)]
 mod tests {
-    use super::{Watched, is_under, package_entry_counts, package_root, relevant};
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+    use std::time::SystemTime;
+
+    use notify::RecursiveMode;
+    use rustc_hash::{FxHashMap, FxHashSet};
+
+    use super::{Subscriptions, Watched, is_under, package_entry_counts, package_root, path_text, relevant};
+
+    /// A watcher whose first watch of each path fails.
+    struct FailFirst(Arc<Mutex<Vec<PathBuf>>>);
+
+    impl notify::Watcher for FailFirst {
+        fn new<F: notify::EventHandler>(_: F, _: notify::Config) -> notify::Result<Self> {
+            Ok(FailFirst(Arc::default()))
+        }
+
+        fn watch(&mut self, path: &Path, _: RecursiveMode) -> notify::Result<()> {
+            let mut tried = self.0.lock().unwrap();
+            let first = !tried.iter().any(|p| p == path);
+            tried.push(path.to_path_buf());
+            if first { Err(notify::Error::generic("refused")) } else { Ok(()) }
+        }
+
+        fn unwatch(&mut self, _: &Path) -> notify::Result<()> {
+            Ok(())
+        }
+
+        fn kind() -> notify::WatcherKind {
+            notify::WatcherKind::NullWatcher
+        }
+    }
+
+    #[test]
+    fn a_failed_watch_is_tried_again_at_the_next_update() {
+        let dir = std::env::temp_dir().join(format!("rbxts-rs-watch-fail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let tried = Arc::new(Mutex::new(Vec::new()));
+        let mut subscriptions = Subscriptions {
+            watcher: Box::new(FailFirst(Arc::clone(&tried))),
+            active: FxHashSet::default(),
+            missing: FxHashSet::default(),
+            failed: FxHashSet::default(),
+        };
+        let mut watched = Watched::default();
+        let watch = (path_text(&dir), false);
+        watched.flat.insert(watch.0.clone());
+        let own = FxHashMap::default();
+        subscriptions.update(&watched, SystemTime::now(), &own);
+        assert!(!subscriptions.active.contains(&watch), "a failed watch is not active");
+        assert!(subscriptions.failed.contains(&watch));
+        subscriptions.update(&watched, SystemTime::now(), &own);
+        assert!(subscriptions.active.contains(&watch), "tried again");
+        assert!(subscriptions.failed.is_empty());
+        subscriptions.update(&watched, SystemTime::now(), &own);
+        assert_eq!(tried.lock().unwrap().len(), 2, "an active watch is not made again");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn package_roots() {
@@ -1007,6 +1213,13 @@ mod tests {
         w.module_dirs.insert("e:/p/node_modules".into());
         w.module_dirs.insert("e:/p/node_modules/@rbxts".into());
         w.package_dirs.insert("e:/p/node_modules/@rbxts/pkg".into());
+        w.used_packages.insert("e:/p/node_modules/@rbxts/pkg".into());
+        w.package_dirs.insert("e:/p/node_modules/@rbxts/typeonly".into());
+        w.anchors.insert("e:/p/node_modules/@rbxts/typeonly/package.json".into());
+        w.rojo_dirs.push("e:/p/node_modules/@rbxts".into());
+        w.rojo_dirs.push("e:/p/vendor".into());
+        w.config_inputs.insert("e:/p/vendor/a/default.project.json".into());
+        w.project_dir = "e:/p".into();
         w.anchors.insert("e:/node_modules".into());
         w.root_keys.push("e:/p/src".into());
         w.open_dirs.insert("e:/p".into());
@@ -1022,6 +1235,17 @@ mod tests {
         assert!(yes("E:/p/node_modules/@rbxts/pkg/out/index.d.ts"));
         assert!(!yes("E:/p/node_modules/@rbxts/pkg/README.md"));
         assert!(!yes("E:/p/node_modules/other/index.d.ts"));
+        // a package in a type root only: its package.json and Rojo project files, not its code
+        assert!(yes("E:/p/node_modules/@rbxts/typeonly/package.json"));
+        assert!(yes("E:/p/node_modules/@rbxts/typeonly/src/default.project.json"));
+        assert!(!yes("E:/p/node_modules/@rbxts/typeonly/src/index.d.ts"));
+        assert!(!yes("E:/p/node_modules/@rbxts/typeonly/src/init.lua"));
+        assert!(!yes("E:/p/node_modules/@rbxts/typeonly/src/gone"));
+        // a Rojo-mounted folder outside the sources: project files, and a folder that held a project file read
+        assert!(yes("E:/p/vendor/x.project.json"));
+        assert!(yes("E:/p/vendor/a"));
+        assert!(!yes("E:/p/vendor/b"));
+        assert!(!yes("E:/p/vendor/a/x.lua"));
         // a probed location outside the project, and its neighbours
         assert!(yes("E:/node_modules"));
         assert!(!yes("E:/elsewhere.txt"));
@@ -1029,6 +1253,12 @@ mod tests {
         assert!(yes("E:/p/src/a/b.ts"));
         assert!(yes("E:/p/package.json"));
         assert!(!yes("E:/p/out/a.luau"));
+        // the project directory: its Rojo project files; not lockfiles (not open, nothing read them)
+        w.open_dirs.remove("e:/p");
+        let yes = |p: &str| relevant(p, false, &w, &own);
+        assert!(yes("E:/p/other.project.json"));
+        assert!(!yes("E:/p/bun.lock"));
+        assert!(!yes("E:/p/package-lock.json"));
         assert!(!yes("E:/p/sub/x.ts"));
         // a directory's own modification never counts here
         assert!(!relevant("E:/p/node_modules/@rbxts/pkg", true, &w, &own));

@@ -630,3 +630,151 @@ fn a_watch_started_before_the_install_sees_it() {
     drop(watcher);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// The `TS.import` line of an output, or "(none)".
+fn import_line(path: &Path) -> String {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| text.lines().find(|l| l.contains("TS.import")).map(str::to_owned))
+        .unwrap_or_else(|| "(none)".to_owned())
+}
+
+/// A folder outside the sources mounted by a Rojo `$path` (added while watching): project files created in it and in
+/// its subfolders, a folder holding one moved in, then each removed. The Rojo resolver searches mounted folders for
+/// project files, so each step changes the instance path the importer requires.
+#[test]
+fn rojo_project_files_in_a_mounted_folder_outside_the_sources_are_seen() {
+    let Some((base, root, links)) = linked_project("rojopath") else { return };
+    write(&root.join("vendor/a/b/x.lua"), "return { f = 1 }\n");
+    write(&root.join("vendor/a/b/x.d.ts"), "export declare const f: number;\n");
+    write(&root.join("src/shared/useVendor.ts"), "import { f } from \"../../vendor/a/b/x\";\n\nexport const g = f;\n");
+    let out = root.join("out/shared/useVendor.luau");
+    let watcher = start(&root);
+    assert_eq!(watcher.build_end(0)["ok"], false, "vendor is not mounted yet");
+
+    let rojo = root.join("default.project.json");
+    let text = std::fs::read_to_string(&rojo).unwrap();
+    let mounted = text.replace("\"shared\": {", "\"vendor\": { \"$path\": \"vendor\" },\n\t\t\t\"shared\": {");
+    assert_ne!(text, mounted);
+    std::fs::write(&rojo, mounted).unwrap();
+    let mut generation = 1;
+    let mut step = |label: &str, change: &dyn Fn(), path: &[&str]| {
+        change();
+        let end = watcher.build_end(generation);
+        generation += 1;
+        assert_eq!(end["ok"], true, "{label}: {end}");
+        let expected = path.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ");
+        let line = import_line(&out);
+        assert!(line.contains(&format!("\"ReplicatedStorage\"), {expected}).f")), "{label}: {line}");
+        watcher.assert_quiet(Duration::from_millis(500));
+    };
+    step("$path vendor added", &|| {}, &["vendor", "a", "b", "x"]);
+    let project = |name: &str, child: &str, path: &str| {
+        format!(
+            "{{ \"name\": \"{name}\", \"tree\": {{ \"$className\": \"Folder\", \"{child}\": {{ \"$path\": \"{path}\" }} }} }}\n"
+        )
+    };
+    step(
+        "vendor/default.project.json created",
+        &|| write(&root.join("vendor/default.project.json"), &project("v", "renamed", "a")),
+        &["vendor", "renamed", "b", "x"],
+    );
+    step(
+        "vendor/a/default.project.json created",
+        &|| write(&root.join("vendor/a/default.project.json"), &project("va", "bb", "b")),
+        &["vendor", "renamed", "bb", "x"],
+    );
+    step(
+        "vendor/default.project.json removed",
+        &|| std::fs::remove_file(root.join("vendor/default.project.json")).unwrap(),
+        &["vendor", "va", "bb", "x"],
+    );
+    step(
+        "vendor/a/default.project.json removed",
+        &|| std::fs::remove_file(root.join("vendor/a/default.project.json")).unwrap(),
+        &["vendor", "a", "b", "x"],
+    );
+    // a folder holding a project file that mounts vendor/a/b again, moved in (one event for the folder), then removed
+    let staged = base.join("m");
+    write(&staged.join("m.project.json"), "{ \"name\": \"mm\", \"tree\": { \"$path\": \"../a/b\" } }\n");
+    step(
+        "a folder holding a project file moved in",
+        &|| std::fs::rename(&staged, root.join("vendor/m")).unwrap(),
+        &["vendor", "m", "mm", "x"],
+    );
+    step("that folder removed", &|| remove_tree(&root.join("vendor/m")), &["vendor", "a", "b", "x"]);
+    // other files in the mounted folder change nothing the build reads
+    write(&root.join("vendor/a/b/y.lua"), "return 2\n");
+    write(&root.join("vendor/a/notes.txt"), "x\n");
+    std::fs::create_dir_all(root.join("vendor/c/d")).unwrap();
+    watcher.assert_quiet(Duration::from_millis(1500));
+
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Writes that change nothing the build reads start no rebuild: lockfiles in the project directory, a used package's
+/// package.json and the tsconfig rewritten with the same text, code in a package that is only in a type root. What
+/// setup reads of such a package (its package.json, its Rojo project files) still counts, as do the used package's
+/// files.
+#[test]
+fn writes_that_change_nothing_the_build_reads_start_no_rebuild() {
+    let Some((base, root, links)) = linked_project("quiet") else { return };
+    let scope = root.join("node_modules/@rbxts");
+    for name in ["usedpkg", "typeonly"] {
+        write(
+            &scope.join(format!("{name}/package.json")),
+            &format!("{{ \"name\": \"@rbxts/{name}\", \"main\": \"init.lua\", \"types\": \"index.d.ts\" }}\n"),
+        );
+        write(&scope.join(format!("{name}/index.d.ts")), "export declare const v: number;\n");
+        write(&scope.join(format!("{name}/init.lua")), "return { v = 1 }\n");
+    }
+    write(&root.join("src/shared/useUsed.ts"), "import { v } from \"@rbxts/usedpkg\";\n\nexport const w = v;\n");
+    let watcher = start(&root);
+    assert_eq!(watcher.build_end(0)["ok"], true);
+    watcher.assert_quiet(Duration::from_millis(1000));
+
+    for lockfile in ["bun.lockb", "bun.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"] {
+        std::fs::write(root.join(lockfile), "lock\n").unwrap();
+    }
+    watcher.assert_quiet(Duration::from_millis(1500));
+    for file in ["tsconfig.json", "package.json", "node_modules/@rbxts/usedpkg/package.json"] {
+        let path = root.join(file);
+        std::fs::write(&path, std::fs::read(&path).unwrap()).unwrap();
+    }
+    watcher.assert_quiet(Duration::from_millis(1500));
+    let typeonly = scope.join("typeonly");
+    std::fs::write(typeonly.join("index.d.ts"), "export declare const v: string;\n").unwrap();
+    std::fs::write(typeonly.join("init.lua"), "return { v = 2 }\n").unwrap();
+    write(&typeonly.join("sub/deep.lua"), "return 3\n");
+    let package_json = std::fs::read(typeonly.join("package.json")).unwrap();
+    std::fs::write(typeonly.join("package.json"), &package_json).unwrap();
+    watcher.assert_quiet(Duration::from_millis(1500));
+
+    // what setup reads of it: package.json (the package mapping), Rojo project files (the package resolver)
+    std::fs::write(
+        typeonly.join("package.json"),
+        "{ \"name\": \"@rbxts/typeonly\", \"main\": \"sub/deep.lua\", \"types\": \"index.d.ts\" }\n",
+    )
+    .unwrap();
+    assert_eq!(watcher.build_end(1)["ok"], true);
+    write(
+        &typeonly.join("sub/default.project.json"),
+        "{ \"name\": \"t\", \"tree\": { \"$className\": \"Folder\" } }\n",
+    );
+    assert_eq!(watcher.build_end(2)["ok"], true);
+    // the used package's declarations
+    std::fs::write(scope.join("usedpkg/index.d.ts"), "export declare const v: string;\n").unwrap();
+    assert_eq!(watcher.build_end(3)["ok"], true);
+    std::fs::write(root.join("package.json"), "{ \"name\": \"watch-fixture\", \"version\": \"1.0.1\" }\n").unwrap();
+    assert_eq!(watcher.build_end(4)["ok"], true, "the project's package.json changed");
+
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}
