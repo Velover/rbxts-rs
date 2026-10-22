@@ -1,0 +1,64 @@
+# tsrs: how rbxts-rs depends on it, and how to update it
+
+rbxts-rs links tsrs, the Rust port of TypeScript 7, directly as Rust crates in the same process. There is no wrapper,
+no IPC and no patched tsrs code. Everything roblox-ts-specific lives in rbxts-rs. That includes the places where we
+emulate TypeScript 5 behaviour that TypeScript 7 changed.
+
+## The fork
+- **Where:** a worktree of the tsrs clone at `E:\Projects\TS\Flamework\worktrees\tsrs-rbxts-fork`, on branch
+  `rbxts-fork`. `Cargo.toml` points at its crates by absolute path, so every rbxts-rs worktree uses the same tsrs.
+- **What:** tsrs **v0.18.0** (`5f92808`) plus three commits that change only visibility, `pub(crate)` → `pub`. That is
+  6 lines in 4 files:
+
+| Commit | Item | File | Used for |
+|---|---|---|---|
+| 63b22eb | `Checker::create_array_type` | `tsrs_checker/src/checker_12.rs` | the transform's type queries |
+| 63b22eb | `Checker::get_string_literal_type` | `tsrs_checker/src/checker_12.rs` | the transform's type queries |
+| 63b22eb | `Checker::get_number_literal_type` | `tsrs_checker/src/checker_12.rs` | the transform's type queries |
+| 63b22eb | `Checker::get_type_of_assignment_pattern` | `tsrs_checker/src/services.rs` | destructuring assignments |
+| cf8498b | `Program::get_semantic_diagnostics_with_checker` | `tsrs_compiler/src/program.rs` | checking that honours `@ts-ignore` and the other comment directives |
+| adadb25 | `Checker::get_contextual_signature` | `tsrs_checker/src/checker_05.rs` | TS5's contextual `this` in `util/is_method.rs` |
+
+- **Rule:** the fork gets visibility flips and nothing else. Behaviour fixes and workarounds go in rbxts-rs with a
+  `// rbxts-rs:` comment. If a needed function is too entangled to make public, copy a small helper into rbxts-rs
+  with a note instead.
+- **Upstreaming:** these flips are reasonable public-API requests to tsrs. Each one upstream accepts is one less to
+  carry.
+
+## Updating tsrs
+Pin the version and update on purpose, never automatically. tsrs is pre-1.0, so a release can change its API.
+
+1. **Rebase the flips.** Fetch the new release in the tsrs clone. Make a new branch from the release tag and
+   cherry-pick the three commits above. If upstream has made an item public already, drop that flip.
+   - Keep the old `rbxts-fork` branch until the update is merged, so you can roll back.
+2. **Update `Cargo.lock`.** It started as a copy of tsrs's lock file, so the transitive versions match what tsrs tests
+   with. Re-sync the shared dependencies with the new tsrs lock file.
+3. **Fix API breaks.** Build the workspace and fix every compile error: renamed or reshaped checker methods, AST
+   accessors, flags and symbol lookups. This is mechanical, and the compiler finds all of it.
+4. **Catch behaviour changes.** These are the subtle part, because they compile cleanly but change the output. Run
+   parity on both corpora and compare with the baselines:
+   - the roblox-ts tests project, 72 files;
+   - the real project with Flamework off, 605 files.
+
+   Use `merge\parity.sh` and `merge\parity-{tests,real}-main.txt` in the scratchpad's `batch\rbxts-rs` folder, plus
+   `cargo test --workspace` for the fixtures and plugin tests. Any differing file is a behaviour change. Find the
+   tsrs commit that caused it, then either adapt rbxts-rs (with a `// rbxts-rs:` note) or report it upstream.
+5. **Re-measure** `rbxts-bench load` and a full build (see `bench/RESULTS.md`), so a performance regression doesn't
+   slip in.
+6. **Process:** as with every change, a worker does the update and a fresh validator re-runs parity before it merges.
+
+## TypeScript 7 behaviour the port depends on
+Re-check these after an update; they are where tsrs's behaviour reaches our output.
+- `getTrueType()` without an argument is the *regular* true type (`regular_true_type`), not the fresh one. `??`
+  lowering depends on it.
+- Module exports are sorted with `compare_symbols_exported`.
+- An omitted binding element (`[, a]`) is a nameless `BindingElement`.
+- `Node::text()` panics on a `QualifiedName`.
+- Positions are UTF-8 byte offsets. `tsrs_ast::positionmap` converts them to UTF-16 where text positions reach the
+  output.
+- **TS7 gives no contextual `this`** to a function expression that doesn't use `this`; TS5 did. `is_method` emulates
+  TS5 through `get_contextual_signature` (see `util/is_method.rs`).
+- `implements` entries are TypeReference nodes. `getIndexTypeOfType` takes a key type. A property access through an
+  index signature gives an `__index` symbol. There is no `__String`.
+- **Threading:** the checker is not `Send`, and `get_type_checker` takes a non-reentrant guard. Checking needs a
+  512 MiB stack. Set only `checkers`: `single_threaded` also makes parsing and binding serial.
