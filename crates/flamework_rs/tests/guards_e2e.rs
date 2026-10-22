@@ -5,10 +5,10 @@
 //! master with the monorepo transformer at 1a72fa1, 2.0.0-alpha.8): every guard is TS5's text but for the order of
 //! union members, which follows TS7 (DESIGN §10.4), and the differences listed in `crate::guards`' docs.
 //!
-//! `createGuard<T>()` calls go through `guards::probe::GuardProbe` (Flamework with F2's `Generic<T, "guard">` stood
-//! in for); class metadata guards (`metadata.ts`) through the class hook, also checked with the plain `Flamework`
-//! plugin. The project is built once and shared by the tests, in a temporary copy with a `node_modules` made as
-//! `e2e.rs` makes it. Without a monorepo the tests are skipped, saying so.
+//! The `Flamework` plugin builds them: `createGuard<T>()` calls as user macros (`Modding.Generic<T, "guard">`), class
+//! metadata guards (`metadata.ts`) through the class hook. The project is built once and shared by the tests, in a
+//! temporary copy with a `node_modules` made as `e2e.rs` makes it. Without a monorepo the tests are skipped, saying
+//! so.
 
 #![cfg(windows)]
 
@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use flamework_rs::Flamework;
-use flamework_rs::guards::probe::GuardProbe;
 use rbxts_plugin::erased::{DynPlugin, erase};
 use rbxts_plugin::ts::{Diagnostic, P};
 use rbxts_project::{ProjectOptionLayer, STACK_SIZE};
@@ -77,12 +76,12 @@ fn position(d: P<Diagnostic>) -> String {
     format!("{name}:{line}:{column}")
 }
 
-fn build(fixture: &str, probe: bool) -> Option<Built> {
+fn build(fixture: &str) -> Option<Built> {
     let Some((monorepo, rbxts)) = sources() else {
         eprintln!("skipped: no monorepo with a built core, or no @rbxts packages (set FLAMEWORK_RS_MONOREPO, FLAMEWORK_RS_RBXTS)");
         return None;
     };
-    let root = std::env::temp_dir().join(format!("flamework-rs-guards-{fixture}-{probe}-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("flamework-rs-guards-{fixture}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let from = tests_dir().join(fixture);
     for name in ["src", "tsconfig.json", "default.project.json", "package.json", "flamework.config.json"] {
@@ -114,8 +113,7 @@ fn build(fixture: &str, probe: bool) -> Option<Built> {
     let built = std::thread::Builder::new()
         .stack_size(STACK_SIZE)
         .spawn(move || {
-            let plugins: Vec<Box<dyn DynPlugin>> =
-                if probe { vec![erase(GuardProbe::new())] } else { vec![erase(Flamework::new())] };
+            let plugins: Vec<Box<dyn DynPlugin>> = vec![erase(Flamework::new())];
             let report: CompileReport = compile_project_with(
                 &CompileOptions {
                     tsconfig: "tsconfig.json".into(),
@@ -160,10 +158,10 @@ fn build(fixture: &str, probe: bool) -> Option<Built> {
     Some(built)
 }
 
-/// The fixture built once with the probe, shared by the per-kind tests.
+/// The fixture built once, shared by the per-kind tests.
 fn fixture() -> Option<&'static Built> {
     static BUILT: OnceLock<Option<Built>> = OnceLock::new();
-    BUILT.get_or_init(|| build("guard_fixture", true)).as_ref()
+    BUILT.get_or_init(|| build("guard_fixture")).as_ref()
 }
 
 /// One kind's output equals `expected/out/shared/<file>.luau`; `UPDATE_EXPECTED=1` writes it instead.
@@ -241,20 +239,10 @@ fn class_metadata_guards() {
     check("metadata");
 }
 
-/// The class hook's guards come from the plain plugin too (no probe): `metadata.luau` is the same.
-#[test]
-fn class_metadata_guards_without_the_probe() {
-    let Some(built) = build("guard_fixture", false) else { return };
-    let expected = tests_dir().join("guard_fixture/expected/out/shared/metadata.luau");
-    let Ok(expected) = std::fs::read_to_string(expected) else { return };
-    let ours = built.luau.get("shared/metadata.luau").expect("metadata.luau");
-    assert_eq!(*ours, expected.replace("\r\n", "\n"));
-}
-
 /// The refused types: the TS builder's messages, at the TS's nodes, with its "Type was defined here" notes.
 #[test]
 fn unsupported_types_are_refused() {
-    let Some(built) = build("guard_errors", true) else { return };
+    let Some(built) = build("guard_errors") else { return };
     let ours = built.diagnostics.join("\n") + "\n";
     let expected_path = tests_dir().join("guard_errors/expected-diagnostics.txt");
     if std::env::var_os("UPDATE_EXPECTED").is_some() {

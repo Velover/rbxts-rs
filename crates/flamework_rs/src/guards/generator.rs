@@ -645,6 +645,7 @@ impl<'g, 'x> Generator<'g, 'x> {
             // anything.
             let texts = ty.as_template_literal_type().texts();
             let pattern = format!("^{}$", texts.iter().map(|t| escape_pattern(t)).collect::<Vec<_>>().join(".*"));
+            // TODO(seam-additions): the pattern through `Cx::synthesized_string`, as the TS's synthesized literal.
             return self.t_call("match", vec![text_literal(&pattern)]);
         }
 
@@ -684,6 +685,7 @@ impl<'g, 'x> Generator<'g, 'x> {
             // The TS writes the global `Promise.is`, which roblox-ts compiles to the runtime library's `TS.Promise`.
             // Plugins have no runtime-library primitive yet (see the module docs): the guard library is imported
             // first, which loads the runtime library as every `TS.import` does.
+            // TODO(seam-additions): `Cx::runtime_member("Promise")`, without the `t` import.
             self.t()?;
             return Ok(create::property(create::property(create::id("TS"), "Promise"), "is"));
         }
@@ -754,6 +756,7 @@ impl<'g, 'x> Generator<'g, 'x> {
             }
         };
         let mut children = Vec::new();
+        // TODO(seam-additions): `Cx::ts5_properties_of_type`, for TS5's property order.
         for &property in self.cx.checker().get_properties_of_type(ty) {
             let property_type = self.cx.checker().get_type_of_property_of_type(ty, property.name());
             let on_class = self.cx.checker().get_property_of_type(instance_type, property.name()).is_some();
@@ -952,6 +955,7 @@ impl<'g, 'x> Generator<'g, 'x> {
         }
 
         let mut guards = Vec::new();
+        // TODO(seam-additions): `Cx::ts5_properties_of_type`, for TS5's property order.
         for &property in self.cx.checker().get_properties_of_type(ty) {
             let property_declaration = property.value_declaration();
             let Some(property_type) = self.cx.checker().get_type_of_property_of_type(ty, property.name()) else {
@@ -1042,6 +1046,7 @@ fn types_requiring_dedup(cx: &mut Cx<'_>, ty: P<Type>, limit: u32) -> HashSet<P<
                 recurse(cx, walk, member, modifier)?;
             }
         } else if ty.flags().intersects(TypeFlags::Object) && !is_instance_type(cx, ty) {
+            // TODO(seam-additions): `Cx::ts5_properties_of_type`, for TS5's property order.
             for &property in cx.checker().get_properties_of_type(ty) {
                 let Some(property_type) = cx.checker().get_type_of_property_of_type(ty, property.name()) else {
                     continue;

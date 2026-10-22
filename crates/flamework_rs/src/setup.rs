@@ -22,13 +22,6 @@ use crate::{ProjectError, node_path, uuid};
 /// The test-only switch that pins the build seed (DESIGN §10.4), so obfuscated builds can be compared.
 pub const FIXED_SEED_VAR: &str = "FLAMEWORK_RS_FIXED_SEED";
 
-/// A test and measurement switch only: macro sites that a later milestone brings and that are errors by default
-/// (`Modding.Generic<T, "guard">`, F3) are declined and listed in the build's warning instead, as the others are.
-/// The build succeeds, but its output is not what Flamework emits: a declined site compiles as a plain call without
-/// the values Flamework generates for it (a guard macro returns `nil`). **Such a build must not be run**; it exists
-/// only to compare and time the rest of the output.
-pub const DECLINE_UNPORTED_VAR: &str = "FLAMEWORK_RS_DECLINE_UNPORTED";
-
 /// What every hook reads, made once per build (DESIGN §10.1). Read-only during the transform.
 #[derive(Debug)]
 pub struct FwShared {
@@ -57,8 +50,6 @@ pub struct FwShared {
     /// `flamework.build`'s `stringHashes`; derived ones need no table (DESIGN §10.3, §10.4). TODO(S2): an
     /// incremental build keeps it.
     pub hash_seed: uuid::Namespace,
-    /// [`DECLINE_UNPORTED_VAR`] is set.
-    pub decline_unported: bool,
     /// Whether the project has a Rojo project file (Flamework's `rojoResolver` is undefined without one).
     pub has_rojo: bool,
     /// Flamework's own path translator: roblox-ts's, with `.lua` outputs (`createPathTranslator`).
@@ -316,7 +307,6 @@ pub fn setup(cx: &mut SetupCx<'_>) -> Result<FwShared, Fatal> {
             uuid::Namespace::parse(&text).map_err(|e| Fatal::new(format!("{FIXED_SEED_VAR} is not a uuid: {e}")))?
         }
     };
-    let decline_unported = cx.env(DECLINE_UNPORTED_VAR).is_some_and(|v| !v.is_empty() && v != "0" && v != "false");
 
     // The project's flamework.build came from another version: only a reused one can (TODO(S2)); a fresh one never.
     let out_relative = node_path::relative(&project_dir, &out_dir_option).replace('\\', "/");
@@ -350,7 +340,6 @@ pub fn setup(cx: &mut SetupCx<'_>) -> Result<FwShared, Fatal> {
         build_info,
         build_seed,
         hash_seed,
-        decline_unported,
         has_rojo,
         path_translator,
     })

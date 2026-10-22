@@ -1,5 +1,5 @@
-//! F2 builds that need a process variable: an obfuscated build with a pinned seed (`FLAMEWORK_RS_FIXED_SEED`) and
-//! the measuring switch (`FLAMEWORK_RS_DECLINE_UNPORTED`). One test in this binary, so setting them races nothing.
+//! F2 builds that need a process variable: an obfuscated build with a pinned seed (`FLAMEWORK_RS_FIXED_SEED`). One
+//! test in this binary, so setting it races nothing.
 
 #![cfg(windows)]
 
@@ -11,11 +11,10 @@ use support::project::{Project, assert_clean, luau};
 const SEED: &str = "0f6a5e1c-4b7d-4c2e-9a3f-8d1b2c3e4f50";
 
 #[test]
-fn obfuscation_and_the_decline_switch() {
+fn obfuscation_with_a_pinned_seed() {
     // SAFETY: the only test of this binary; nothing reads the environment concurrently.
     unsafe {
         std::env::set_var("FLAMEWORK_RS_FIXED_SEED", SEED);
-        std::env::set_var("FLAMEWORK_RS_DECLINE_UNPORTED", "1");
     }
 
     let Some(project) = Project::new("fixture_f2", "obfuscated") else { return };
@@ -54,15 +53,4 @@ fn obfuscation_and_the_decline_switch() {
     for (a, b) in first.files.iter().zip(&second.files) {
         assert_eq!(a.luau, b.luau, "{}", a.out_path);
     }
-
-    // The switch: a guard is declined and listed, rather than an error.
-    project.write(
-        "src/shared/guarded.ts",
-        "import { Flamework } from \"@flamework-experimental/core\";\n\nexport const guard = Flamework.createGuard<string>();\n",
-    );
-    let report = project.build_with(flamework_with_fixture_macros());
-    assert_clean(&report);
-    let warnings = report.warnings.join("\n");
-    assert!(warnings.contains("(F3: 1)"), "{warnings}");
-    assert!(luau(&report, "shared/guarded.luau").contains("Flamework.createGuard()"));
 }

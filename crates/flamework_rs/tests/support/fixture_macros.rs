@@ -1,5 +1,5 @@
 //! The transformer fixture's plugin (`packages/transformer/tests/fixture/fieldInfoPlugin.cjs`) as Rust macro types:
-//! the test plugin of the F2 tests and of `examples/fwbuild.rs` (DESIGN §11.8's worked example).
+//! the test plugin of the F2 tests and of `examples/fw_build.rs` (DESIGN §11.8's worked example).
 
 #![allow(dead_code)]
 

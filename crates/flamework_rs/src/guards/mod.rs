@@ -31,7 +31,6 @@
 mod generator;
 mod library;
 pub(crate) mod names;
-pub mod probe;
 pub mod types;
 
 use rbxts_luau::{Expr, Stmt, create};
@@ -91,6 +90,7 @@ pub fn guard_for_with_dedup(cx: &mut Cx<'_>, config: GuardConfig<'_>, node: P<No
         let mut statements: Vec<Stmt> =
             generator.dedup.drain(..).map(|d| create::local(declared(&d.id), Some(d.value))).collect();
         generator.names.assign(generator.cx, &mut statements, Some(&mut guard));
+        // TODO(seam-additions): `Cx::insert_before_statement`, where the TS's `prereqList` puts them.
         for statement in statements {
             generator.cx.prereq(statement);
         }

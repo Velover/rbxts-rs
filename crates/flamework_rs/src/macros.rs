@@ -14,13 +14,14 @@
 //! `intrinsic-flamework-rewrite` (the callee becomes `core.<Namespace>.<name>`) and `intrinsic-const` (a literal
 //! argument check).
 //!
-//! **Later milestones.** `guard` (`Generic<T, "guard">`) is F3 and an error naming it (unless
-//! `FLAMEWORK_RS_DECLINE_UNPORTED` is set: a test and measurement switch whose build must not be run, see
-//! [`crate::setup::DECLINE_UNPORTED_VAR`]; then it is handled like the others). `tuple-guards`
-//! (F3), `serializer` and `intrinsic-serializer-options` (F4), the network intrinsics and `intrinsic-middleware`
-//! (F5) and `intrinsic-component-config` (F6) decline the call before anything is compiled, so roblox-ts compiles it
-//! as a plain call, and finish gives one warning naming every such site's milestone. The decision reads only the
-//! AST and types (a hook cannot decline after it compiled something).
+//! **Guards.** `Generic<T, "guard">` is [`crate::guards::guard_for_with_dedup`] at the call (its dedup locals go
+//! ahead of the statement, before any argument is compiled, as the TS's `prereqList` puts them), and the
+//! `tuple-guards` intrinsic is [`crate::guards::tuple_guards`].
+//!
+//! **Later milestones.** `serializer` and `intrinsic-serializer-options` (F4), the network intrinsics and
+//! `intrinsic-middleware` (F5) and `intrinsic-component-config` (F6) decline the call before anything is compiled,
+//! so roblox-ts compiles it as a plain call, and finish gives one warning naming every such site's milestone. The
+//! decision reads only the AST and types (a hook cannot decline after it compiled something).
 
 use rbxts_luau::create;
 use rbxts_plugin::ts::{Kind, Node, P, Symbol, Type};
@@ -85,6 +86,8 @@ pub(crate) enum Intrinsic {
     ObfuscateObject { inner: Box<UserMacro>, context: Option<String> },
     ShuffleArray(Box<UserMacro>),
     Plugin { id: Option<String>, input: Option<P<Type>> },
+    /// `tuple-guards`: the guards of a tuple's elements.
+    TupleGuards(P<Type>),
     /// Brought by a later milestone.
     Later { id: String, milestone: &'static str },
     /// An unusable intrinsic, with the TS transformer's message.
@@ -107,19 +110,12 @@ pub(crate) enum UserMacro {
 pub(crate) struct Later {
     pub what: String,
     pub milestone: &'static str,
-    /// `Generic<T, "guard">`: an error, not a decline.
-    pub guard: bool,
 }
 
 impl UserMacro {
     /// The first part (in build order) that a later milestone brings.
     pub(crate) fn later(&self) -> Option<Later> {
         match self {
-            UserMacro::Generic { kind: GenericKind::Guard, .. } => Some(Later {
-                what: "a Modding.Generic<T, \"guard\"> parameter".into(),
-                milestone: "F3",
-                guard: true,
-            }),
             UserMacro::Generic { kind: GenericKind::Dependency { metadata: Some(items), .. }, .. }
             | UserMacro::Many(items) => items.iter().find_map(UserMacro::later),
             UserMacro::Map(entries) => entries.iter().find_map(|(_, m)| m.later()),
@@ -127,11 +123,9 @@ impl UserMacro {
             UserMacro::Intrinsic(Intrinsic::ObfuscateObject { inner, .. } | Intrinsic::ShuffleArray(inner)) => {
                 inner.later()
             }
-            UserMacro::Intrinsic(Intrinsic::Later { id, milestone }) => Some(Later {
-                what: format!("the {id} intrinsic"),
-                milestone,
-                guard: false,
-            }),
+            UserMacro::Intrinsic(Intrinsic::Later { id, milestone }) => {
+                Some(Later { what: format!("the {id} intrinsic"), milestone })
+            }
             _ => None,
         }
     }
@@ -185,15 +179,6 @@ pub(crate) fn user_macro(fw: &FwInstance, cx: &mut Cx<'_>, call: &CallSite) -> P
     for (_, found) in &parameters {
         if let Some(later) = found.later() {
             let callee = macro_call_shape(cx, expression, false).0;
-            if later.guard && !fw.shared.decline_unported {
-                return Err(cx.error(
-                    expression,
-                    format!(
-                        "{callee}: {} needs guard generation, which rbxts-rs's Flamework does not have yet ({}).",
-                        later.what, later.milestone
-                    ),
-                ));
-            }
             fw.unported(cx, expression, format!("{callee}: {}", later.what), later.milestone);
             return Ok(Claim::Decline);
         }
@@ -656,7 +641,7 @@ impl Analysis<'_> {
                 id: inputs.first().and_then(|&t| string_literal(t)).map(str::to_owned),
                 input: inputs.get(1).copied(),
             },
-            "tuple-guards" => Intrinsic::Later { id: id.to_owned(), milestone: "F3" },
+            "tuple-guards" => inputs.first().map_or_else(invalid, |&t| Intrinsic::TupleGuards(t)),
             "serializer" => Intrinsic::Later { id: id.to_owned(), milestone: "F4" },
             "network-decoder" | "network-result-decoder" | "network-unreliable" => {
                 Intrinsic::Later { id: id.to_owned(), milestone: "F5" }
@@ -773,8 +758,10 @@ impl Builder<'_> {
                 GenericKind::Dependency { concise, metadata } => {
                     self.dependency(cx, *target, *concise, metadata.as_deref())
                 }
-                // Refused (or declined) before anything was built.
-                GenericKind::Guard => Err(cx.error(self.node, "Flamework: guards are F3")),
+                // `buildGuardFromTypeWithDedup` at the call, its dedup locals ahead of the statement (`prereqList`).
+                GenericKind::Guard => {
+                    crate::guards::guard_for_with_dedup(cx, fw.shared.guard_config(), self.node, *target)
+                }
                 GenericKind::Other => Ok(create::nil()),
             },
             UserMacro::Caller(kind) => self.caller(cx, *kind),
@@ -935,6 +922,7 @@ impl Builder<'_> {
                 };
                 crate::macro_type::execute(fw, cx, self.node, id, *input)
             }
+            Intrinsic::TupleGuards(ty) => crate::guards::tuple_guards(cx, fw.shared.guard_config(), self.node, *ty),
             Intrinsic::Later { id, milestone } => Err(cx.error(
                 self.node,
                 format!("The {id} intrinsic is not in rbxts-rs's Flamework yet ({milestone})."),
@@ -1230,6 +1218,6 @@ mod tests {
             (TableKey::Num(2.0), UserMacro::Many(vec![literal, serializer])),
         ])));
         let later = nested.later().expect("found");
-        assert_eq!((later.what.as_str(), later.milestone, later.guard), ("the serializer intrinsic", "F4", false));
+        assert_eq!((later.what.as_str(), later.milestone), ("the serializer intrinsic", "F4"));
     }
 }

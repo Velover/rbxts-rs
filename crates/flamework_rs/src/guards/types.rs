@@ -263,6 +263,7 @@ pub(crate) fn instance_type_of(cx: &mut Cx<'_>, ty: P<Type>) -> Result<P<Type>, 
 }
 
 fn nominal_properties(cx: &mut Cx<'_>, ty: P<Type>) -> Vec<P<Symbol>> {
+    // TODO(seam-additions): `Cx::ts5_properties_of_type`, for TS5's property order.
     cx.checker().get_properties_of_type(ty).iter().copied().filter(|p| p.name().starts_with("_nominal_")).collect()
 }
 

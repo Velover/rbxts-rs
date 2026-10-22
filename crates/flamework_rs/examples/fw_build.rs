@@ -1,18 +1,21 @@
-//! Builds a project with rbxts-rs and the Flamework plugin, for parity runs against TS5 output.
+//! Builds a project with rbxts-rs and the Flamework plugin, for parity runs against TS5 output. The transformer
+//! fixture's macro types are registered (`tests/support/fixture_macros.rs`), so its `transformer.plugins` macros
+//! build too; a project that uses none of them builds as with the plain plugin.
 //!
-//! `cargo run -p flamework_rs --example fw_build -- <project dir> [--probe] [--partial]`
+//! `cargo run -p flamework_rs --example fw_build -- <project dir> [tsconfig.json] [--partial]`
 //!
-//! - `--probe`: Flamework with `Flamework.createGuard<T>()` built by the guard generator (`guards::probe`), F2's
-//!   `Generic<T, "guard">` stand-in.
 //! - `--partial`: write the files that built even when others failed.
 //!
-//! Prints every diagnostic as `error|warning <file>:<line>:<column>: <message>` (UTF-16 columns from 1, as
-//! TypeScript prints them), each related note indented below it, then the warnings and fatal errors, and `files=N`.
+//! Writes the project's `out`, `include/flamework` and `flamework.build` as a build does. Prints every diagnostic as
+//! `error|warning <file>:<line>:<column>: <message>` (UTF-16 columns from 1, as TypeScript prints them), each related
+//! note indented below it, then the warnings and fatal errors, and `files=N luau=N errors=N ms=N`. Exits 1 when the
+//! build has errors.
+
+#[path = "../tests/support/fixture_macros.rs"]
+mod fixture_macros;
 
 use std::path::Path;
 
-use flamework_rs::Flamework;
-use flamework_rs::guards::probe::GuardProbe;
 use rbxts_plugin::erased::{DynPlugin, erase};
 use rbxts_plugin::ts::{Diagnostic, P};
 use rbxts_project::{ProjectOptionLayer, STACK_SIZE};
@@ -33,21 +36,25 @@ fn position(d: P<Diagnostic>) -> String {
     format!("{name}:{line}:{column}")
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let project = args.first().expect("usage: fw_build <project dir> [--probe] [--partial]").clone();
-    let probe = args.iter().any(|a| a == "--probe");
     let partial = args.iter().any(|a| a == "--partial");
-    let cwd = Path::new(&project).canonicalize().expect("project dir").to_string_lossy().replace("\\\\?\\", "");
+    let mut positional = args.iter().filter(|a| !a.starts_with("--"));
+    let Some(project) = positional.next() else {
+        eprintln!("usage: fw_build <project dir> [tsconfig.json] [--partial]");
+        return std::process::ExitCode::from(2);
+    };
+    let tsconfig = positional.next().cloned().unwrap_or_else(|| "tsconfig.json".into());
+    let cwd = Path::new(project).canonicalize().expect("project dir").to_string_lossy().replace("\\\\?\\", "");
 
+    let start = std::time::Instant::now();
     let report = std::thread::Builder::new()
         .stack_size(STACK_SIZE)
         .spawn(move || {
-            let plugins: Vec<Box<dyn DynPlugin>> =
-                if probe { vec![erase(GuardProbe::new())] } else { vec![erase(Flamework::new())] };
+            let plugins: Vec<Box<dyn DynPlugin>> = vec![erase(fixture_macros::flamework_with_fixture_macros())];
             compile_project_with(
                 &CompileOptions {
-                    tsconfig: "tsconfig.json".into(),
+                    tsconfig,
                     cwd,
                     project_options: ProjectOptionLayer {
                         optimized_loops: Some(true),
@@ -61,16 +68,22 @@ fn main() {
                 &PluginOptions { plugins: &plugins, ..PluginOptions::default() },
             )
         })
-        .unwrap()
+        .expect("a build thread")
         .join()
-        .unwrap();
+        .expect("the build finished");
 
+    let mut errors = 0;
     let mut all = report.diagnostics.clone();
     for file in &report.files {
         all.extend(file.diagnostics.iter().copied());
     }
     for d in all {
-        let category = if d.category() == Category::Error { "error" } else { "warning" };
+        let category = if d.category() == Category::Error {
+            errors += 1;
+            "error"
+        } else {
+            "warning"
+        };
         println!("{category} {}: {}", position(d), flatten_diagnostic_message(d, "\n"));
         for &related in d.related_information() {
             println!("    {}: {}", position(related), flatten_diagnostic_message(related, "\n"));
@@ -80,9 +93,10 @@ fn main() {
         println!("warning: {warning}");
     }
     for fatal in &report.fatal {
+        errors += 1;
         println!("fatal: {fatal}");
     }
-    let written = report.files.iter().filter(|f| f.luau.is_some()).count();
-    println!("files={} luau={written}", report.files.len());
-    std::process::exit(if report.fatal.is_empty() && !report.files.iter().any(|f| f.diagnostics.iter().any(|d| d.category() == Category::Error)) { 0 } else { 1 });
+    let luau = report.files.iter().filter(|f| f.luau.is_some()).count();
+    println!("files={} luau={luau} errors={errors} ms={}", report.files.len(), start.elapsed().as_millis());
+    if errors > 0 { std::process::ExitCode::FAILURE } else { std::process::ExitCode::SUCCESS }
 }

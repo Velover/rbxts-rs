@@ -8,9 +8,12 @@
 //! construct signature `flamework:parameters` / `parameter_names` / `dependencies`; per member `flamework:type` and
 //! `flamework:return_type`, and the parameter keys of methods.
 //!
-//! Not yet: guards (`flamework:guard`, `flamework:parameter_guards`, `flamework:return_guard`, and a guard in a
-//! `Modding.Injectable` dependency's metadata: F3). A class that requests them gets an error naming the milestone,
-//! rather than metadata that silently lacks them.
+//! Guards: `flamework:guard`, `flamework:parameter_guards` and `flamework:return_guard` are
+//! [`crate::guards::guard_for`]; a `Modding.Generic<T, "guard">` in a `Modding.Injectable` dependency's metadata is
+//! built as any user macro's ([`crate::guards::guard_for_with_dedup`]).
+//!
+//! Not yet: dependency metadata that needs a later milestone (the serializer F4, networking F5, components F6). A
+//! class that requests it gets an error naming the milestone, rather than metadata that silently lacks it.
 
 use rbxts_luau::create;
 use rbxts_plugin::ts::{Kind, Node, P, Type};
@@ -226,7 +229,6 @@ fn dependency_metadata(fw: &FwInstance, cx: &mut Cx<'_>, trace: P<Node>, ty: P<T
     if let Some(later) = metadata.as_ref().and_then(|items| items.iter().find_map(UserMacro::later)) {
         let what = format!("the metadata of a Modding.Injectable dependency ({})", later.what);
         let feature = match later.milestone {
-            "F3" => "guard generation",
             "F4" => "the serializer",
             "F5" => "networking",
             _ => "components",

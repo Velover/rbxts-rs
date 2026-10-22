@@ -22,6 +22,7 @@
 //! - [`class_hook`]: `Reflect.defineMetadata` at the static-block position, and the decorator checks;
 //! - [`macros`]: user macros (F2): every marker kind, the intrinsics up to F2, and the parameter intrinsics; the
 //!   parts of later milestones are declined (or refused) loudly;
+//! - [`guards`]: `t` guards from types (F3), for class metadata, `Generic<T, "guard">` and `tuple-guards`;
 //! - [`macro_type`]: user plugins' macro types (`MacroType`, registered with [`Flamework::macro_type`]);
 //! - [`finish`]: id assignment in program order, `flamework.build`, the include JSON, the glob and path warnings;
 //! - [`inputs`]: reading files and variables as recorded build inputs;

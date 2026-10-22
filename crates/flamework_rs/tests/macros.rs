@@ -215,7 +215,7 @@ fn unions_of_different_macros_are_refused() {
     assert!(errors[0].contains("carry different Flamework macros"), "{errors:#?}");
 }
 
-/// Later milestones: a guard is an error naming F3; the serializer is declined, and listed in the build's warning.
+/// Later milestones: the serializer is declined, and listed in the build's warning; a guard (F3) is generated.
 #[test]
 fn later_milestones_are_loud() {
     let Some(project) = Project::new(FIXTURE, "later") else { return };
@@ -234,9 +234,28 @@ fn later_milestones_are_loud() {
         "import { Flamework } from \"@flamework-experimental/core\";\n\nexport const guard = Flamework.createGuard<string>();\n",
     );
     let report = project.build_with(flamework_with_fixture_macros());
-    let errors = errors(&report);
-    assert_eq!(
-        errors,
-        vec!["error guarded.ts: createGuard: a Modding.Generic<T, \"guard\"> parameter needs guard generation, which rbxts-rs's Flamework does not have yet (F3).".to_owned()]
+    assert_clean(&report);
+    let guarded = luau(&report, "shared/guarded.luau");
+    assert!(guarded.contains("Flamework.createGuard(t.string)"), "{guarded}");
+    assert!(report.warnings.join("\n").contains("(F4: 1)"), "{:?}", report.warnings);
+}
+
+/// `tuple-guards` (F3's `tuple_guards`): `{ { guards }, rest or nil, { after }? }`, as TS5 builds it.
+#[test]
+fn tuple_guards_intrinsic() {
+    let Some(project) = Project::new(FIXTURE, "tupleguards") else { return };
+    project.write(
+        "src/shared/tupleGuards.ts",
+        "import { Modding } from \"@flamework-experimental/core\";\n\n/** @metadata macro */\nexport function tupleGuards<T extends unknown[]>(meta?: Modding.Intrinsic<\"tuple-guards\", [T], unknown>) {\n\treturn meta;\n}\n\nexport const labeled = tupleGuards<[id: number, name?: string]>();\nexport const after = tupleGuards<[number, ...string[], boolean]>();\nexport const array = tupleGuards<string[]>();\n",
     );
+    let report = project.build_with(flamework_with_fixture_macros());
+    assert_clean(&report);
+    let luau = luau(&report, "shared/tupleGuards.luau");
+    for line in [
+        "local labeled = tupleGuards({ { t.number, t.optional(t.string) }, nil })",
+        "local after = tupleGuards({ { t.number }, t.string, { t.boolean } })",
+        "local array = tupleGuards({ {}, t.string })",
+    ] {
+        assert!(luau.contains(line), "{line}\n{luau}");
+    }
 }
