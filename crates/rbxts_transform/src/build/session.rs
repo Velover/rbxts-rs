@@ -390,6 +390,23 @@ impl<'p> BuildSession<'p> {
             .collect()
     }
 
+    /// The runtime include copy's inputs, for a watcher: the package.json paths the include source lookup looks at
+    /// (`node_modules/roblox-ts` from the project folder upwards), and the include source folder when it is a
+    /// package's (every file in it is copied). None when the last loaded project gets no include copy.
+    pub fn include_inputs(&self) -> Option<(Vec<String>, Option<String>)> {
+        use crate::project::copy_include::{IncludeSource, include_source_lookup, wants_include};
+        let data = &self.last.as_ref()?.services.data;
+        if !wants_include(&data.options, data.is_package) {
+            return None;
+        }
+        let (probed, source) = include_source_lookup(&data.project_path);
+        let source = match source {
+            IncludeSource::Package(dir) => Some(dir),
+            IncludeSource::Embedded => None,
+        };
+        Some((probed, source))
+    }
+
     /// Whether a file would be one of the last loaded project's root files (its tsconfig's `files` and `include`).
     pub fn include_matcher(&self) -> Option<rbxts_project::IncludeMatcher> {
         self.last.as_ref().map(|last| last.project.include_matcher())

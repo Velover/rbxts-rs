@@ -76,17 +76,27 @@ pub struct IncludeCopy {
 /// The include source for a project folder: the first `node_modules/roblox-ts` with a package.json from `project_path`
 /// upwards (Node's lookup, which skips a `node_modules/node_modules`), else the embedded files.
 pub fn find_include_source(project_path: &str) -> IncludeSource {
+    include_source_lookup(project_path).1
+}
+
+/// [`find_include_source`], with the package.json paths it looked at (a watcher watches them: one appearing or going
+/// changes the source).
+pub fn include_source_lookup(project_path: &str) -> (Vec<String>, IncludeSource) {
+    let mut probed = Vec::new();
     let mut dir = nodepath::resolve(&[project_path]);
     loop {
         if nodepath::basename(&dir) != "node_modules" {
             let package = nodepath::join(&[&dir, "node_modules", "roblox-ts"]);
-            if Path::new(&nodepath::join(&[&package, "package.json"])).is_file() {
-                return IncludeSource::Package(nodepath::join(&[&package, "include"]));
+            let package_json = nodepath::join(&[&package, "package.json"]);
+            let found = Path::new(&package_json).is_file();
+            probed.push(package_json);
+            if found {
+                return (probed, IncludeSource::Package(nodepath::join(&[&package, "include"])));
             }
         }
         let parent = nodepath::dirname(&dir).to_owned();
         if parent == dir {
-            return IncludeSource::Embedded;
+            return (probed, IncludeSource::Embedded);
         }
         dir = parent;
     }

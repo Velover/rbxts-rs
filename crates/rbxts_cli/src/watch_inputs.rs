@@ -14,13 +14,12 @@
 
 use std::time::SystemTime;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
 use rbxts_transform::BuildSession;
-use rbxts_transform::build::graph::Version;
 use rbxts_transform::build::plugin_inputs::InputWatch;
 
-use super::{Subscriptions, Watches, is_dir, is_under, key, parent_of, watched_set};
+use super::{Own, Subscriptions, Watches, is_dir, is_own, is_under, key, parent_of, watched_set};
 
 /// What the watcher watches for the recorded inputs.
 #[derive(Clone, Debug, Default)]
@@ -106,22 +105,17 @@ fn covered(dir: &str, active: &FxHashSet<(String, bool)>) -> bool {
     active.iter().any(|(watched, recursive)| *recursive && is_under(&k, &key(watched)))
 }
 
-/// One of rbxts-rs's temporary files, or this watcher's own write as it wrote it.
-fn own_write(path: &str, own: &FxHashMap<String, Version>) -> bool {
+/// One of rbxts-rs's temporary files, or this watcher's own write or deletion as it left it.
+fn own_write(path: &str, own: &Own) -> bool {
     let k = key(path);
-    if rbxts_project::nodepath::basename(&k).contains(".rbxts-tmp-") {
-        return true;
-    }
-    own.get(&k).is_some_and(|version| {
-        std::fs::read(path).is_ok_and(|bytes| Version::of(&String::from_utf8_lossy(&bytes)) == *version)
-    })
+    rbxts_project::nodepath::basename(&k).contains(".rbxts-tmp-") || is_own(path, &k, own)
 }
 
 /// The events of a burst the rest of the watcher dropped that a recorded input may care about.
 pub(super) fn candidates(
     dropped: Vec<(String, bool)>,
     watches: &InputWatches,
-    own: &FxHashMap<String, Version>,
+    own: &Own,
 ) -> Vec<String> {
     dropped
         .into_iter()
@@ -138,7 +132,7 @@ pub(super) fn refresh(
     session: &BuildSession<'_>,
     subscriptions: &mut Subscriptions,
     watched: &mut Watches,
-    own: &FxHashMap<String, Version>,
+    own: &Own,
     since: SystemTime,
 ) -> Vec<String> {
     if let Some(set) = watched_set(session) {

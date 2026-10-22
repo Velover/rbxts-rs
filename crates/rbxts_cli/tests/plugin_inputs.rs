@@ -2,8 +2,8 @@
 //! this test binary is the compiler when `RBXTS_TEST_CHILD_ARGS` is set (the `child` test).
 //! - an incremental build in a new process transforms again only the files whose `Cx::env` reads read another value
 //!   now; a plugin diagnostic shows its source in TypeScript's code slot (`TS @probe/inputs`);
-//! - the watcher: a file a finish glob matches, a listed directory's entries, a file a file's glob matches, a glob
-//!   root removed and created again; events that change no answer start nothing.
+//! - the watcher: a file a finish glob matches, a listed directory's entries, a path finish tested or read, a file a
+//!   file's glob matches, a glob root removed and created again; events that change no answer start nothing.
 
 #![cfg(windows)]
 
@@ -255,6 +255,25 @@ fn the_watcher_follows_the_recorded_inputs() {
     std::fs::remove_file(project.0.join("finish-dir/x.txt")).unwrap();
     watcher.next_end();
     assert!(!project.exists("probe-out"));
+    watcher.settle();
+
+    // `exists` and `read_file` in the project directory (Flamework's place source and build info): a path appearing
+    // or a text changing runs finish only; the same text written again is nothing
+    project.write("finish-flag", "");
+    let end = watcher.next_end();
+    assert_eq!(end["transformed"], 0, "{end}");
+    assert!(project.read("probe-inputs.txt").contains("flag true"));
+    watcher.settle();
+    project.write("finish-file.txt", "first\n");
+    let end = watcher.next_end();
+    assert_eq!(end["transformed"], 0, "{end}");
+    assert!(project.read("probe-inputs.txt").contains("file Some(\"first\\n\")"));
+    watcher.settle();
+    project.write("finish-file.txt", "first\n");
+    watcher.assert_quiet(quiet);
+    std::fs::remove_file(project.0.join("finish-flag")).unwrap();
+    watcher.next_end();
+    assert!(project.read("probe-inputs.txt").contains("flag false"));
     watcher.settle();
 
     // a file's glob: that file only; a directory its matcher does not accept is nothing

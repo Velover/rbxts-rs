@@ -778,3 +778,183 @@ fn writes_that_change_nothing_the_build_reads_start_no_rebuild() {
     drop(watcher);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// The name of the output in `dir` whose name, lowercased, starts with `stem` (a JSON module's output).
+fn output_named(dir: &Path, stem: &str) -> Option<String> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .find(|n| n.to_lowercase().starts_with(stem))
+}
+
+/// A JSON module the build reads: rewritten with the same bytes, nothing; renamed in case only (its text the same),
+/// a rebuild that gives the output the new spelling, as a clean build does.
+#[test]
+fn a_case_only_rename_of_a_json_module_is_seen() {
+    let Some((base, root, links)) = linked_project("jsonh") else { return };
+    write(&root.join("src/shared/data.json"), "{\"v\": 1}\n");
+    write(&root.join("src/shared/useData.ts"), "import data from \"./data.json\";\n\nexport const v = data.v;\n");
+    let watcher = start(&root);
+    assert_eq!(watcher.build_end(0)["ok"], true);
+    let out = root.join("out/shared");
+    assert_eq!(output_named(&out, "data.").as_deref().map(|n| n.starts_with("data")), Some(true));
+    std::fs::write(root.join("src/shared/data.json"), "{\"v\": 1}\n").unwrap();
+    watcher.assert_quiet(Duration::from_millis(1500));
+    std::fs::rename(root.join("src/shared/data.json"), root.join("src/shared/Data.json")).unwrap();
+    let end = watcher.build_end(1);
+    assert_eq!(end["ok"], true, "{end}");
+    let name = output_named(&out, "data.").unwrap_or_default();
+    assert!(name.starts_with("Data"), "the output takes the new spelling: {name}");
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Takes the deny entry `icacls` put on a folder off again when dropped (also when a test fails).
+struct Denied(PathBuf);
+
+impl Denied {
+    fn new(dir: &Path) -> Denied {
+        let user = std::env::var("USERNAME").unwrap();
+        let status = Command::new("icacls")
+            .arg(dir)
+            .args(["/deny", &format!("{user}:(OI)(CI)(RD)")])
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "icacls /deny");
+        Denied(dir.to_path_buf())
+    }
+}
+
+impl Drop for Denied {
+    fn drop(&mut self) {
+        let user = std::env::var("USERNAME").unwrap_or_default();
+        let _ = Command::new("icacls").arg(&self.0).args(["/remove:d", &user]).stdout(Stdio::null()).status();
+    }
+}
+
+/// A package folder the load reads by path but that cannot be listed (so its watch fails): no rebuild loop, the
+/// watch retried quietly at later updates and made once the folder can be listed again, its files then seen.
+#[test]
+fn a_folder_that_cannot_be_watched_starts_no_rebuild_loop() {
+    if std::env::var_os("USERNAME").is_none() {
+        eprintln!("skipped: no USERNAME for icacls");
+        return;
+    }
+    let Some((base, root, links)) = linked_project("denied") else { return };
+    let package = root.join("node_modules/denp");
+    write(&package.join("package.json"), "{ \"name\": \"denp\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n");
+    write(&package.join("index.d.ts"), "export type V = number;\n");
+    let watcher = start(&root);
+    assert_eq!(watcher.build_end(0)["ok"], true);
+    let denied = Denied::new(&package);
+    assert!(std::fs::read_dir(&package).is_err(), "the folder cannot be listed");
+    write(&root.join("src/shared/useDen.ts"), "import type { V } from \"denp\";\n\nexport const n: V = 1;\n");
+    watcher.build_end(1);
+    // at most one more rebuild for what the new watches found, then quiet
+    let _ = watcher.settle();
+    watcher.assert_quiet(Duration::from_millis(5000));
+    let b = root.join("src/shared/b.ts");
+    let edit = |text: &str| {
+        let current = std::fs::read_to_string(&b).unwrap();
+        std::fs::write(&b, current + text).unwrap();
+    };
+    edit("export const e1 = 1;\n");
+    watcher.build_start();
+    let _ = watcher.settle();
+    watcher.assert_quiet(Duration::from_millis(2000));
+    drop(denied);
+    edit("export const e2 = 1;\n");
+    watcher.build_start();
+    watcher.still_ok("the folder can be listed again");
+    std::fs::write(package.join("index.d.ts"), "export type V = string;\n").unwrap();
+    let end = watcher.settle();
+    assert!(end.is_some_and(|e| e["ok"] == false), "the package's watch was made: V is a string now");
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Rojo project files in the output folder the Rojo project mounts (`$path: out/shared`), as roblox-ts watches them:
+/// one written there by hand, edited, removed, each changes the requires. The build's own copies of a project file
+/// (an asset) start nothing.
+#[test]
+fn rojo_project_files_in_the_output_folder_are_seen() {
+    let Some((base, root, links)) = linked_project("outrojo") else { return };
+    write(&root.join("src/shared/sub/lib/x.ts"), "export const x = 1;\n");
+    write(&root.join("src/shared/useX.ts"), "import { x } from \"./sub/lib/x\";\n\nexport const y = x;\n");
+    let out = root.join("out/shared/useX.luau");
+    let watcher = start(&root);
+    assert_eq!(watcher.build_end(0)["ok"], true);
+    assert!(import_line(&out).contains("\"shared\", \"sub\", \"lib\", \"x\""), "{}", import_line(&out));
+    let project = |child: &str| {
+        format!(
+            "{{ \"name\": \"sub\", \"tree\": {{ \"$className\": \"Folder\", \"{child}\": {{ \"$path\": \"lib\" }} }} }}\n"
+        )
+    };
+    let hand = root.join("out/shared/sub/default.project.json");
+    let mut generation = 1;
+    for (label, text, segment) in
+        [("written", Some("hand"), "hand"), ("edited", Some("hand2"), "hand2"), ("removed", None, "lib")]
+    {
+        match text {
+            Some(child) => std::fs::write(&hand, project(child)).unwrap(),
+            None => std::fs::remove_file(&hand).unwrap(),
+        }
+        let end = watcher.build_end(generation);
+        generation += 1;
+        assert_eq!(end["ok"], true, "{label}: {end}");
+        let line = import_line(&out);
+        assert!(line.contains(&format!("\"shared\", \"sub\", \"{segment}\", \"x\"")), "{label}: {line}");
+        watcher.assert_quiet(Duration::from_millis(1000));
+    }
+    // a project file among the sources is copied into out as an asset: the build's own write starts nothing
+    write(
+        &root.join("src/shared/other/default.project.json"),
+        "{ \"name\": \"other\", \"tree\": { \"$className\": \"Folder\" } }\n",
+    );
+    assert_eq!(watcher.build_end(generation)["ok"], true);
+    assert!(root.join("out/shared/other/default.project.json").is_file(), "copied as an asset");
+    watcher.assert_quiet(Duration::from_millis(1500));
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// The runtime include files come from the project's `node_modules/roblox-ts/include`: the package installed, a
+/// file in it edited, a file added there, each copied into the project's include folder without a source edit.
+#[test]
+fn the_runtime_include_source_is_watched() {
+    let Some((base, root, links)) = linked_project("rbinc") else { return };
+    let watcher = start(&root);
+    assert_eq!(watcher.build_end(0)["ok"], true);
+    let package = root.join("node_modules/roblox-ts");
+    let staged = base.join("roblox-ts");
+    write(&staged.join("package.json"), "{ \"name\": \"roblox-ts\", \"version\": \"3.0.0\" }\n");
+    write(&staged.join("include/RuntimeLib.lua"), "-- runtime v1\nreturn {}\n");
+    write(&staged.join("include/Promise.lua"), "-- promise v1\nreturn {}\n");
+    std::fs::rename(&staged, &package).unwrap();
+    watcher.until_ok();
+    watcher.still_ok("installed");
+    let runtime = root.join("include/RuntimeLib.lua");
+    assert!(std::fs::read_to_string(&runtime).unwrap_or_default().starts_with("-- runtime v1"));
+    std::fs::write(package.join("include/RuntimeLib.lua"), "-- runtime v2\nreturn {}\n").unwrap();
+    watcher.until_ok();
+    assert!(std::fs::read_to_string(&runtime).unwrap().starts_with("-- runtime v2"), "edited in place");
+    std::fs::write(package.join("include/Extra.lua"), "-- extra\nreturn {}\n").unwrap();
+    watcher.until_ok();
+    assert!(root.join("include/Extra.lua").is_file(), "a new file in the include source");
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}

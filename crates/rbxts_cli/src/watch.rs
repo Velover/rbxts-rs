@@ -10,13 +10,16 @@
 //!     and the paths module resolution probed that did not exist, so `node_modules/<name>` in every ancestor,
 //!     `@types`, `typeRoots` and `paths` locations; setup's own reads: the project's package.json lookup, the
 //!     type-root packages' package.json), the nearest existing directory at or above it. A missing `node_modules`
-//!     counts too (a fresh clone, then an install). The folders the Rojo resolvers search for nested project files
-//!     (`$path` folders outside the output roots) are watched recursively too.
-//! - **What counts.** A JSON file the load read whose text is the same again never does (a package manager
-//!   rewriting package.json as it was). Config files and build inputs always; nothing under the output roots (never
-//!   a root holding the project, a source root or the tsconfig) or the include folder; then: a path the load read,
-//!   or a missing directory on the way to one; an entry added, removed or renamed in a module directory (not dot
-//!   entries: `.package-lock.json`, `.cache`); a Rojo project file in the project directory; in a folder a Rojo
+//!     counts too (a fresh clone, then an install). Also watched recursively: the folders the Rojo resolvers search
+//!     for nested project files (`$path` folders, in the output roots too) and the runtime include files' source
+//!     (`node_modules/roblox-ts/include`).
+//! - **What counts.** In the output roots, this watcher's own writes and deletions never do. A JSON file the load
+//!   read whose text is the same again under the same name never does (a package manager rewriting package.json as
+//!   it was; a case-only rename does count). Config files and build inputs always; under the output roots (never a
+//!   root holding the project, a source root or the tsconfig) or the include folder only Rojo project files in a
+//!   folder the resolvers search (as roblox-ts's `isRojoConfigDirectory`); then: anything in the include source; a
+//!   path the load read, or a missing directory on the way to one; an entry added, removed or renamed in a module
+//!   directory (not dot entries: `.package-lock.json`, `.cache`); a Rojo project file in the project directory; in a folder a Rojo
 //!   resolver searches (type roots included), a project file, or a folder holding one or holding one it read;
 //!   inside a package the build uses, `package.json` and other JSON, TypeScript and Luau files and directories
 //!   (nothing else in a package that is only in a type root); under a root (not in its `node_modules` or `.git`),
@@ -31,7 +34,9 @@
 //!   wrote into it; a path the load read that is there now and was not, or the other way round; a program file
 //!   whose time or size is not the one it was parsed at. Any of those starts another rebuild. A build that loads no
 //!   project keeps the last good watches, plus what its failed load read. A watch that cannot be made is reported
-//!   once and tried again at each update.
+//!   once (with the listing's error: notify calls an access denial a missing path) and tried again quietly at each
+//!   update; it is compared with the build when first wanted and when made at last, not at each failed retry. A path
+//!   two updates in a row report is dropped the second time: a read the disk contradicts whatever the build does.
 //! - **Plugin inputs** ([`inputs`]): the globs plugins recorded (files', `setup`'s, `finish`'s) and what `finish`
 //!   read are watched too; an event only they may care about starts a rebuild when the session finds an answer
 //!   changed.
@@ -213,9 +218,11 @@ struct Watched {
     rojo_dirs: Vec<String>,
     /// Which files the program could take in, for `open_dirs`.
     matcher: Option<IncludeMatcher>,
-    /// Path keys of the JSON files the last load read, with the hash of their text: an event leaving the same text
-    /// does not count.
-    texts: FxHashMap<String, u64>,
+    /// Path keys of the JSON files the last load read, with their spelling and the hash of their text: an event
+    /// leaving the same text under the same name does not count.
+    texts: FxHashMap<String, (String, u64)>,
+    /// Path keys of the runtime include files' source folder (watched recursively; anything in it counts).
+    include_sources: Vec<String>,
     /// Path keys of `node_modules`, its scope directories and the type roots: the directory itself, and any entry
     /// added, removed or renamed in it (but dot entries) counts, whether it exists yet or not.
     module_dirs: FxHashSet<String>,
@@ -298,39 +305,68 @@ fn package_entry_counts(path: &str, name: &str) -> bool {
     }
 }
 
-/// Whether a folder holds a Rojo project file anywhere below it. A link counts (the resolvers follow links; this
-/// does not).
-fn holds_project_file(dir: &Path) -> bool {
+/// This watcher's writes and deletions, by path key: the version written, or None for a path it deleted.
+type Own = FxHashMap<String, Option<Version>>;
+
+/// Whether an event leaves `path` as this watcher's last build left it: written with the same text, or deleted and
+/// still gone.
+fn is_own(path: &str, path_key: &str, own: &Own) -> bool {
+    match own.get(path_key) {
+        Some(Some(version)) => {
+            std::fs::read(path).is_ok_and(|bytes| Version::of(&String::from_utf8_lossy(&bytes)) == *version)
+        }
+        Some(None) => std::fs::symlink_metadata(path).is_err(),
+        None => false,
+    }
+}
+
+/// Whether a folder holds a Rojo project file anywhere below it that this watcher did not write as it is. A link
+/// counts (the resolvers follow links; this does not).
+fn holds_project_file(dir: &Path, own: &Own) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else { return false };
     entries.flatten().any(|entry| match entry.file_type() {
         Ok(t) if t.is_symlink() => true,
-        Ok(t) if t.is_dir() => holds_project_file(&entry.path()),
-        Ok(_) => rojo::is_rojo_project_file_name(&entry.file_name().to_string_lossy()),
+        Ok(t) if t.is_dir() => holds_project_file(&entry.path(), own),
+        Ok(_) => {
+            rojo::is_rojo_project_file_name(&entry.file_name().to_string_lossy()) && {
+                let path = path_text(&entry.path());
+                !is_own(&path, &key(&path), own)
+            }
+        }
         Err(_) => true,
     })
 }
 
-/// Whether the text of `path` now is the one a load read (`hash`, [`text_hash`]).
-fn same_text(path: &str, hash: u64) -> bool {
-    std::fs::read(path)
-        .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .is_some_and(|text| text_hash(&text) == hash)
+/// Whether the file at `path` now is the one a load read as `spelled` (its name spelled the same on disk, so not a
+/// case-only rename) with the text `hash` ([`text_hash`]).
+fn same_text(path: &str, spelled: &str, hash: u64) -> bool {
+    let name = nodepath::basename(spelled);
+    let on_disk = std::fs::read_dir(nodepath::dirname(path)).ok().and_then(|entries| {
+        entries.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).find(|n| n.eq_ignore_ascii_case(name))
+    });
+    on_disk.as_deref() == Some(name)
+        && std::fs::read(path)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .is_some_and(|text| text_hash(&text) == hash)
 }
 
 impl Watched {
     /// Whether an entry of a folder a Rojo resolver searches changes what it finds: a project file, a folder holding
     /// one (created or moved in; a link counts), or a folder a project file the resolvers read was in (removed or
-    /// moved away).
-    fn rojo_entry_counts(&self, path: &str, path_key: &str, name: &str) -> bool {
+    /// moved away). This watcher's own writes and deletions do not count.
+    fn rojo_entry_counts(&self, path: &str, path_key: &str, name: &str, own: &Own) -> bool {
+        if is_own(path, path_key, own) {
+            return false;
+        }
         if rojo::is_rojo_project_file_name(name) {
             return true;
         }
         match std::fs::symlink_metadata(path) {
             Ok(m) if m.file_type().is_symlink() => true,
-            Ok(m) if m.is_dir() => holds_project_file(Path::new(path)),
+            Ok(m) if m.is_dir() => holds_project_file(Path::new(path), own),
             Ok(_) => false,
-            Err(_) => self.config_inputs.iter().any(|input| is_under(input, path_key)),
+            Err(_) => self.config_inputs.iter().any(|input| is_under(input, path_key) && !own.contains_key(input)),
         }
     }
 
@@ -375,7 +411,7 @@ impl Watched {
     /// only their `package.json` was read (setup's package mapping reads every type-root package's); the JSON
     /// texts read.
     fn add_log(&mut self, log: &ReadLog, dirs: &mut FxHashMap<String, bool>) {
-        self.texts.extend(log.texts().into_iter().map(|(path, hash)| (key(&path), hash)));
+        self.texts.extend(log.texts().into_iter().map(|(path, hash)| (key(&path), (path, hash))));
         let reads = log.entries();
         // the directories the load found (a directory, or a file's directory) need no look of their own; one gone
         // since is caught when its watch is made (`Subscriptions::update`)
@@ -434,10 +470,18 @@ impl Watched {
         let recursive: Vec<String> = self.recursive.iter().map(|d| key(d)).collect();
         for partition in partitions {
             let k = key(&partition);
-            if self.ignored_roots.iter().any(|root| is_under(&k, root)) || self.rojo_dirs.contains(&k) {
+            if self.rojo_dirs.contains(&k) {
                 continue;
             }
             self.rojo_dirs.push(k.clone());
+            // in an output root (`$path: out/shared`): only its project files count, and it is there to watch
+            // once a build wrote it
+            if self.ignored_roots.iter().any(|root| is_under(&k, root)) {
+                if !recursive.iter().any(|r| is_under(&k, r)) && is_dir(&partition) {
+                    self.recursive.insert(partition);
+                }
+                continue;
+            }
             if self.module_dirs.contains(&k) {
                 continue;
             }
@@ -616,6 +660,19 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
         watched.add_log(&log, &mut dirs);
     }
     watched.add_rojo_dirs(session.rojo_partitions(), &mut dirs);
+    // the runtime include files: the package.json paths their source lookup looks at, and the source folder
+    if let Some((probed, source)) = session.include_inputs() {
+        for path in &probed {
+            watched.cover(path, &mut dirs);
+        }
+        if let Some(source) = source {
+            watched.include_sources.push(key(&source));
+            watched.cover(&source, &mut dirs);
+            if is_dir(&source) {
+                watched.recursive.insert(source);
+            }
+        }
+    }
     watched.stamps = session.loaded_stamps();
     watched.inputs = inputs::InputWatches::of(session);
     watched.recursive.extend(watched.inputs.recursive.iter().cloned());
@@ -626,11 +683,20 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
 
 /// Whether an event path matters. `folder_modify`: the event is only a modification of an existing directory (its
 /// entries changed), which counts only for a plugin package directory (the events of the entries say more).
-fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &FxHashMap<String, Version>) -> bool {
+fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &Own) -> bool {
     let k = key(path);
-    // a JSON file the load read, with the same text again (a package manager rewriting package.json as it was)
-    if let Some(hash) = watched.texts.get(&k)
-        && same_text(path, *hash)
+    let parent = nodepath::dirname(&k);
+    let name = nodepath::basename(&k);
+    let output = watched.ignored_roots.iter().any(|root| is_under(&k, root));
+    // in the output roots, this watcher's own writes and deletions as it made them come first (an asset-copied
+    // Rojo project file is a config input the next load reads, yet the build's own)
+    if output && is_own(path, &k, own) {
+        return false;
+    }
+    // a JSON file the load read, with the same text again under the same name (a package manager rewriting
+    // package.json as it was; a case-only rename is a change)
+    if let Some((spelled, hash)) = watched.texts.get(&k)
+        && same_text(path, spelled, *hash)
     {
         return false;
     }
@@ -638,22 +704,26 @@ fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &FxHashMap<
     if watched.config_inputs.contains(&k) {
         return true;
     }
-    if watched.ignored_roots.iter().any(|root| is_under(&k, root)) {
-        return false;
+    if output {
+        // Rojo project files in the folders the resolvers search count there too, as in roblox-ts
+        // (`isRojoConfigDirectory`): a hand-written `out/…/default.project.json` changes the requires
+        return !folder_modify
+            && watched.rojo_dirs.iter().any(|dir| is_under(parent, dir))
+            && watched.rojo_entry_counts(path, &k, name, own);
     }
     if folder_modify {
         return watched.plugin_package_dirs.contains(&k);
     }
-    let parent = nodepath::dirname(&k);
-    let name = nodepath::basename(&k);
     if name.starts_with('.') && name.contains(".rbxts-tmp-") {
         return false;
     }
     // this watcher's own artifacts and state files, as it wrote them
-    if let Some(version) = own.get(&k)
-        && std::fs::read(path).is_ok_and(|bytes| Version::of(&String::from_utf8_lossy(&bytes)) == *version)
-    {
+    if is_own(path, &k, own) {
         return false;
+    }
+    // the runtime include files' source: every file in it is copied
+    if watched.include_sources.iter().any(|source| is_under(&k, source)) {
+        return true;
     }
     // package names never start with a dot: `node_modules/.package-lock.json`, `.cache`, `.bin` are churn
     let in_module_dir = watched.module_dirs.contains(parent);
@@ -670,7 +740,7 @@ fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &FxHashMap<
     if parent == watched.project_dir && (rojo::is_rojo_project_file_name(name) || name == "roblox-project.json") {
         return true;
     }
-    if watched.rojo_dirs.iter().any(|dir| is_under(parent, dir)) && watched.rojo_entry_counts(path, &k, name) {
+    if watched.rojo_dirs.iter().any(|dir| is_under(parent, dir)) && watched.rojo_entry_counts(path, &k, name, own) {
         return true;
     }
     if let Some(package) = watched.package_of(&k) {
@@ -711,6 +781,8 @@ struct Subscriptions {
     missing: FxHashSet<String>,
     /// The watches that failed, reported once; tried again at each update until one succeeds.
     failed: FxHashSet<(String, bool)>,
+    /// The paths the last update reported as changed before their directory was watched.
+    last_stale: FxHashSet<String>,
 }
 
 impl Subscriptions {
@@ -718,7 +790,7 @@ impl Subscriptions {
     /// `since` (the build's start) and matter: a write between the program load and the new watch (a package
     /// folder filled during the build that its creation started, a `watch_dir` root) raised no event here, so
     /// those paths start another rebuild.
-    fn update(&mut self, watched: &Watched, since: SystemTime, own: &FxHashMap<String, Version>) -> Vec<String> {
+    fn update(&mut self, watched: &Watched, since: SystemTime, own: &Own) -> Vec<String> {
         if debug() {
             eprintln!("[rbxtsc watch] recursive {:?}\n[rbxtsc watch] flat {:?}", watched.recursive, watched.flat);
         }
@@ -742,26 +814,41 @@ impl Subscriptions {
             let scan = Scan::new(watched, since, own);
             for watch @ (dir, recursive) in new {
                 let mode = if *recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
-                match self.watcher.watch(Path::new(dir), mode) {
+                // a directory is compared with the build once: when first watched, whether the watch is made or
+                // not, and again when a failed one is made at last (not at every failed retry: a read the disk
+                // contradicts for good, such as a folder that cannot be listed, would start a rebuild each time)
+                let retry = self.failed.contains(watch);
+                let made = match self.watcher.watch(Path::new(dir), mode) {
                     Ok(()) => {
                         self.failed.remove(watch);
                         active.insert(watch.clone());
+                        true
                     }
                     // not active: tried again at the next update (a failure is reported once)
                     Err(e) => {
                         if self.failed.insert(watch.clone()) {
-                            eprintln!("rbxtsc: cannot watch {dir}: {e}");
+                            // notify reports an access denial as a missing path: the listing says why
+                            let cause = std::fs::read_dir(dir).err().map_or_else(|| e.to_string(), |io| io.to_string());
+                            eprintln!("rbxtsc: cannot watch {dir}: {cause}");
                         }
+                        false
                     }
+                };
+                if !retry || made {
+                    let whole = *recursive || watched.module_dirs.contains(&key(dir));
+                    scan.dir(Path::new(dir), *recursive, whole, &mut stale);
                 }
-                let whole = *recursive || watched.module_dirs.contains(&key(dir));
-                scan.dir(Path::new(dir), *recursive, whole, &mut stale);
             }
         }
         self.failed.retain(|w| wanted.contains(w));
         self.active = active;
         stale.sort();
         stale.dedup();
+        // a path the last update reported, reported again with no event in between, is a read the disk contradicts
+        // whatever the build does (the rebuild it started read it again): not another change
+        let last = std::mem::take(&mut self.last_stale);
+        stale.retain(|path| !last.contains(path));
+        self.last_stale = stale.iter().cloned().collect();
         if debug() && !stale.is_empty() {
             eprintln!("[rbxtsc watch] changed before their directory was watched: {stale:?}");
         }
@@ -777,7 +864,7 @@ type Stamp<'a> = (&'a str, Option<SystemTime>, i64);
 struct Scan<'a> {
     watched: &'a Watched,
     since: SystemTime,
-    own: &'a FxHashMap<String, Version>,
+    own: &'a Own,
     /// What the load read, by the path key of the directory holding it.
     reads: FxHashMap<String, Vec<(&'a str, Seen)>>,
     /// The program's files as parsed, by the path key of their directory.
@@ -787,7 +874,7 @@ struct Scan<'a> {
 }
 
 impl<'a> Scan<'a> {
-    fn new(watched: &'a Watched, since: SystemTime, own: &'a FxHashMap<String, Version>) -> Scan<'a> {
+    fn new(watched: &'a Watched, since: SystemTime, own: &'a Own) -> Scan<'a> {
         let mut reads: FxHashMap<String, Vec<(&str, Seen)>> = FxHashMap::default();
         for (path, seen) in &watched.reads {
             if let Some(parent) = parent_of(path) {
@@ -814,10 +901,32 @@ impl<'a> Scan<'a> {
     /// Adds to `stale` what in `dir` (and below it when `recursive`) differs from what the build read or changed
     /// since it started. `whole`: any entry of the directory counts (a module, package or root directory), so its
     /// own modification time counts too (an entry added, removed or renamed, whatever the entry's times).
+    /// The Rojo project files below an output folder written or created since the build started, and not by this
+    /// watcher.
+    fn output_project_files(&self, dir: &Path, stale: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let Ok(metadata) = entry.metadata() else { continue };
+            let path = path_text(&entry.path());
+            if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                self.output_project_files(&entry.path(), stale);
+            } else if rojo::is_rojo_project_file_name(&entry.file_name().to_string_lossy())
+                && self.recent(&metadata)
+                && !is_own(&path, &key(&path), self.own)
+            {
+                stale.push(path);
+            }
+        }
+    }
+
     fn dir(&self, dir: &Path, recursive: bool, whole: bool, stale: &mut Vec<String>) {
         let text = path_text(dir);
         let k = key(&text);
         if self.watched.ignored_roots.iter().any(|root| is_under(&k, root)) {
+            // an output folder a Rojo resolver searches: only project files count there
+            if self.watched.rojo_dirs.iter().any(|d| is_under(&k, d)) {
+                self.output_project_files(dir, stale);
+            }
             return;
         }
         let Ok(metadata) = std::fs::metadata(dir) else { return };
@@ -900,8 +1009,9 @@ fn watch(
         active: FxHashSet::default(),
         missing: FxHashSet::default(),
         failed: FxHashSet::default(),
+        last_stale: FxHashSet::default(),
     };
-    let mut own: FxHashMap<String, Version> = FxHashMap::default();
+    let mut own: Own = FxHashMap::default();
     // a restarted watcher goes on from the last generation of the one before
     let mut generation = if first_generation > 0 { first_generation + 1 } else { 0 };
 
@@ -1019,7 +1129,7 @@ fn rebuild(
     cwd: &str,
     generation: u64,
     paths: &[String],
-    own: &mut FxHashMap<String, Version>,
+    own: &mut Own,
 ) -> Vec<String> {
     if build.events_json {
         println!("{{\"event\":\"build-start\",\"gen\":{generation},\"changes\":{}}}", json_list(paths));
@@ -1033,8 +1143,11 @@ fn rebuild(
     if let Ok((_, summary)) = &result {
         for path in &summary.written {
             if let Ok(bytes) = std::fs::read(path) {
-                own.insert(key(path), Version::of(&String::from_utf8_lossy(&bytes)));
+                own.insert(key(path), Some(Version::of(&String::from_utf8_lossy(&bytes))));
             }
+        }
+        for path in &summary.deleted {
+            own.insert(key(path), None);
         }
     }
     let start = std::time::Instant::now();
@@ -1158,6 +1271,7 @@ mod tests {
             active: FxHashSet::default(),
             missing: FxHashSet::default(),
             failed: FxHashSet::default(),
+            last_stale: FxHashSet::default(),
         };
         let mut watched = Watched::default();
         let watch = (path_text(&dir), false);
