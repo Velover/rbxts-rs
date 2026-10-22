@@ -31,10 +31,10 @@
 //! generic operand's intersection, whose object parts it orders one by one. Elsewhere it keeps TypeScript 7's order:
 //! - mapped types over a union of keys (`Record<K, V>`, `Pick`, `{ [P in K]: ... }`): TypeScript 5 follows the
 //!   union's type ids there, which no declaration gives (Flamework's serializer sorts these runs itself);
-//! - properties an `as` clause renames (``as `get${K}` ``): TypeScript 5 lists them in `T`'s order but keeps no link
-//!   to the property they came from, so they go after the others (a filtering `as` clause keeps the link, and its
-//!   properties are placed);
-//! - unions, tuples.
+//! - an object literal type spread from a union of objects whose members hold the same property symbols in different
+//!   orders (a non-generic `PXY | PYX`, `interface PYX extends PY, PX`): which member it came from cannot be told,
+//!   and the first is taken;
+//! - the property list of a union type itself, and tuples.
 
 use tsrs_ast::{Kind, ModifierFlags, Node, Symbol, SymbolFlags};
 use tsrs_checker::{
@@ -185,19 +185,34 @@ fn anonymous_names(checker: &mut Checker, t: P<Type>, stack: &mut Vec<P<Type>>) 
     names
 }
 
+/// A name on one side of a spread, with the symbol it came from (an operand's property, a literal member's), which
+/// tells the parts and union members apart when their names are the same.
+#[derive(Clone, Copy)]
+struct Entry {
+    name: &'static str,
+    symbol: Option<P<Symbol>>,
+}
+
 /// `getSpreadType`'s order for two non-generic object types: the right side's names, then the left side's it lacks.
-fn spread(left: Vec<&'static str>, right: Vec<&'static str>) -> Vec<&'static str> {
-    let mut names = Vec::with_capacity(right.len() + left.len());
-    for name in right.into_iter().chain(left) {
-        push_unique(&mut names, name);
+fn spread(left: Vec<Entry>, right: Vec<Entry>) -> Vec<Entry> {
+    let mut entries: Vec<Entry> = Vec::with_capacity(right.len() + left.len());
+    for entry in right.into_iter().chain(left) {
+        if !entries.iter().any(|e| e.name == entry.name) {
+            entries.push(entry);
+        }
     }
-    names
+    entries
 }
 
 /// One side of a spread: a non-generic object type's names (spreadable ones only, in order), or a generic type.
 enum Part {
-    Object(Vec<&'static str>),
+    Object(Vec<Entry>),
     Generic,
+}
+
+/// `isEmptyObjectType(left)` for the spread so far.
+fn is_empty_spread(state: &[Part]) -> bool {
+    state.iter().all(|p| matches!(p, Part::Object(entries) if entries.is_empty()))
 }
 
 /// `getSpreadType(left, right)` on the spread so far: empty (`emptyObjectType`), one object type, or an
@@ -206,8 +221,7 @@ enum Part {
 fn spread_onto(state: &mut Vec<Part>, right: Part) {
     match right {
         Part::Generic => {
-            // `isEmptyObjectType(left)`: the generic side alone.
-            if state.iter().all(|p| matches!(p, Part::Object(names) if names.is_empty())) {
+            if is_empty_spread(state) {
                 state.clear();
             }
             state.push(Part::Generic);
@@ -217,6 +231,31 @@ fn spread_onto(state: &mut Vec<Part>, right: Part) {
             _ => state.push(Part::Object(right)),
         },
     }
+}
+
+/// A generic intersection operand: `getIntersectionType([left, right])` flattens it into the spread so far (or it
+/// is the spread, after an empty one), its parts in order.
+fn spread_parts_onto(state: &mut Vec<Part>, parts: Vec<Part>) {
+    if is_empty_spread(state) {
+        state.clear();
+    }
+    state.extend(parts);
+}
+
+/// How many of `own`'s properties `entries` holds as the same symbol, and how many with a shared declaration.
+fn provenance(own: &[P<Symbol>], entries: &[Entry]) -> (usize, usize) {
+    let (mut same, mut shared) = (0, 0);
+    for &property in own {
+        let Some(symbol) = entries.iter().find(|e| e.name == property.name()).and_then(|e| e.symbol) else {
+            continue;
+        };
+        if symbol == property {
+            same += 1;
+        } else if symbol.declarations().iter().any(|d| property.declarations().contains(d)) {
+            shared += 1;
+        }
+    }
+    (same, shared)
 }
 
 /// `isSpreadableProperty` (5.9.3:67555) and not private or protected (`getSpreadType` and
@@ -274,78 +313,99 @@ fn spreads_into_empty(checker: &mut Checker, t: P<Type>) -> bool {
 }
 
 /// The union member `t` was spread from: TypeScript 5 spreads each member (`mapType`), so `t` is one member of a
-/// union of object literal types. The member all of whose spread names `t` has, sharing the most declarations with
-/// `t`'s properties.
+/// union of object literal types. Of the members all of whose spread names `t` has, the one whose properties `t`
+/// holds as the same symbols (`getSpreadSymbol` keeps an operand's symbol), then with shared declarations; the
+/// first on a tie. Members with the same symbols in another order (a non-generic `A | B` with `B` listing `A`'s
+/// members differently) cannot be told apart.
 fn spread_member(checker: &mut Checker, members: &[P<Type>], t: P<Type>) -> Option<P<Type>> {
     let own = checker.get_properties_of_type_exported(t);
-    let mut best: Option<(usize, P<Type>)> = None;
+    let mut best: Option<((usize, usize), P<Type>)> = None;
     let mut candidates = 0;
     for &member in members {
-        let properties: Vec<P<Symbol>> =
-            checker.get_properties_of_type_exported(member).iter().copied().filter(|&p| is_spread(p)).collect();
-        if !properties.iter().all(|p| own.iter().any(|q| q.name() == p.name())) {
+        let entries: Vec<Entry> = checker
+            .get_properties_of_type_exported(member)
+            .iter()
+            .filter(|&&p| is_spread(p))
+            .map(|&p| Entry { name: p.name(), symbol: Some(p) })
+            .collect();
+        if !entries.iter().all(|e| own.iter().any(|q| q.name() == e.name)) {
             continue;
         }
         candidates += 1;
-        let shared = properties
-            .iter()
-            .filter(|p| {
-                own.iter().any(|q| q.name() == p.name() && q.declarations().iter().any(|d| p.declarations().contains(d)))
-            })
-            .count();
-        if best.is_none_or(|(score, _)| shared > score) {
-            best = Some((shared, member));
+        let score = provenance(own, &entries);
+        if best.is_none_or(|(s, _)| score > s) {
+            best = Some((score, member));
         }
     }
     match best {
-        Some((score, member)) if score > 0 || candidates == 1 => Some(member),
+        Some((score, member)) if score != (0, 0) || candidates == 1 => Some(member),
         _ => None,
     }
 }
 
-/// A spread operand as a [`Part`]: `Some(None)` when it spreads nothing (a primitive, `{}`, a union of those),
-/// `None` when the order cannot be rebuilt (TypeScript 7's then).
-fn operand_part(
+/// The spreadable properties of a non-generic object type, in TypeScript 5's order.
+fn spread_entries(checker: &mut Checker, t: P<Type>, stack: &mut Vec<P<Type>>) -> Vec<Entry> {
+    let properties = checker.get_properties_of_type_exported(t);
+    let names = ts5_names(checker, t, stack);
+    order_by_names(properties, &names)
+        .into_iter()
+        .filter(|&p| is_spread(p))
+        .map(|p| Entry { name: p.name(), symbol: Some(p) })
+        .collect()
+}
+
+/// A spread operand as the parts it adds: none when it spreads nothing (a primitive, `{}`, a union of those), one,
+/// or a generic intersection's parts. `None` when the order cannot be rebuilt (TypeScript 7's then).
+fn operand_parts(
     checker: &mut Checker,
     t: P<Type>,
     mut operand: P<Type>,
     stack: &mut Vec<P<Type>>,
-) -> Option<Option<Part>> {
-    if is_generic(checker, operand) {
-        return Some(Some(Part::Generic));
-    }
+) -> Option<Vec<Part>> {
     if operand.flags().intersects(TypeFlags::Union) {
-        // `tryMergeUnionOfObjectTypeAndEmptyObject` (5.9.3:67437): the parts that spread into nothing go; one object
-        // left spreads alone (as a partial, in its order); several are spread one by one (`mapType`), and `t` is
-        // what one of them gave.
+        // `tryMergeUnionOfObjectTypeAndEmptyObject` (5.9.3:67437): the parts that spread into nothing go; one left
+        // spreads alone, as `getAnonymousPartialType` of it: a non-generic object with its (apparent) properties, in
+        // their order, even for a type variable; several are spread one by one (`mapType`), and `t` is what one of
+        // them gave.
         let parts: Vec<P<Type>> =
             operand.types().iter().copied().filter(|&p| !spreads_into_empty(checker, p)).collect();
-        operand = match parts.as_slice() {
-            [] => return Some(None),
-            [only] => *only,
-            several => spread_member(checker, several, t)?,
-        };
-        if is_generic(checker, operand) {
-            return Some(Some(Part::Generic));
+        match parts.as_slice() {
+            [] => return Some(Vec::new()),
+            [only] => {
+                let apparent = checker.get_apparent_type_exported(*only);
+                return Some(vec![Part::Object(spread_entries(checker, apparent, stack))]);
+            }
+            several => operand = spread_member(checker, several, t)?,
         }
     }
+    if is_generic(checker, operand) {
+        if !operand.flags().intersects(TypeFlags::Intersection) {
+            return Some(vec![Part::Generic]);
+        }
+        let mut parts = Vec::new();
+        for &part in operand.types() {
+            parts.push(if is_generic(checker, part) {
+                Part::Generic
+            } else {
+                Part::Object(spread_entries(checker, part, stack))
+            });
+        }
+        return Some(parts);
+    }
     if spreads_into_empty(checker, operand) {
-        return Some(None);
+        return Some(Vec::new());
     }
     if !operand.flags().intersects(TypeFlags::Object | TypeFlags::Intersection) {
         return None;
     }
-    let properties = checker.get_properties_of_type_exported(operand);
-    let spread_names: Vec<&'static str> =
-        properties.iter().copied().filter(|&p| is_spread(p)).map(|p| p.name()).collect();
-    let names = ts5_names(checker, operand, stack).into_iter().filter(|n| spread_names.contains(n)).collect();
-    Some(Some(Part::Object(names)))
+    Some(vec![Part::Object(spread_entries(checker, operand, stack))])
 }
 
 /// `checkObjectLiteral` (5.9.3:78608): the members since the last spread form an object type in source order (a
 /// repeated name keeps its first place); each such run, and each spread operand, is spread onto what came before it
 /// (`getSpreadType`). With a generic operand the literal's type is an intersection; `t` is then one of its object
-/// parts (the one with `t`'s names). `None` where the order cannot be rebuilt.
+/// parts: the one holding `t`'s properties (same symbols, then shared declarations, then names). `None` where the
+/// order cannot be rebuilt.
 fn object_literal_names(
     checker: &mut Checker,
     t: P<Type>,
@@ -355,18 +415,23 @@ fn object_literal_names(
     let properties = checker.get_properties_of_type_exported(t);
     let mut state: Vec<Part> = Vec::new();
     let mut spreads = false;
-    let mut run: Vec<&'static str> = Vec::new();
+    let mut run: Vec<Entry> = Vec::new();
     for &member in literal.properties() {
         if member.kind() != Kind::SpreadAssignment {
             // The property of `t` this member declares, else the member's own symbol (a member a later spread
             // overrode, or one of another part); a computed name nothing kept is not placed.
-            let name = properties
+            let entry = properties
                 .iter()
                 .find(|p| p.declarations().contains(&member))
-                .map(|p| p.name())
-                .or_else(|| member.symbol().map(|s| s.name()).filter(|n| !is_reserved_member_name(n)));
-            if let Some(name) = name {
-                push_unique(&mut run, name);
+                .map(|&p| Entry { name: p.name(), symbol: Some(p) })
+                .or_else(|| {
+                    let symbol = member.symbol().filter(|s| !is_reserved_member_name(s.name()))?;
+                    Some(Entry { name: symbol.name(), symbol: Some(symbol) })
+                });
+            if let Some(entry) = entry
+                && !run.iter().any(|e| e.name == entry.name)
+            {
+                run.push(entry);
             }
             continue;
         }
@@ -375,35 +440,39 @@ fn object_literal_names(
             spread_onto(&mut state, Part::Object(std::mem::take(&mut run)));
         }
         let operand = checker.get_type_at_location(member.expression()?);
-        if let Some(part) = operand_part(checker, t, operand, stack)? {
+        let mut parts = operand_parts(checker, t, operand, stack)?;
+        if parts.len() > 1 {
+            spread_parts_onto(&mut state, parts);
+        } else if let Some(part) = parts.pop() {
             spread_onto(&mut state, part);
         }
     }
+    let names = |entries: Vec<Entry>| entries.into_iter().map(|e| e.name).collect::<Vec<_>>();
     if !spreads {
-        return Some(run);
+        return Some(names(run));
     }
     if !run.is_empty() {
         spread_onto(&mut state, Part::Object(run));
     }
-    // The object part that is `t`: the one with exactly `t`'s names, else the one with most of them.
     let own: Vec<&'static str> = properties.iter().map(|p| p.name()).collect();
-    let score = |names: &Vec<&'static str>| {
-        let common = names.iter().filter(|n| own.contains(n)).count();
-        (common == own.len() && common == names.len(), common)
-    };
-    state
-        .into_iter()
-        .filter_map(|part| match part {
-            Part::Object(names) => Some(names),
-            Part::Generic => None,
-        })
-        .max_by_key(|names| score(names))
+    let mut best: Option<((usize, usize, bool, usize), Vec<Entry>)> = None;
+    for part in state {
+        let Part::Object(entries) = part else { continue };
+        let (same, shared) = provenance(properties, &entries);
+        let common = entries.iter().filter(|e| own.contains(&e.name)).count();
+        let score = (same, shared, common == own.len() && common == entries.len(), common);
+        if best.as_ref().is_none_or(|(s, _)| score > *s) {
+            best = Some((score, entries));
+        }
+    }
+    best.map(|(_, entries)| names(entries))
 }
 
 /// A homomorphic mapped type (`keyof T` constraint) in the order of `T`'s apparent type (`resolveMappedTypeMembers`,
-/// 5.9.3:63030, which goes through `T`'s properties in order). With an `as` clause a property goes where the
-/// property of `T` it shares a declaration with is (TypeScript 5 links them unless the clause renames); a renamed
-/// one keeps TypeScript 7's order after them. `None` for a mapped type over a key union: TypeScript 7's order.
+/// 5.9.3:63030, which goes through `T`'s properties in order). With an `as` clause each property goes where the
+/// property of `T` it was made from is (its `syntheticOrigin`, else a shared declaration); the names one property
+/// of `T` makes keep TypeScript 7's order among themselves. `None` for a mapped type over a key union: TypeScript
+/// 7's order.
 fn mapped_names(checker: &mut Checker, t: P<Type>, stack: &mut Vec<P<Type>>) -> Option<Vec<&'static str>> {
     // Resolving the members resolves the modifiers type.
     let properties = checker.get_properties_of_type_exported(t);
@@ -422,10 +491,17 @@ fn mapped_names(checker: &mut Checker, t: P<Type>, stack: &mut Vec<P<Type>>) -> 
         return Some(source_names);
     }
     let source = order_by_names(checker.get_properties_of_type_exported(apparent), &source_names);
-    let rank = |p: &P<Symbol>| {
-        source.iter().position(|s| s.declarations().iter().any(|d| p.declarations().contains(d))).unwrap_or(usize::MAX)
-    };
-    let mut ranked: Vec<(usize, &'static str)> = properties.iter().map(|p| (rank(p), p.name())).collect();
+    let mut ranked: Vec<(usize, &'static str)> = Vec::with_capacity(properties.len());
+    for &property in properties {
+        let origin = checker.mapped_symbol_links.try_get(property).and_then(|links| links.synthetic_origin.get());
+        let rank = origin
+            .and_then(|o| source.iter().position(|&s| s == o || s.name() == o.name()))
+            .or_else(|| {
+                source.iter().position(|s| s.declarations().iter().any(|d| property.declarations().contains(d)))
+            })
+            .unwrap_or(usize::MAX);
+        ranked.push((rank, property.name()));
+    }
     ranked.sort_by_key(|&(index, _)| index);
     Some(ranked.into_iter().map(|(_, name)| name).collect())
 }

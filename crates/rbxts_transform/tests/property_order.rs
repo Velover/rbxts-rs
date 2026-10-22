@@ -3,7 +3,8 @@
 //! intersection, declaration merging with a module augmentation, a base in another file whose members' offsets fall
 //! inside the derived interface's range, type literals (alone, in an intersection, instantiated), object literal
 //! types with a spread (alone and as an interface's base; class instances, falsy and object unions and generic operands
-//! spread) and homomorphic mapped types (a filtering `as` clause included).
+//! spread, a generic operand between same-named parts, optional and intersected generic operands, union members with
+//! the same names) and homomorphic mapped types (filtering and renaming `as` clauses included).
 //!
 //! - The rebuilt order must equal TypeScript 5's, `expected-ts5.txt`, which `tests/property_order/ts5props.cjs`
 //!   writes with TypeScript 5.9.3 (the lines are compared as sorted sets: the two compilers list files in different
@@ -153,6 +154,12 @@ fn run(check_first: bool) {
         "src/spreads.ts var madeValue: a1, a2, gz, gy, gx2, gx1, gx",
         // A filtering `as` clause sorted by declaration.
         "src/spreads.ts var filteredValue: s2, sd, s1",
+        // Generic and union operands: an optional generic, a generic intersection, union members with the same
+        // names, and a renaming `as` clause.
+        "src/generic_spreads.ts var withOptionsValue: oa, oc, ox, ob",
+        "src/generic_spreads.ts var intersectedValue: tz, rb, ra, rd, rc, re, a",
+        "src/generic_spreads.ts var eitherNumberValue: x2, x1, y2, y1",
+        "src/generic_spreads.ts var evGettersValue: get_onA, get_onY, get_onZ, get_w, get_x, get_y",
     ] {
         assert!(raw.contains(&line), "TypeScript 7 order {line:?} not found in:\n{}", raw.join("\n"));
     }
