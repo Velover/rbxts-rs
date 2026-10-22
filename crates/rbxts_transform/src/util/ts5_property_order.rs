@@ -455,7 +455,9 @@ fn object_literal_names(
         spread_onto(&mut state, Part::Object(run));
     }
     let own: Vec<&'static str> = properties.iter().map(|p| p.name()).collect();
-    let mut best: Option<((usize, usize, bool, usize), Vec<Entry>)> = None;
+    // (same symbols, shared declarations, exactly `t`'s names, names in common)
+    type Score = (usize, usize, bool, usize);
+    let mut best: Option<(Score, Vec<Entry>)> = None;
     for part in state {
         let Part::Object(entries) = part else { continue };
         let (same, shared) = provenance(properties, &entries);
