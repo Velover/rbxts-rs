@@ -284,6 +284,10 @@ pub struct PluginDiagnostic {
     pub hint: Option<String>,
     /// Related information: (node, message).
     pub related: Vec<(P<Node>, String)>,
+    /// Who the diagnostic says it comes from, overriding the plugin's [`crate::Plugin::diagnostic_source`] for this
+    /// one diagnostic. `None` (what every constructor sets) uses the plugin's. How the compiler renders a source is
+    /// on [`crate::Plugin::diagnostic_source`].
+    pub source: Option<&'static str>,
 }
 
 impl PluginDiagnostic {
@@ -295,6 +299,7 @@ impl PluginDiagnostic {
             message: message.into(),
             hint: None,
             related: Vec::new(),
+            source: None,
         }
     }
 
@@ -311,6 +316,12 @@ impl PluginDiagnostic {
     /// Adds a hint line.
     pub fn with_hint(mut self, hint: impl Into<String>) -> PluginDiagnostic {
         self.hint = Some(hint.into());
+        self
+    }
+
+    /// Names this diagnostic's source, instead of the plugin's ([`PluginDiagnostic::source`]).
+    pub fn with_source(mut self, source: &'static str) -> PluginDiagnostic {
+        self.source = Some(source);
         self
     }
 

@@ -1,0 +1,16 @@
+[package]
+name = "rbxtsc_fw"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "`rbxtsc-fw`: the rbxtsc command line with Flamework compiled in (DESIGN §11.6), the bin a Flamework project builds with."
+
+[dependencies]
+rbxts_cli.workspace = true
+flamework_rs.workspace = true
+mimalloc-safe.workspace = true
+
+[[bin]]
+name = "rbxtsc-fw"
+path = "src/main.rs"

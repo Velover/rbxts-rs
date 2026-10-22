@@ -564,6 +564,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rbxtsc_fw"
+version = "0.0.0"
+dependencies = [
+ "flamework_rs",
+ "mimalloc-safe",
+ "rbxts_cli",
+]
+
+[[package]]
 name = "regex"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -2,13 +2,14 @@
 
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 
 use rbxts_project::{ProjectServices, ResolvedModuleInfo};
 use serde_json::{Map, Value};
 use tsrs_compiler::Program;
 use tsrs_core::{CompilerOptions, P};
 
-use crate::{BuildKind, ChangeSet, StateOrigin};
+use crate::{BuildKind, ChangeSet, GlobMatcher, StateOrigin};
 
 /// The compiler's side of [`SetupCx`]. One is made per plugin and build, on one thread, after the check.
 pub trait SetupBackend {
@@ -31,7 +32,8 @@ pub trait SetupBackend {
     /// does not exist (the absence is recorded too).
     fn read_input(&mut self, path: &Path) -> io::Result<Option<String>>;
     /// An environment variable, recorded as a build input (hashed for incremental builds; the process
-    /// environment does not change during watch).
+    /// environment does not change during watch). [`crate::CxBackend::env`] reads the same snapshot during the
+    /// transform, recorded against a file instead.
     fn env(&mut self, name: &str) -> Option<String>;
     /// The kind of build.
     fn build_kind(&self) -> BuildKind;
@@ -50,6 +52,32 @@ pub trait SetupBackend {
     fn info(&mut self, message: &str);
     /// A warning, printed with the build's diagnostics; does not fail the build.
     fn warn(&mut self, message: &str, hint: Option<&str>);
+
+    /// Matches a glob under `root` (an absolute directory) and records it as a build input of setup, like a file
+    /// read with [`SetupBackend::read_input`]: `Shared` may depend on the matches. Returns `matcher.expand(root)` as
+    /// it is.
+    ///
+    /// **Contract for an override.**
+    /// - Returns `matcher.expand(root)` unchanged, and records `(plugin, root, pattern, matcher, answer)` with the
+    ///   build inputs; the answer is hashed into every file's version as the other inputs are.
+    /// - Watch: the compiler watches `root` recursively, files and directories (its nearest existing ancestor
+    ///   while it does not exist). After an add, delete or rename under it that [`GlobMatcher::affected_by`]
+    ///   accepts, it calls `expand` again. An answer that differs is a changed build input: the kept `Shared` is
+    ///   dropped, `setup` runs again and every file is transformed ([`crate::ChangeSet::config_inputs`] names the
+    ///   root).
+    /// - A build in a new process runs `setup`, which records the glob anew; an answer that differs from the one
+    ///   in the incremental state is a changed build input.
+    ///
+    /// **Default:** `matcher.expand(root)`, recording nothing.
+    fn record_glob(
+        &mut self,
+        root: &Path,
+        pattern: &str,
+        matcher: Arc<dyn GlobMatcher>,
+    ) -> Vec<String> {
+        let _ = pattern;
+        crate::glob::expand_unrecorded(root, &*matcher)
+    }
 }
 
 /// The context of [`crate::Plugin::setup`]; forwards to [`SetupBackend`].
@@ -131,5 +159,17 @@ impl<'a> SetupCx<'a> {
     /// A warning ([`SetupBackend::warn`]).
     pub fn warn(&mut self, message: &str, hint: Option<&str>) {
         self.backend.warn(message, hint);
+    }
+
+    /// Matches a glob under the absolute directory `root`, recorded as a build input: in watch, a change in the
+    /// matches runs setup again ([`SetupBackend::record_glob`]). `pattern` names the glob: one pattern, one matcher.
+    pub fn record_glob(
+        &mut self,
+        root: impl AsRef<Path>,
+        pattern: &str,
+        matcher: impl GlobMatcher,
+    ) -> Vec<String> {
+        self.backend
+            .record_glob(root.as_ref(), pattern, Arc::new(matcher))
     }
 }

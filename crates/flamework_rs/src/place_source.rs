@@ -1,9 +1,58 @@
 //! What the place will hold at a path given to a path macro (the TS transformer's `findSourcePath.ts`), for the
 //! empty-path warnings of `finish`.
+//!
+//! Every disk read goes through [`Disk`]: in a build that is `FinishCx`, which records each read so that watch
+//! runs `finish` again when an answer changes (the warnings then equal a clean build's); tools and tests use
+//! [`FsDisk`].
 
-use std::path::Path;
+use rbxts_plugin::{EntryKind, FinishCx};
 
 use crate::node_path;
+
+/// The reads the lookups make.
+pub trait Disk {
+    /// A directory's entries with whether each is a directory (links followed), sorted by name; `None` when
+    /// `directory` is not a readable directory.
+    fn entries(&mut self, directory: &str) -> Option<Vec<(String, bool)>>;
+    /// Whether something is at `path` (links followed).
+    fn exists(&mut self, path: &str) -> bool;
+}
+
+/// The disk, unrecorded.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FsDisk;
+
+impl Disk for FsDisk {
+    fn entries(&mut self, directory: &str) -> Option<Vec<(String, bool)>> {
+        let read = std::fs::read_dir(directory).ok()?;
+        let mut entries: Vec<(String, bool)> = read
+            .filter_map(Result::ok)
+            .map(|entry| {
+                // Follows links, as `fs.statSync` does for a symbolic link entry.
+                let directory = std::fs::metadata(entry.path()).is_ok_and(|m| m.is_dir());
+                (entry.file_name().to_string_lossy().into_owned(), directory)
+            })
+            .collect();
+        entries.sort();
+        Some(entries)
+    }
+
+    fn exists(&mut self, path: &str) -> bool {
+        std::path::Path::new(path).exists()
+    }
+}
+
+/// The compiler's recorded reads (`FinishCx::read_dir` / `exists`).
+impl Disk for FinishCx<'_> {
+    fn entries(&mut self, directory: &str) -> Option<Vec<(String, bool)>> {
+        let entries = self.read_dir(directory)?;
+        Some(entries.into_iter().map(|e| (e.name, e.kind == EntryKind::Directory)).collect())
+    }
+
+    fn exists(&mut self, path: &str) -> bool {
+        FinishCx::exists(self, path)
+    }
+}
 
 /// What the place holds at a path: a module (or modules under a folder), an empty folder, or nothing by that exact
 /// name (with what is there when only the case differs).
@@ -61,35 +110,38 @@ struct Entry {
     directory: bool,
 }
 
-fn read_directory(directory: &str) -> Vec<Entry> {
-    let Ok(read) = std::fs::read_dir(directory) else { return Vec::new() };
-    read.filter_map(Result::ok)
-        .map(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            // Follows links, as `fs.statSync` does for a symbolic link entry.
-            let directory = std::fs::metadata(entry.path()).is_ok_and(|m| m.is_dir());
-            Entry { name, directory }
-        })
+fn read_directory(disk: &mut dyn Disk, directory: &str) -> Vec<Entry> {
+    disk.entries(directory)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, directory)| Entry { name, directory })
         .collect()
 }
 
 /// Whether a folder holds, at any depth, a file the place gets as a module. Installed packages do not count.
-fn holds_module(directory: &str, from_source: bool) -> bool {
-    read_directory(directory).into_iter().any(|entry| {
+fn holds_module(disk: &mut dyn Disk, directory: &str, from_source: bool) -> bool {
+    read_directory(disk, directory).into_iter().any(|entry| {
         if entry.name == "node_modules" {
             return false;
         }
         if entry.directory {
-            holds_module(&node_path::join(&[directory, &entry.name]), from_source)
+            holds_module(disk, &node_path::join(&[directory, &entry.name]), from_source)
         } else {
             instance_of(&entry.name, from_source).is_some_and(|(_, module)| module)
         }
     })
 }
 
-fn find_entry(directory: &str, segment: &str, last: bool, from_source: bool, ignore_case: bool) -> Option<Entry> {
+fn find_entry(
+    disk: &mut dyn Disk,
+    directory: &str,
+    segment: &str,
+    last: bool,
+    from_source: bool,
+    ignore_case: bool,
+) -> Option<Entry> {
     let same = |a: &str| if ignore_case { a.to_lowercase() == segment.to_lowercase() } else { a == segment };
-    let entries = read_directory(directory);
+    let entries = read_directory(disk, directory);
     let exact_index = entries.iter().position(|e| same(&e.name));
     if exact_index.is_some() || !last {
         return exact_index.map(|i| entries.into_iter().nth(i).expect("an index"));
@@ -99,11 +151,11 @@ fn find_entry(directory: &str, segment: &str, last: bool, from_source: bool, ign
     })
 }
 
-fn walk(base: &str, segments: &[&str], from_source: bool, ignore_case: bool) -> Option<String> {
+fn walk(disk: &mut dyn Disk, base: &str, segments: &[&str], from_source: bool, ignore_case: bool) -> Option<String> {
     let mut current = base.to_owned();
     for (index, segment) in segments.iter().enumerate() {
         let last = index == segments.len() - 1;
-        let entry = find_entry(&current, segment, last, from_source, ignore_case)?;
+        let entry = find_entry(disk, &current, segment, last, from_source, ignore_case)?;
         if !last && !entry.directory {
             return None;
         }
@@ -112,11 +164,12 @@ fn walk(base: &str, segments: &[&str], from_source: bool, ignore_case: bool) -> 
     Some(current)
 }
 
-fn state_of(absolute: &str, from_source: bool) -> SourcePathState {
-    if !Path::new(absolute).is_dir() {
+fn state_of(disk: &mut dyn Disk, absolute: &str, from_source: bool) -> SourcePathState {
+    // Not a (readable) directory: a file, which is a module.
+    if disk.entries(absolute).is_none() {
         return SourcePathState::Modules;
     }
-    if holds_module(absolute, from_source) { SourcePathState::Modules } else { SourcePathState::Empty }
+    if holds_module(disk, absolute, from_source) { SourcePathState::Modules } else { SourcePathState::Empty }
 }
 
 fn is_within(child: &str, parent: &str) -> bool {
@@ -128,6 +181,7 @@ fn is_within(child: &str, parent: &str) -> bool {
 /// `(rbx path, fs path)`) covering it; a `$path` inside `out_dir` is judged from the sources. `None` when no
 /// `$path` covers it.
 pub fn find_place_source(
+    disk: &mut dyn Disk,
     rbx_path: &[String],
     partitions: &[(Vec<String>, String)],
     root_dir: &str,
@@ -148,35 +202,99 @@ pub fn find_place_source(
     } else {
         partition_fs.clone()
     };
-    if !Path::new(&base).exists() {
+    if !disk.exists(&base) {
         return Some(SourcePathState::Missing(None));
     }
     let rest: Vec<&str> = rbx_path[partition_rbx.len()..].iter().map(String::as_str).collect();
-    if let Some(exact) = walk(&base, &rest, from_source, false) {
-        return Some(state_of(&exact, from_source));
+    if let Some(exact) = walk(disk, &base, &rest, from_source, false) {
+        return Some(state_of(disk, &exact, from_source));
     }
-    Some(match walk(&base, &rest, from_source, true) {
+    Some(match walk(disk, &base, &rest, from_source, true) {
         None => SourcePathState::Missing(None),
         Some(other) => SourcePathState::Missing(Some(node_path::relative(display_base, &other).replace('\\', "/"))),
     })
 }
 
 /// `findSourcePath`: a source path looked up by itself, relative to `base`.
-pub fn find_source_path(base: &str, source_path: &str) -> SourcePathState {
+pub fn find_source_path(disk: &mut dyn Disk, base: &str, source_path: &str) -> SourcePathState {
     let absolute = node_path::resolve(&[base, source_path]);
     let relative = node_path::relative(base, &absolute);
     if relative.starts_with("..") || node_path::is_absolute(&relative) {
-        if !Path::new(&absolute).exists() {
+        if !disk.exists(&absolute) {
             return SourcePathState::Missing(None);
         }
-        return state_of(&absolute, true);
+        return state_of(disk, &absolute, true);
     }
     let segments: Vec<&str> = relative.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
-    if let Some(exact) = walk(base, &segments, true, false) {
-        return state_of(&exact, true);
+    if let Some(exact) = walk(disk, base, &segments, true, false) {
+        return state_of(disk, &exact, true);
     }
-    match walk(base, &segments, true, true) {
+    match walk(disk, base, &segments, true, true) {
         None => SourcePathState::Missing(None),
         Some(other) => SourcePathState::Missing(Some(node_path::relative(base, &other).replace('\\', "/"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A disk in memory, keyed by the path's tail below `/fakebase`, that remembers what was read.
+    struct Fake {
+        dirs: Vec<(&'static str, Vec<(&'static str, bool)>)>,
+        read: Vec<String>,
+    }
+
+    impl Fake {
+        fn key(path: &str) -> String {
+            let path: String = path.chars().map(|c| if c == char::from(92) { '/' } else { c }).collect();
+            match path.find("/fakebase") {
+                Some(at) => path[at + "/fakebase".len()..].to_owned(),
+                None => path,
+            }
+        }
+    }
+
+    impl Disk for Fake {
+        fn entries(&mut self, directory: &str) -> Option<Vec<(String, bool)>> {
+            let key = Fake::key(directory);
+            self.read.push(key.clone());
+            let (_, entries) = self.dirs.iter().find(|(d, _)| *d == key)?;
+            Some(entries.iter().map(|(n, d)| (n.to_string(), *d)).collect())
+        }
+
+        fn exists(&mut self, path: &str) -> bool {
+            let key = Fake::key(path);
+            self.read.push(key.clone());
+            self.dirs.iter().any(|(d, _)| *d == key)
+        }
+    }
+
+    fn fake() -> Fake {
+        Fake {
+            dirs: vec![
+                ("", vec![("src", true)]),
+                ("/src", vec![("server", true), ("types", true), ("Glob", true)]),
+                ("/src/server", vec![("main.server.ts", false)]),
+                ("/src/types", vec![("a.d.ts", false)]),
+                ("/src/Glob", vec![]),
+            ],
+            read: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn source_paths_are_judged_through_the_disk_given() {
+        let base = "/fakebase";
+        let mut disk = fake();
+        assert_eq!(find_source_path(&mut disk, base, "src/server"), SourcePathState::Modules);
+        assert_eq!(find_source_path(&mut disk, base, "src/types"), SourcePathState::Empty);
+        assert_eq!(find_source_path(&mut disk, base, "src/missing"), SourcePathState::Missing(None));
+        assert_eq!(
+            find_source_path(&mut disk, base, "src/glob"),
+            SourcePathState::Missing(Some("src/Glob".to_owned()))
+        );
+        // every read went through the disk given (in a build: FinishCx, recorded)
+        assert!(disk.read.contains(&"/src".to_owned()) && disk.read.contains(&"/src/server".to_owned()));
     }
 }

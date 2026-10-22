@@ -236,6 +236,17 @@ pub fn load_env_with(
     env
 }
 
+/// A variable as `Flamework.env` reads it at transform time: from `loaded` (what setup read: the `.env` files with
+/// the process environment over them, for the names the files set or the config names), else from the process
+/// through `process` (`Cx::env`, recorded as an input of the file). The result is TS's `loadEnv(directory)[name]`:
+/// the process environment over `.env.local` over `.env`.
+pub fn transform_env(loaded: &Env, name: &str, process: impl FnOnce(&str) -> Option<String>) -> Option<String> {
+    match loaded.get(name) {
+        Some(value) => Some(value.to_owned()),
+        None => process(name),
+    }
+}
+
 /// `.env`, then `.env.local` on top, both from `directory`, with `process_env` on top of both.
 pub fn load_env(directory: &Path, process_env: &Env) -> Env {
     let mut env = Env::new();
@@ -476,5 +487,58 @@ fn coerce_string(
             ))
         }
         _ => Ok(JsValue::String(value.to_owned())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `.env` and `.env.local` in `/p`, and a process environment.
+    struct Fake {
+        process: Env,
+    }
+
+    impl crate::inputs::Inputs for Fake {
+        fn read(&mut self, path: &str) -> Option<String> {
+            match path.replace('\\', "/").as_str() {
+                "/p/.env" => Some("A=file\nB=file\nL=env\n".into()),
+                "/p/.env.local" => Some("L=local\n".into()),
+                _ => None,
+            }
+        }
+
+        fn env(&mut self, name: &str) -> Option<String> {
+            self.process.get(name).map(str::to_owned)
+        }
+    }
+
+    #[test]
+    fn transform_env_is_load_env() {
+        let process: Env = [("B", "proc"), ("C", "proc"), ("X", "named")].into_iter().collect();
+        let mut fake = Fake { process: process.clone() };
+        // the config names X; the files set A, B and L
+        let mut names = vec!["X".to_owned()];
+        let loaded = load_env_with(&mut fake, "/p", &mut names);
+        // TS's `loadEnv`: every variable of the process over the files
+        let mut full = Env::new();
+        for (k, v) in parse_env_file("A=file\nB=file\nL=env\n").iter() {
+            full.set(k, v);
+        }
+        full.set("L", "local");
+        for (k, v) in process.iter() {
+            full.set(k, v);
+        }
+        for name in ["A", "B", "C", "L", "X", "D"] {
+            let mut asked = Vec::new();
+            let value = transform_env(&loaded, name, |n| {
+                asked.push(n.to_owned());
+                process.get(n).map(str::to_owned)
+            });
+            assert_eq!(value.as_deref(), full.get(name), "{name}");
+            // names setup read are not read again (and so not recorded against the file)
+            let read_in_setup = ["A", "B", "L", "X"].contains(&name);
+            assert_eq!(asked.is_empty(), read_in_setup, "{name}");
+        }
     }
 }

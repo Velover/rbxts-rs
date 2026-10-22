@@ -70,6 +70,26 @@ pub fn glob_sync(pattern: &str, root: &Path) -> Vec<String> {
     results
 }
 
+/// [`glob_sync`] of one pattern as a [`rbxts_plugin::GlobMatcher`], for `record_glob`: the compiler matches it again
+/// in watch when files are added, deleted or renamed under the root. The pattern is its identity: one pattern, one
+/// matcher.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Matcher {
+    pub pattern: String,
+}
+
+impl Matcher {
+    pub fn new(pattern: impl Into<String>) -> Matcher {
+        Matcher { pattern: pattern.into() }
+    }
+}
+
+impl rbxts_plugin::GlobMatcher for Matcher {
+    fn expand(&self, root: &Path) -> Vec<String> {
+        glob_sync(&self.pattern, root)
+    }
+}
+
 // ------------------------------------------------------------------------------------------------ braces
 
 /// minimatch's `braceExpand`: a pattern without a `{...}` is returned as it is.

@@ -22,16 +22,17 @@ implements the backend traits.
      │     or a build input read by setup changed                            │
      ▼                                                             ▼        │
  setup(SetupCx, &mut state) ──▶ Arc<Shared>  ◀────────────────────────────┘
-     │   reads files/env only via cx (build inputs: watched + hashed)
+     │   reads files/env/globs only via cx (build inputs: watched + hashed)
      ▼
  per checker thread: instance(Arc<Shared>, CheckerInfo) ──▶ interest(&mut Interest)
      │   per file of the affected closure, in program order on that checker:
      │     begin_file ─▶ claim hooks (call, property_key, assignment, expression, statement)
+     │                   (cx.env / cx.record_glob: inputs of this file)
      │                ─▶ class (static-block position) ─▶ end_file ──▶ FilePart
      ▼
  finish(shared, &mut state, parts of ALL current files sorted by FileIndex, FinishCx)
      │   resolve_late(key, text) for the keys of every current file · write_artifact · write_state_file
-     │   remove_artifact · watch_dir (glob roots) · warn_at
+     │   remove_artifact · remove_empty_dir · record_glob · read_dir / exists / read_file · watch_dir · warn_at
      ▼
  compiler: late-string key check ─▶ render ─▶ commit (only when the build has no errors):
      1 Luau + include files   2 plugin artifacts   3 stale outputs/artifacts deleted
@@ -51,6 +52,8 @@ implements the backend traits.
   plugins should keep committed values stable.
 - Instances live for one build: their caches may key on nodes. Cross-file state goes in `FilePart`s only.
 - A plugin never writes files itself; it queues them through `FinishCx`.
+- `encode_file_part` / `decode_file_part` (default `None`) let the compiler keep file parts on disk for
+  incremental builds in a new process; without them those files are transformed again.
 
 ## Porting from today's TypeScript plugin API
 
@@ -78,6 +81,11 @@ implements the backend traits.
 | ids decided at transform time from shared mutable state | `cx.late_string(key)` now, `FinishCx::resolve_late(key, text)` in `finish` |
 | `setTimeout(saveArtifacts)`, `fs.writeFileSync` | `FinishCx::write_artifact` / `write_state_file` (one write phase) |
 | reading config with `fs` / `process.env` | `SetupCx::read_input` / `env` (recorded as build inputs) |
+| `process.env` at transform time | `cx.env(name)` (recorded as an input of the file) |
+| `glob.sync(pattern, { root })` | `record_glob(root, pattern, matcher)` on `SetupCx`, `Cx` or `FinishCx`; the compiler matches again in watch |
+| `fs.rmdirSync(folder)` of an emptied artifact folder | `FinishCx::remove_empty_dir(folder)?` (the compiler removes folders its artifact diff empties by itself) |
+| `fs.existsSync` / `readdirSync` / `readFileSync` while writing artifacts | `FinishCx::exists` / `read_dir` / `read_file` (recorded: watch re-runs `finish` when an answer changes) |
+| a diagnostic `code` such as `" @scope/transformer"` | `Plugin::diagnostic_source` (per diagnostic: `PluginDiagnostic::with_source`) |
 | `process.exit(1)` | `Err(Fatal::new(msg))` from `setup` / `finish` |
 
 ## Tests
@@ -86,5 +94,7 @@ implements the backend traits.
 strings) against a mock compiler (`tests/support/mock.rs`) over a real tsrs program (`tests/fixture`), across
 checker counts and builds. `tests/contracts.rs` runs a misbehaving plugin (`tests/support/rogue.rs`) to check the
 contracts the compiler enforces: phases, `Err` without an error, unresolved late strings, no diagnostics from
-`classify_symbol`. The mock implements each contract as the compiler must. The
+`classify_symbol`. The mock implements each contract as the compiler must. `tests/defaults.rs` checks the default
+implementations of the backend methods added for watch (`env`, `record_glob`, `remove_empty_dir`, `read_dir`,
+`exists`, `read_file`), the default `encode_file_part` / `decode_file_part` and the diagnostic sources. The
 compiler-side test of the real dispatch lives in `rbxts_transform`.

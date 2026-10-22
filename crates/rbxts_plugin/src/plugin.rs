@@ -52,6 +52,24 @@ pub trait Plugin: Send + Sync + 'static {
     /// Name, version and activation. Called at registration and when reporting; must be cheap and constant.
     fn info(&self) -> PluginInfo;
 
+    /// The source this plugin's diagnostics name, unless a diagnostic names its own
+    /// ([`crate::PluginDiagnostic::source`]). Flamework's is `@flamework-experimental/transformer`, as the TS
+    /// transformer names its own. Must be cheap and constant.
+    ///
+    /// **Rendering (the compiler's contract).** A diagnostic from a hook (`Cx::report`, `error`, `warning`) or a
+    /// replacement from [`PluginInstance::explain_checker_diagnostic`] whose source is `Some(source)` is rendered with
+    /// the source in TypeScript's code slot, as the diagnostic code `" " + source` (a leading space), exactly as
+    /// roblox-ts renders its own as `" roblox-ts"`: the pretty reporter then prints
+    /// `error TS @flamework-experimental/transformer: message`, and a plain one the same after the location. With
+    /// `None`, the output is what it is today. The source is text only: it does not change the category, the
+    /// location or whether the build fails. `SetupCx::warn`, `FinishCx::warn_at` and `info` are not diagnostics and
+    /// do not take it.
+    ///
+    /// Default: `None`.
+    fn diagnostic_source(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Builds the build's `Shared` state. Runs once per build that has no `Shared` to keep, single-threaded,
     /// after the check and before any transform. Read files and env only through `cx` (they become build inputs,
     /// watched and hashed). `state` is the working copy of the persistent state (see [`SetupCx::state_origin`]);
@@ -93,6 +111,37 @@ pub trait Plugin: Send + Sync + 'static {
         parts: &[(FileIndex, &Self::FilePart)],
         cx: &mut FinishCx<'_>,
     ) -> Result<(), Fatal>;
+
+    /// The bytes of a file part, for the compiler's incremental state on disk, or `None` when this part (or this
+    /// plugin's parts in general) cannot be persisted.
+    ///
+    /// **Contract.** [`Plugin::decode_file_part`] of the bytes gives a part that `finish` treats exactly as the
+    /// original: same artifacts, late values and warnings. The format is the plugin's, and must be stable for a
+    /// given [`PluginInfo::version`] at least: carry a format version and reject other versions in `decode`. The
+    /// compiler stores the bytes with the plugin's name and version, and starts a clean build itself when either
+    /// changes, so a plugin never sees another version's bytes in a normal build; the format version guards the
+    /// rest (a hand-copied state, a version not bumped).
+    ///
+    /// **What the compiler does with it.** When the incremental state is written (commit step 4), each current
+    /// file's part is encoded; a file whose part gives `None` is stored without one. In a build in a new process,
+    /// a file that is not transformed brings its decoded part to `finish`; a file without stored bytes, or whose
+    /// bytes `decode` rejects, is transformed again instead.
+    ///
+    /// Default: `None`, not persistable (every cached file is transformed again in a new process).
+    fn encode_file_part(&self, part: &Self::FilePart) -> Option<Vec<u8>> {
+        let _ = part;
+        None
+    }
+
+    /// The part [`Plugin::encode_file_part`] encoded, or `None` when the bytes are not a part this plugin version
+    /// can read (another format version, truncated or extra bytes). Never panics on any input: a `None` makes the
+    /// compiler transform the file again.
+    ///
+    /// Default: `None`.
+    fn decode_file_part(&self, bytes: &[u8]) -> Option<Self::FilePart> {
+        let _ = bytes;
+        None
+    }
 }
 
 /// The per-checker part of a plugin. It holds this checker's types and symbols (caches in `RefCell` / `Cell`), so

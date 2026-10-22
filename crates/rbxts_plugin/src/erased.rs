@@ -75,6 +75,8 @@ impl ErasedState {
 pub trait DynPlugin: Send + Sync {
     /// [`Plugin::info`].
     fn info(&self) -> PluginInfo;
+    /// [`Plugin::diagnostic_source`].
+    fn diagnostic_source(&self) -> Option<&'static str>;
     /// `State::default()`, for a clean build.
     fn default_state(&self) -> ErasedState;
     /// [`Plugin::setup`].
@@ -96,6 +98,10 @@ pub trait DynPlugin: Send + Sync {
         parts: &[(FileIndex, &ErasedPart)],
         cx: &mut FinishCx<'_>,
     ) -> Result<(), Fatal>;
+    /// [`Plugin::encode_file_part`]; `part` made by this plugin's instances.
+    fn encode_file_part(&self, part: &ErasedPart) -> Option<Vec<u8>>;
+    /// [`Plugin::decode_file_part`], with the part boxed.
+    fn decode_file_part(&self, bytes: &[u8]) -> Option<ErasedPart>;
 }
 
 /// [`PluginInstance`] with its file part erased. See [`PluginInstance`] for each method's contract.
@@ -160,6 +166,10 @@ impl<T: Plugin> DynPlugin for ErasedPlugin<T> {
         self.0.info()
     }
 
+    fn diagnostic_source(&self) -> Option<&'static str> {
+        self.0.diagnostic_source()
+    }
+
     fn default_state(&self) -> ErasedState {
         ErasedState(Box::new(T::State::default()))
     }
@@ -213,6 +223,18 @@ impl<T: Plugin> DynPlugin for ErasedPlugin<T> {
             })
             .collect();
         self.0.finish(&shared, state, &parts, cx)
+    }
+
+    fn encode_file_part(&self, part: &ErasedPart) -> Option<Vec<u8>> {
+        let part = part
+            .downcast_ref::<T::FilePart>()
+            .unwrap_or_else(|| mismatch(&self.0, "file part"));
+        self.0.encode_file_part(part)
+    }
+
+    fn decode_file_part(&self, bytes: &[u8]) -> Option<ErasedPart> {
+        let part: ErasedPart = Box::new(self.0.decode_file_part(bytes)?);
+        Some(part)
     }
 }
 

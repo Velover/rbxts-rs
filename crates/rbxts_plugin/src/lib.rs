@@ -85,11 +85,29 @@
 //!
 //! **Placement.** In each file: the `--!` directives, the `-- Compiled with` line, `local TS = require(...)`, plugin
 //! imports, the user's own imports, then header statements ([`Cx::header`]).
+//!
+//! # Build inputs
+//!
+//! Whatever a plugin's output depends on besides the program is read through the compiler, which records it as a
+//! build input and rebuilds what depends on it when it changes (DESIGN §14):
+//! - files: [`SetupCx::read_input`];
+//! - environment variables: [`SetupCx::env`] in setup, [`Cx::env`] in a file's hooks;
+//! - globs: `record_glob` on [`SetupCx`], [`Cx`] and [`FinishCx`], with a [`GlobMatcher`] the compiler can call
+//!   again in watch;
+//! - other disk reads in `finish`: [`FinishCx::read_dir`], [`FinishCx::exists`], [`FinishCx::read_file`].
+//!
+//! What a change re-runs follows from where it was read: a setup input re-runs setup and transforms every file; a
+//! file's input re-transforms that file (then `finish`); a finish glob re-runs `finish` only.
+//!
+//! **File parts across processes.** [`Plugin::encode_file_part`] / [`Plugin::decode_file_part`] let the compiler
+//! keep a file's part in its incremental state on disk. A plugin that does not implement them (the default) has its
+//! cached files transformed again in a new process.
 
 mod cx;
 pub mod erased;
 mod escape;
 mod finish_cx;
+mod glob;
 mod interest;
 mod lifecycle;
 mod plugin;
@@ -98,7 +116,8 @@ mod types;
 
 pub use cx::{Aborted, Cx, CxBackend};
 pub use escape::{escape_luau_string, text_literal};
-pub use finish_cx::{FinishBackend, FinishCx};
+pub use finish_cx::{DirEntry, EntryKind, FinishBackend, FinishCx};
+pub use glob::GlobMatcher;
 pub use interest::{ClassFilter, Interest, ReceiverInterest};
 pub use lifecycle::{BuildKind, ChangeSet, RebuildPlan, StateOrigin};
 pub use plugin::{Plugin, PluginInstance};

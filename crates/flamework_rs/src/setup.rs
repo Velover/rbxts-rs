@@ -9,7 +9,7 @@
 //! and the build seed). Reusing the previous one (incremental builds and watch rebuilds, with `refuseChangedInputs`
 //! and the project version check) is TODO(S2).
 
-use rbxts_plugin::{Fatal, SetupCx};
+use rbxts_plugin::{Cx, Fatal, SetupCx};
 
 use crate::build_info::{self, BUILD_INFO_NAME, BuildInfo, CandidateScan};
 use crate::config::{self, LoadedProjectConfig, TransformerConfig};
@@ -60,6 +60,12 @@ impl FwShared {
             }
             _ => text.to_owned(),
         }
+    }
+
+    /// `Flamework.env(name)` at transform time ([`crate::env::transform_env`]): what setup read from the `.env`
+    /// files and the process, else the process environment through [`Cx::env`], recorded as an input of the file.
+    pub fn env(&self, cx: &mut Cx<'_>, name: &str) -> Option<String> {
+        crate::env::transform_env(&self.loaded.env, name, |name| cx.env(name))
     }
 
     /// `getFileId`: a file relative to the package root, with forward slashes.

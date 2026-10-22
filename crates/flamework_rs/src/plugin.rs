@@ -65,8 +65,9 @@ pub struct Unported {
     pub pos: rbxts_plugin::Utf16Pos,
 }
 
-/// What one file contributes to `finish` (DESIGN §10.1). Owned data only: no handles, no `FileIndex`.
-#[derive(Debug, Default, Clone)]
+/// What one file contributes to `finish` (DESIGN §10.1). Owned data only: no handles, no `FileIndex`. Persisted for
+/// incremental builds by [`crate::part_codec`] (bump its format version when a field changes).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct FwFilePart {
     /// The file relative to the package root (`getFileId`).
     pub file_id: String,
@@ -160,6 +161,12 @@ impl Plugin for Flamework {
         }
     }
 
+    /// The TS transformer's diagnostics carry the code `` ` ${TRANSFORMER_PACKAGE}` `` (`error TS
+    /// @flamework-experimental/transformer: …`).
+    fn diagnostic_source(&self) -> Option<&'static str> {
+        Some(crate::packages::TRANSFORMER_PACKAGE)
+    }
+
     fn setup(&self, cx: &mut SetupCx<'_>, _state: &mut ()) -> Result<Arc<FwShared>, Fatal> {
         crate::setup::setup(cx).map(Arc::new)
     }
@@ -182,6 +189,14 @@ impl Plugin for Flamework {
         cx: &mut FinishCx<'_>,
     ) -> Result<(), Fatal> {
         crate::finish::finish(shared, parts, cx)
+    }
+
+    fn encode_file_part(&self, part: &FwFilePart) -> Option<Vec<u8>> {
+        crate::part_codec::encode(part)
+    }
+
+    fn decode_file_part(&self, bytes: &[u8]) -> Option<FwFilePart> {
+        crate::part_codec::decode(bytes)
     }
 }
 
@@ -230,5 +245,16 @@ impl PluginInstance for FwInstance {
         file.events.sort_by(|a, b| (&a.0, a.1).cmp(&(&b.0, b.1)));
         file.part.events = file.events.into_iter().map(|(_, _, event)| event).collect();
         Ok(file.part)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rbxts_plugin::Plugin;
+
+    #[test]
+    fn diagnostics_name_the_transformer_as_stock_does() {
+        // TS: `code: ` ${TRANSFORMER_PACKAGE}``, printed `error TS @flamework-experimental/transformer: …`.
+        assert_eq!(super::Flamework::new().diagnostic_source(), Some("@flamework-experimental/transformer"));
     }
 }

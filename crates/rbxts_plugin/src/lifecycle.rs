@@ -65,8 +65,9 @@ pub struct ChangeSet {
     /// Other files added, changed or deleted under the project roots or a watched directory
     /// ([`crate::FinishCx::watch_dir`]).
     pub non_ts: Vec<String>,
-    /// Build inputs that changed: the tsconfig, the Rojo files, and what plugins read through
-    /// [`crate::SetupCx::read_input`] / [`crate::SetupCx::env`].
+    /// Build inputs that changed: the tsconfig, the Rojo files, what plugins read through
+    /// [`crate::SetupCx::read_input`] / [`crate::SetupCx::env`], and the root of a glob setup recorded
+    /// ([`crate::SetupCx::record_glob`]) whose matches changed.
     pub config_inputs: Vec<String>,
 }
 

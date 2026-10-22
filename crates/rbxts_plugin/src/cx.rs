@@ -8,6 +8,7 @@
 //! hand-written backend that returns [`Aborted`] without recording anything can make one, which takes deliberate
 //! misuse. The compiler also checks it (a hook's `Err` without a new error is an internal error).
 
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -18,8 +19,8 @@ use tsrs_compiler::Program;
 use tsrs_core::{CompilerOptions, P};
 
 use crate::{
-    Abort, Arg, BinOp, CallSite, Callee, FileInfo, JsDocTag, LocalCounts, LuauExpr, LuauIdent,
-    LuauStmt, ObjectEdits, PResult, PluginDiagnostic, Utf16Pos,
+    Abort, Arg, BinOp, CallSite, Callee, FileInfo, GlobMatcher, JsDocTag, LocalCounts, LuauExpr,
+    LuauIdent, LuauStmt, ObjectEdits, PResult, PluginDiagnostic, Utf16Pos,
 };
 
 /// A backend primitive failed after recording an error diagnostic (a nested node failed to compile, or a
@@ -43,6 +44,11 @@ pub struct Aborted;
 /// | file-level: `header`, `import_named`, `mark_import_used`, `request_import_elision`, `temp_id`, `late_string` | yes | yes | refused | refused |
 /// | `report` (and `Cx::error` / `warning`) | yes | yes | refused | yes |
 /// | `is_usable_local_name`, `locals` | yes | yes | yes | yes |
+/// | build inputs: `env`, `record_glob` | yes | yes | refused | yes |
+///
+/// Build inputs are refused in `classify_symbol` because they are recorded against the current file, and which file
+/// first asks for a symbol depends on the checker count. The default implementations of these two cannot see the
+/// phase; a compiler that overrides them enforces the row.
 ///
 /// A refused call records an internal error naming the plugin (so the build fails) and returns `Err(Aborted)`, or
 /// a placeholder `nil` / does nothing for the primitives without a `Result`.
@@ -201,6 +207,54 @@ pub trait CxBackend {
 
     /// Records a diagnostic for this file. Any error fails the build: nothing is written.
     fn report(&mut self, diagnostic: PluginDiagnostic);
+
+    // --- build inputs (DESIGN §14) ---
+
+    /// An environment variable of the process, read while this file is transformed, recorded as an input of this
+    /// file.
+    ///
+    /// **Value.** What [`crate::SetupBackend::env`] returns for the same name in the same build: one snapshot of the
+    /// process environment per build (in watch it does not change). Only the process environment: files such as
+    /// `.env` are the plugin's to read in setup ([`crate::SetupBackend::read_input`]) and to layer (Flamework puts
+    /// the process environment over `.env.local` over `.env`).
+    ///
+    /// **Contract for an override.** Records `(plugin, name, value)` against the current file, kept with the file's
+    /// cached part and replaced when the file is transformed again. A build in a new process (incremental) that
+    /// reads a different value for a recorded name transforms the file again, then runs `finish`. Refused in
+    /// `classify_symbol` (the phase table): an internal error naming the plugin, and `None`.
+    ///
+    /// **Default:** the process environment through `std::env::var` (a name the environment cannot hold is unset),
+    /// recording nothing.
+    fn env(&mut self, name: &str) -> Option<String> {
+        crate::glob::process_env(name)
+    }
+
+    /// Matches a glob under `root` (an absolute directory) and records it as an input of this file: the file's output
+    /// may depend on the matches. Returns `matcher.expand(root)` as it is.
+    ///
+    /// **Contract for an override.**
+    /// - Returns `matcher.expand(root)` unchanged, and records `(plugin, root, pattern, matcher, answer)` against
+    ///   the current file, kept with its cached part and replaced when the file is transformed again. One plugin's
+    ///   records with an equal `(root, pattern)` in one file are one record: the plugin guarantees that an equal
+    ///   pattern means an equal matcher.
+    /// - Watch: the compiler watches `root` recursively, files and directories (its nearest existing ancestor
+    ///   while it does not exist). After an add, delete or rename under it that [`GlobMatcher::affected_by`]
+    ///   accepts, it calls `expand` again, before the rebuild's transform. If the answer differs from the recorded
+    ///   one, the file is transformed again (and `finish` runs). A rename is a delete plus an add.
+    /// - A build in a new process has the recorded answer but no matcher: it transforms every cached file with a
+    ///   recorded glob again (the file records it anew).
+    /// - Refused in `classify_symbol` (the phase table): an internal error naming the plugin, and no matches.
+    ///
+    /// **Default:** `matcher.expand(root)`, recording nothing.
+    fn record_glob(
+        &mut self,
+        root: &Path,
+        pattern: &str,
+        matcher: Arc<dyn GlobMatcher>,
+    ) -> Vec<String> {
+        let _ = pattern;
+        crate::glob::expand_unrecorded(root, &*matcher)
+    }
 }
 
 /// The context of one hook call. See [`CxBackend`] for what each primitive guarantees; the methods here forward
@@ -455,6 +509,27 @@ impl<'a> Cx<'a> {
         let is_error = diagnostic.category == tsrs_diagnostics::Category::Error;
         self.backend.report(diagnostic);
         is_error.then_some(Abort(()))
+    }
+
+    // --- build inputs ---
+
+    /// An environment variable of the process, recorded as an input of this file ([`CxBackend::env`]). The same
+    /// value [`crate::SetupCx::env`] gives in this build.
+    pub fn env(&mut self, name: &str) -> Option<String> {
+        self.backend.env(name)
+    }
+
+    /// Matches a glob under the absolute directory `root`, recorded as an input of this file: in watch, a change in
+    /// the matches transforms the file again ([`CxBackend::record_glob`]). `pattern` names the glob: one pattern,
+    /// one matcher.
+    pub fn record_glob(
+        &mut self,
+        root: impl AsRef<Path>,
+        pattern: &str,
+        matcher: impl GlobMatcher,
+    ) -> Vec<String> {
+        self.backend
+            .record_glob(root.as_ref(), pattern, Arc::new(matcher))
     }
 }
 

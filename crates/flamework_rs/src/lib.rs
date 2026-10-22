@@ -22,7 +22,8 @@
 //! - [`class_hook`]: `Reflect.defineMetadata` at the static-block position, and the decorator checks;
 //! - [`macros`]: user macros, as far as the `path` / `pathglob` intrinsics (the rest is F2+, declined);
 //! - [`finish`]: id assignment in program order, `flamework.build`, the include JSON, the glob and path warnings;
-//! - [`inputs`]: reading files and variables as recorded build inputs.
+//! - [`inputs`]: reading files and variables as recorded build inputs;
+//! - [`part_codec`]: [`FwFilePart`] as bytes, for the compiler's incremental state.
 //!
 //! Clean builds only (incremental and watch: TODO(S2)).
 
@@ -42,6 +43,7 @@ pub mod macros;
 pub mod metadata;
 pub mod node_path;
 pub mod order;
+pub mod part_codec;
 pub mod place_source;
 pub mod plugin;
 pub mod random;

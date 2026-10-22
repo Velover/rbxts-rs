@@ -3,7 +3,10 @@
 //! ids are resolved, and a game gets `include/flamework/{globs,config,paths}.json`.
 //!
 //! Every write goes through [`FinishCx`]: the compiler commits them in its one write phase, only when the build has
-//! no errors. Reads of the disk here are the glob walks and the path checks of the warnings.
+//! no errors. Every read of the disk here goes through the compiler, recorded, so that watch runs `finish` again when
+//! an answer changes and its warnings equal a clean build's: the glob walks (`FinishCx::record_glob`), the path
+//! checks of the warnings and the stale include files (`read_dir` / `exists`), and package.json lookups
+//! (`read_file`).
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -12,6 +15,7 @@ use rbxts_plugin::{Fatal, FileIndex, FinishCx, Utf16Pos};
 
 use crate::build_info::{BUILD_INFO_NAME, BuildInfo};
 use crate::config;
+use crate::inputs::Inputs;
 use crate::json::{self, JsObject, JsValue};
 use crate::place_source::{SourcePathState, find_place_source, find_source_path};
 use crate::plugin::{FwFilePart, FwShared, PathEvent};
@@ -50,7 +54,7 @@ pub(crate) fn finish(
         }
     }
 
-    calculate_globs(shared, &mut info);
+    calculate_globs(shared, &mut info, cx);
 
     if shared.is_game {
         write_include(shared, &info, cx)?;
@@ -69,9 +73,11 @@ pub(crate) fn finish(
 }
 
 /// `calculateGlobs`: every glob's matches, as output paths relative to the package root. Matches are sorted (Q-F4).
-fn calculate_globs(shared: &FwShared, info: &mut BuildInfo) {
+/// Each glob is recorded with the compiler, which matches it again in watch: only `include/flamework/globs.json`
+/// and `flamework.build` depend on the matches, never a file's Luau, so a change re-runs `finish` only.
+fn calculate_globs(shared: &FwShared, info: &mut BuildInfo, cx: &mut FinishCx<'_>) {
     for pattern in info.glob_patterns() {
-        let matches = glob::glob_sync(&pattern, Path::new(&shared.root_dir));
+        let matches = cx.record_glob(Path::new(&shared.root_dir), &pattern, glob::Matcher::new(pattern.clone()));
         let results = matches
             .iter()
             .map(|found| {
@@ -145,10 +151,20 @@ fn write_include(shared: &FwShared, info: &BuildInfo, cx: &mut FinishCx<'_>) -> 
         let path = node_path::join(&[&folder, file]);
         match written.get(file) {
             Some(contents) => cx.write_artifact(&path, contents.clone().into_bytes()),
-            // A stale file from an earlier build; the folder itself stays (TODO: the compiler removes files only).
-            None if Path::new(&path).exists() => cx.remove_artifact(&path),
-            None => {}
+            // A stale file from an earlier build (checked through the compiler, so watch notices it come and go).
+            None => {
+                if cx.exists(&path) {
+                    cx.remove_artifact(&path);
+                }
+            }
         }
+    }
+    // `rmdirSync` of the folder once nothing is written there (`metadataExists && writtenFiles.size === 0`): removed
+    // if it is empty at commit, after the stale files above, and left alone otherwise (TS throws on a folder that is
+    // not empty). The compiler removes a folder its artifact diff empties by itself; this call covers the rest, as
+    // TS does: a folder left empty, or emptied of stale files from another process or toolchain.
+    if written.is_empty() {
+        cx.remove_empty_dir(&folder)?;
     }
     Ok(())
 }
@@ -157,7 +173,7 @@ fn write_include(shared: &FwShared, info: &BuildInfo, cx: &mut FinishCx<'_>) -> 
 /// under obfuscation); a package's by its own text, with its matches relative to the package.
 fn convert_globs(
     shared: &FwShared,
-    cx: &FinishCx<'_>,
+    cx: &mut FinishCx<'_>,
     globs: &JsObject,
     package: Option<&str>,
     info: &BuildInfo,
@@ -165,7 +181,7 @@ fn convert_globs(
 ) {
     let package_info = package.and_then(|p| info.build_info_from_prefix(p));
     let root = match package_info {
-        Some(package_info) => node_path::dirname(&to_module_path(shared, &package_info.path)),
+        Some(package_info) => node_path::dirname(&to_module_path(shared, cx, &package_info.path)),
         None => shared.root_dir.clone(),
     };
     let rojo = &cx.project().rojo_resolver;
@@ -190,16 +206,31 @@ fn convert_globs(
     }
 }
 
+/// [`Inputs`] over the compiler's recorded finish reads (`FinishCx::read_file`): watch runs `finish` again when one
+/// changes. `finish` reads no environment.
+struct FinishInputs<'c, 'a>(&'c mut FinishCx<'a>);
+
+impl Inputs for FinishInputs<'_, '_> {
+    fn read(&mut self, path: &str) -> Option<String> {
+        self.0.read_file(path).ok().flatten()
+    }
+
+    fn env(&mut self, _: &str) -> Option<String> {
+        None
+    }
+}
+
 /// `toModulePath`: a package file reached through a symbolic link, back under the project's `node_modules`.
-fn to_module_path(shared: &FwShared, file_path: &str) -> String {
+fn to_module_path(shared: &FwShared, cx: &mut FinishCx<'_>, file_path: &str) -> String {
     if node_path::is_path_descendant_of(file_path, &shared.root_dir) {
         return file_path.to_owned();
     }
-    let Some(package_json) = crate::build_info::find_package_json(file_path, None) else {
+    let mut inputs = FinishInputs(cx);
+    let Some(package_json) = crate::build_info::find_package_json_with(&mut inputs, file_path, None) else {
         return file_path.to_owned();
     };
-    let name = std::fs::read_to_string(&package_json)
-        .ok()
+    let name = inputs
+        .read(&package_json)
         .and_then(|text| json::parse(text.trim_start_matches('\u{feff}')).ok())
         .and_then(|v| v.get("name").and_then(JsValue::as_str).map(str::to_owned))
         .unwrap_or_default();
@@ -261,7 +292,7 @@ fn warn_empty_paths(shared: &FwShared, info: &BuildInfo, by_id: &HashMap<&str, F
             let source_path = string(path_use, "path").to_owned();
             let state = states
                 .entry(source_path.clone())
-                .or_insert_with(|| look_up(shared, cx, &base, &source_path))
+                .or_insert_with(|| look_up(shared, &mut *cx, &base, &source_path))
                 .clone();
             let raises = path_use.get("raises").and_then(JsValue::as_bool) == Some(true);
             let call = format!("{}(\"{source_path}\")", string(path_use, "macro"));
@@ -290,25 +321,30 @@ fn warn_empty_paths(shared: &FwShared, info: &BuildInfo, by_id: &HashMap<&str, F
 }
 
 /// Where the place gets a source path from: the deepest `$path` covering its Rojo path, else the disk.
-fn look_up(shared: &FwShared, cx: &FinishCx<'_>, base: &str, source_path: &str) -> SourcePathState {
+/// Every disk read goes through `cx` (recorded), so watch judges these again when an answer changes.
+fn look_up(shared: &FwShared, cx: &mut FinishCx<'_>, base: &str, source_path: &str) -> SourcePathState {
     if shared.has_rojo {
-        let rojo = &cx.project().rojo_resolver;
         let output = shared.path_translator.get_output_path(&node_path::resolve(&[base, source_path]));
-        if let Some(rbx_path) = rojo.get_rbx_path_from_file_path(&output) {
+        let rojo = &cx.project().rojo_resolver;
+        let found = rojo.get_rbx_path_from_file_path(&output).map(|rbx_path| {
             let partitions: Vec<(Vec<String>, String)> =
                 rojo.partitions().iter().map(|p| (p.rbx_path.clone(), p.fs_path.clone())).collect();
-            if let Some(state) = find_place_source(
+            (rbx_path, partitions)
+        });
+        if let Some((rbx_path, partitions)) = found
+            && let Some(state) = find_place_source(
+                cx,
                 &rbx_path,
                 &partitions,
                 &shared.path_translator.root_dir,
                 &shared.path_translator.out_dir,
                 base,
-            ) {
-                return state;
-            }
+            )
+        {
+            return state;
         }
     }
-    find_source_path(base, source_path)
+    find_source_path(cx, base, source_path)
 }
 
 /// One warning for the macro sites and metadata left to later milestones, at the first one.
