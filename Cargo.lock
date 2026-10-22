@@ -543,6 +543,7 @@ version = "0.0.0"
 name = "rbxts_luau_check"
 version = "0.0.0"
 dependencies = [
+ "cc",
  "luau0-src",
 ]
 

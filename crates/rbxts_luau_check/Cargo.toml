@@ -13,3 +13,5 @@ publish.workspace = true
 # limits (constant folding grows between releases): bump it on purpose, and re-run the limit probes when you do.
 [build-dependencies]
 luau0-src = "=0.22.0"
+# The exception shim (src/shim.cpp); the version luau0-src already locks.
+cc = "1.2"
