@@ -1,0 +1,6 @@
+{
+	"name": "f2-fixture",
+	"version": "0.0.0",
+	"private": true,
+	"description": "flamework_rs F2: user macros, intrinsics and macro types."
+}

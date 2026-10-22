@@ -24,6 +24,7 @@ use rbxts_plugin::{
 
 use crate::build_info::{GlobUse, PathUse};
 use crate::ids::NewId;
+use crate::macro_type::{MacroType, MacroTypes};
 use crate::metadata::NodeMetadata;
 use crate::order::OrderKey;
 pub use crate::setup::FwShared;
@@ -34,13 +35,30 @@ pub const TAG_MACRO: Tag = Tag(1);
 /// The tsconfig `plugins` entry that turns Flamework on.
 pub const TSCONFIG_TRANSFORM: &str = "@flamework-experimental/transformer";
 
-/// Flamework's transformer, compiled in.
+/// Flamework's transformer, compiled in, with the user's macro types ([`crate::macro_type`]).
 #[derive(Debug, Default)]
-pub struct Flamework {}
+pub struct Flamework {
+    macro_types: Arc<MacroTypes>,
+}
 
 impl Flamework {
     pub fn new() -> Flamework {
-        Flamework {}
+        Flamework::default()
+    }
+
+    /// Registers a macro type under `id` (`registerMacroType`), for `Modding.Intrinsic<"plugin", [id, T], R>`
+    /// parameters. Panics when `id` is registered already, as the TS plugin host refuses it.
+    pub fn macro_type(mut self, id: impl Into<String>, macro_type: impl MacroType) -> Flamework {
+        let types = Arc::make_mut(&mut self.macro_types);
+        if let Err(message) = types.insert(id.into(), Arc::new(macro_type)) {
+            panic!("{message}");
+        }
+        self
+    }
+
+    /// The registered macro types.
+    pub fn macro_types(&self) -> &MacroTypes {
+        &self.macro_types
     }
 }
 
@@ -77,6 +95,9 @@ pub struct FwFilePart {
     pub late_keys: Vec<String>,
     pub events: Vec<PathEvent>,
     pub unported: Vec<Unported>,
+    /// The variables `Flamework.env` inlined, in the TS transformer's order: `(name, hash of the value)`
+    /// (`inputs.env` in `flamework.build`).
+    pub env_inputs: Vec<(String, String)>,
 }
 
 /// The per-file state of an instance, reset in `begin_file`. Per file only: a cache across files would make the
@@ -90,6 +111,10 @@ pub(crate) struct FileState {
     pub id_requests: Vec<(OrderKey, usize, NewId)>,
     /// Glob and path uses, likewise sorted into `part.events`.
     pub events: Vec<(OrderKey, usize, PathEvent)>,
+    /// `Flamework.env` reads, likewise sorted into `part.env_inputs`.
+    pub env_inputs: Vec<(OrderKey, usize, (String, String))>,
+    /// Macro type results of this file, by `(id, type)` (`executeMacroType`'s per-file cache).
+    pub macro_cache: HashMap<(String, P<rbxts_plugin::ts::Type>), LuauExpr>,
     /// The order key of whatever is asking for ids now (the class hook's class).
     pub current_key: OrderKey,
     pub seq: usize,
@@ -114,6 +139,7 @@ pub struct FwInstance {
     /// hook.
     pub(crate) macro_symbols: RefCell<HashMap<P<Symbol>, bool>>,
     pub(crate) file: RefCell<FileState>,
+    pub(crate) macro_types: Arc<MacroTypes>,
 }
 
 impl FwInstance {
@@ -178,6 +204,7 @@ impl Plugin for Flamework {
             decorators: RefCell::default(),
             macro_symbols: RefCell::default(),
             file: RefCell::default(),
+            macro_types: self.macro_types.clone(),
         }
     }
 
@@ -244,6 +271,8 @@ impl PluginInstance for FwInstance {
         }
         file.events.sort_by(|a, b| (&a.0, a.1).cmp(&(&b.0, b.1)));
         file.part.events = file.events.into_iter().map(|(_, _, event)| event).collect();
+        file.env_inputs.sort_by(|a, b| (&a.0, a.1).cmp(&(&b.0, b.1)));
+        file.part.env_inputs = file.env_inputs.into_iter().map(|(_, _, input)| input).collect();
         Ok(file.part)
     }
 }

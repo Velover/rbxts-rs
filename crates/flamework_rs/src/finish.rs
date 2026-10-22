@@ -44,6 +44,13 @@ pub(crate) fn finish(
         }
     }
 
+    // The variables `Flamework.env` inlined, per file (`inputs.env`).
+    for (_, part) in parts {
+        for (name, hash) in &part.env_inputs {
+            info.add_env_input(&part.file_id, name, hash);
+        }
+    }
+
     // Glob and path uses, in first-use order.
     for (_, part) in parts {
         for event in &part.events {

@@ -20,7 +20,9 @@
 //! - [`metadata`]: JSDoc `@metadata` requests with `{@link}` entries;
 //! - [`uid`]: type and declaration ids, late in `short` / `tiny` / `obfuscated` mode;
 //! - [`class_hook`]: `Reflect.defineMetadata` at the static-block position, and the decorator checks;
-//! - [`macros`]: user macros, as far as the `path` / `pathglob` intrinsics (the rest is F2+, declined);
+//! - [`macros`]: user macros (F2): every marker kind, the intrinsics up to F2, and the parameter intrinsics; the
+//!   parts of later milestones are declined (or refused) loudly;
+//! - [`macro_type`]: user plugins' macro types (`MacroType`, registered with [`Flamework::macro_type`]);
 //! - [`finish`]: id assignment in program order, `flamework.build`, the include JSON, the glob and path warnings;
 //! - [`inputs`]: reading files and variables as recorded build inputs;
 //! - [`part_codec`]: [`FwFilePart`] as bytes, for the compiler's incremental state.
@@ -39,6 +41,7 @@ pub mod inputs;
 pub mod js;
 pub mod json;
 pub mod jsonc;
+pub mod macro_type;
 pub mod macros;
 pub mod metadata;
 pub mod node_path;
@@ -50,9 +53,14 @@ pub mod random;
 pub mod schema;
 pub mod setup;
 pub mod sha;
+pub mod shuffle;
 pub mod uid;
 pub mod uuid;
 
+pub use macro_type::{
+    Constituents, Field, IndexSignature, Literal, MacroCx, MacroType, MacroTypes, Primitive, SignatureInfo,
+    TupleElement,
+};
 pub use plugin::{Flamework, FwFilePart, FwInstance, FwShared};
 
 /// The Flamework version this transformer is, and writes into `flamework.build`. Every

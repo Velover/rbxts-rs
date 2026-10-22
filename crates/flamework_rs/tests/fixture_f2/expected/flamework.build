@@ -1,0 +1,66 @@
+{
+	"version": 1,
+	"flameworkVersion": "2.0.0-alpha.8",
+	"identifiers": {
+		"f2-fixture:out/shared/generic@Economy": "shared/generic@Economy",
+		"f2-fixture:out/shared/generic@Bank": "shared/generic@Bank",
+		"f2-fixture:out/shared/generic@LoggerImpl": "shared/generic@LoggerImpl",
+		"f2-fixture:out/shared/generic@Shop": "shared/generic@Shop"
+	},
+	"inputs": {
+		"config": "a987d7e62baa63d1df1926d02ebeef11a008e30a",
+		"env": {
+			"src/shared/intrinsics.ts": {
+				"F2_FIXTURE_CHANNEL": "a295e0bdde1938d1fbfd343e5a3e569e868e1465",
+				"F2_FIXTURE_REGION": "unset",
+				"F2_FIXTURE_MISSING": "unset"
+			}
+		}
+	},
+	"idGenerationMode": "full",
+	"metadata": {
+		"paths": {
+			"uses": {
+				"src/shared/intrinsics.ts": [
+					{
+						"path": "src/server/commands",
+						"macro": "pathOf",
+						"line": 5,
+						"column": 25
+					}
+				]
+			}
+		},
+		"globs": {
+			"paths": {
+				"src/server/commands/*.ts": [
+					"out/server/commands/ping.lua"
+				]
+			},
+			"origins": {
+				"src/shared/intrinsics.ts": [
+					"src/server/commands/*.ts",
+					"src/server/commands/*.ts"
+				]
+			},
+			"uses": {
+				"src/shared/intrinsics.ts": [
+					{
+						"glob": "src/server/commands/*.ts",
+						"text": "src/server/commands/*.ts",
+						"macro": "globOf",
+						"line": 6,
+						"column": 28
+					},
+					{
+						"glob": "src/server/commands/*.ts",
+						"text": "../server/commands/*.ts",
+						"macro": "globOf",
+						"line": 7,
+						"column": 29
+					}
+				]
+			}
+		}
+	}
+}

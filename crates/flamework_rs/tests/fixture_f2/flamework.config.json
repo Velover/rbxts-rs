@@ -1,0 +1,8 @@
+{
+	// F2_IDMODE / F2_OBFUSCATE pick the id mode in the end-to-end tests.
+	"transformer": {
+		"idGenerationMode": "${F2_IDMODE:-full}",
+		"obfuscation": "${F2_OBFUSCATE:-false}",
+		"plugins": [{ "path": "./fieldInfoPlugin.cjs", "options": { "prefix": "fx" } }]
+	}
+}

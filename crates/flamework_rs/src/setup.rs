@@ -22,6 +22,11 @@ use crate::{ProjectError, node_path, uuid};
 /// The test-only switch that pins the build seed (DESIGN §10.4), so obfuscated builds can be compared.
 pub const FIXED_SEED_VAR: &str = "FLAMEWORK_RS_FIXED_SEED";
 
+/// A switch for measuring builds: macro sites that a later milestone brings and that are errors by default
+/// (`Modding.Generic<T, "guard">`, F3) are declined and listed in the build's warning instead, as the others are.
+/// The output of such a build is not what Flamework emits.
+pub const DECLINE_UNPORTED_VAR: &str = "FLAMEWORK_RS_DECLINE_UNPORTED";
+
 /// What every hook reads, made once per build (DESIGN §10.1). Read-only during the transform.
 #[derive(Debug)]
 pub struct FwShared {
@@ -45,6 +50,13 @@ pub struct FwShared {
     pub build_info: BuildInfo,
     /// The build seed, under obfuscation.
     pub build_seed: Option<uuid::Namespace>,
+    /// The namespace of `Modding.Hash` values: the build seed under obfuscation, else a seed of this build's own
+    /// (pinned by [`FIXED_SEED_VAR`]). The TS transformer made a random v4 per string and kept them in
+    /// `flamework.build`'s `stringHashes`; derived ones need no table (DESIGN §10.3, §10.4). TODO(S2): an
+    /// incremental build keeps it.
+    pub hash_seed: uuid::Namespace,
+    /// [`DECLINE_UNPORTED_VAR`] is set.
+    pub decline_unported: bool,
     /// Whether the project has a Rojo project file (Flamework's `rojoResolver` is undefined without one).
     pub has_rojo: bool,
     /// Flamework's own path translator: roblox-ts's, with `.lua` outputs (`createPathTranslator`).
@@ -66,6 +78,11 @@ impl FwShared {
     /// files and the process, else the process environment through [`Cx::env`], recorded as an input of the file.
     pub fn env(&self, cx: &mut Cx<'_>, name: &str) -> Option<String> {
         crate::env::transform_env(&self.loaded.env, name, |name| cx.env(name))
+    }
+
+    /// `buildInfo.hashString`: a derived hash of `context:text` (`Modding.Hash`).
+    pub fn hash_string(&self, text: &str, context: Option<&str>) -> String {
+        self.hash_seed.v5(&format!("{}:{text}", context.unwrap_or("@")))
     }
 
     /// `getFileId`: a file relative to the package root, with forward slashes.
@@ -289,6 +306,16 @@ pub fn setup(cx: &mut SetupCx<'_>) -> Result<FwShared, Fatal> {
         None
     };
 
+    let hash_seed = match &build_seed {
+        Some(seed) => seed.clone(),
+        None => {
+            let pinned = cx.env(FIXED_SEED_VAR);
+            let text = pinned.unwrap_or_else(uuid::random_v4);
+            uuid::Namespace::parse(&text).map_err(|e| Fatal::new(format!("{FIXED_SEED_VAR} is not a uuid: {e}")))?
+        }
+    };
+    let decline_unported = cx.env(DECLINE_UNPORTED_VAR).is_some_and(|v| !v.is_empty() && v != "0" && v != "false");
+
     // The project's flamework.build came from another version: only a reused one can (TODO(S2)); a fresh one never.
     let out_relative = node_path::relative(&project_dir, &out_dir_option).replace('\\', "/");
     if let Err(lines) = build_info::check_project_version(&build_info, &out_relative) {
@@ -320,6 +347,8 @@ pub fn setup(cx: &mut SetupCx<'_>) -> Result<FwShared, Fatal> {
         ids,
         build_info,
         build_seed,
+        hash_seed,
+        decline_unported,
         has_rojo,
         path_translator,
     })

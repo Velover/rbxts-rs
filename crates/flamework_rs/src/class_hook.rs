@@ -8,15 +8,16 @@
 //! construct signature `flamework:parameters` / `parameter_names` / `dependencies`; per member `flamework:type` and
 //! `flamework:return_type`, and the parameter keys of methods.
 //!
-//! Not in F1: guards (`flamework:guard`, `flamework:parameter_guards`, `flamework:return_guard`: F3) and the user
-//! macro metadata of a `Modding.Injectable` dependency (F2). A class that requests them gets an error naming the
-//! milestone, rather than metadata that silently lacks them.
+//! Not yet: guards (`flamework:guard`, `flamework:parameter_guards`, `flamework:return_guard`, and a guard in a
+//! `Modding.Injectable` dependency's metadata: F3). A class that requests them gets an error naming the milestone,
+//! rather than metadata that silently lacks them.
 
 use rbxts_luau::create;
 use rbxts_plugin::ts::{Kind, Node, P, Type};
 use rbxts_plugin::{ClassSite, Cx, LuauExpr, LuauStmt, PResult, PluginDiagnostic, text_literal};
 use tsrs_ast::SymbolFlags;
 
+use crate::macros::{Analysis, Builder, UserMacro};
 use crate::metadata::{NodeMetadata, get_symbol, implements_entries};
 use crate::packages::{COMPONENTS_PACKAGE, CORE_PACKAGE};
 use crate::plugin::FwInstance;
@@ -219,19 +220,22 @@ fn parameter_fields(
     Ok(fields)
 }
 
-/// `getDependencyInjectionMetadata(state, node, type)` (not concise): `{ id = <id> }`.
+/// `getDependencyInjectionMetadata(state, node, type)` (not concise): `{ id = <id>, metadata = {...}? }`, the
+/// metadata being the user macros of a `Modding.Injectable<{ metadata: [...] }>` dependency.
 fn dependency_metadata(fw: &FwInstance, cx: &mut Cx<'_>, trace: P<Node>, ty: P<Type>) -> PResult<LuauExpr> {
-    let id = fw.type_uid(cx, ty, trace)?;
-    let injectable = cx.checker().get_type_of_property_of_type_exported(ty, "_flamework_injectable");
-    if let Some(config) = injectable
-        && let Some(reflect) = cx.checker().get_type_of_property_of_type_exported(config, "metadata")
-        && tsrs_checker::is_tuple_type_exported(reflect)
-    {
-        // `Modding.Injectable<T, [...metadata]>`: each entry is a user macro type.
-        return Err(unported_error(cx, trace, "the metadata of a Modding.Injectable dependency", "user macros", "F2"));
+    let metadata = Analysis { fw, node: trace }.injectable_metadata(cx, ty)?;
+    if let Some(later) = metadata.as_ref().and_then(|items| items.iter().find_map(UserMacro::later)) {
+        let what = format!("the metadata of a Modding.Injectable dependency ({})", later.what);
+        let feature = match later.milestone {
+            "F3" => "guard generation",
+            "F4" => "the serializer",
+            "F5" => "networking",
+            _ => "components",
+        };
+        return Err(unported_error(cx, trace, &what, feature, later.milestone));
     }
-    let value = fw.id_expr(cx, id);
-    Ok(create::map(vec![(create::string("id"), value)]))
+    let key = fw.file.borrow().current_key.clone();
+    Builder { fw, node: trace, key }.dependency(cx, ty, false, metadata.as_deref())
 }
 
 /// `generateFieldMetadata`.
@@ -331,7 +335,7 @@ impl FwInstance {
 
     /// `getComponentOnlyClass`: the class declaration a type is the instance type of, when the class is a
     /// `@Component()` and not a `@Provider()`.
-    fn component_only_class(&self, cx: &mut Cx<'_>, ty: P<Type>) -> Option<P<Node>> {
+    pub(crate) fn component_only_class(&self, cx: &mut Cx<'_>, ty: P<Type>) -> Option<P<Node>> {
         let symbol = ty.symbol()?;
         if !symbol.flags().intersects(SymbolFlags::Class) {
             return None;
