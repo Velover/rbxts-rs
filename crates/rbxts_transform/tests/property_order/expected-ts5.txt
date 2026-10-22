@@ -19,5 +19,14 @@ src/chain.ts var leafValue: size, label, kind
 src/chain.ts var mixedValue: size, label, kind, b, a
 src/display.ts decl Card: title, body, icon, rank
 src/item.ts decl Item: a, b, c, title, body, icon, rank
+src/literals.ts decl FromSpread: own, sd, sa, sb, sc
+src/literals.ts decl Head: head, shared
+src/literals.ts var genericValue: value, first, late
+src/literals.ts var headLiteralValue: head, shared, z, y, x, __@tag@52, late
+src/literals.ts var literalValue: z, y, x, __@tag@52, late
+src/literals.ts var partialBothValue: b, a
+src/literals.ts var partialLeafValue: size, label, kind
+src/literals.ts var plainValue: pz, py, px
+src/literals.ts var spreadValue: sd, sa, sb, sc
 src/merge.ts decl Settings: volume, theme, scale
 src/merge.ts decl Settings: volume, theme, scale

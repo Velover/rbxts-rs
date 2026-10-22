@@ -11,3 +11,4 @@ interface Number {}
 interface Object {}
 interface RegExp {}
 interface String {}
+type Partial<T> = { [P in keyof T]?: T[P] };
