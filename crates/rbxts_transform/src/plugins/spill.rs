@@ -31,6 +31,7 @@ use tsrs_core::P;
 use super::backend::to_diagnostic;
 use crate::classes::prereqs::temp_id;
 use crate::classes::transform_state::TransformState;
+use crate::shared::diagnostics::internal_error;
 
 /// The most local registers Luau allows in one function, the main chunk included.
 pub const LUAU_MAX_LOCALS: u32 = 200;
@@ -297,6 +298,8 @@ pub(crate) enum Verdict {
     FoldingOnly(Refusal),
     /// It fails at optimisation level 1 or 2 at debug level 1: in Studio or in live games.
     Fails(Refusal),
+    /// The check itself panicked (a compiler bug): the file's internal error.
+    Panicked(String),
 }
 
 /// Compiles `source` as Roblox loads it. Without a `--!optimize` directive, a file that loads at level 0 (debug 1, the
@@ -336,11 +339,17 @@ pub(crate) fn decide(source: &str, directive: bool) -> Verdict {
 /// dev and measure profiles alike); 8 MiB leaves a wide margin.
 const LOAD_CHECK_STACK: usize = 8 << 20;
 
+/// [`decide`], with a panic as the file's [`Verdict::Panicked`] rather than the build's crash.
+fn decide_caught(source: &str, directive: bool) -> Verdict {
+    crate::compile::quietly(|| decide(source, directive))
+        .unwrap_or_else(|panic| Verdict::Panicked(crate::compile::panic_message(&*panic)))
+}
+
 /// [`decide`] for each `(source, directive)`, in parallel on up to one thread per core. Luau's compiler is reentrant.
 pub(crate) fn decide_all(jobs: &[(&str, bool)]) -> Vec<Verdict> {
     let threads = std::thread::available_parallelism().map_or(1, usize::from).min(jobs.len());
     if threads <= 1 {
-        return jobs.iter().map(|&(source, directive)| decide(source, directive)).collect();
+        return jobs.iter().map(|&(source, directive)| decide_caught(source, directive)).collect();
     }
     let next = std::sync::atomic::AtomicUsize::new(0);
     let work = || {
@@ -348,7 +357,7 @@ pub(crate) fn decide_all(jobs: &[(&str, bool)]) -> Vec<Verdict> {
         loop {
             let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let Some(&(source, directive)) = jobs.get(index) else { return done };
-            done.push((index, decide(source, directive)));
+            done.push((index, decide_caught(source, directive)));
         }
     };
     let mut verdicts: Vec<Option<Verdict>> = vec![None; jobs.len()];
@@ -358,23 +367,32 @@ pub(crate) fn decide_all(jobs: &[(&str, bool)]) -> Vec<Verdict> {
             .collect();
         // if no thread could be made, this one (the transform's, with its large stack) does the work
         let mut results = if workers.is_empty() { work() } else { Vec::new() };
+        // (a worker's own panic, outside `decide_caught`, leaves its files unchecked: each is Panicked below)
         for worker in workers {
-            match worker.join() {
-                Ok(done) => results.extend(done),
-                Err(panic) => std::panic::resume_unwind(panic),
+            if let Ok(done) = worker.join() {
+                results.extend(done);
             }
         }
         for (index, verdict) in results {
             verdicts[index] = Some(verdict);
         }
     });
-    verdicts.into_iter().map(|verdict| verdict.expect("every file was checked")).collect()
+    verdicts
+        .into_iter()
+        .map(|verdict| verdict.unwrap_or_else(|| Verdict::Panicked("a load-check thread stopped".to_owned())))
+        .collect()
 }
 
 /// The diagnostic for a rendered file's verdict: an error when Luau refuses it where Roblox runs it, a warning when it
 /// loads only with Luau's constant folding. `lines` is the line each final statement starts on.
 pub(crate) fn load_check_diagnostic(check: &LoadCheck, verdict: &Verdict, lines: &[u32]) -> Option<P<Diagnostic>> {
-    let (Verdict::Fails(refusal) | Verdict::FoldingOnly(refusal)) = verdict else { return None };
+    let refusal = match verdict {
+        Verdict::Loads => return None,
+        Verdict::Panicked(message) => {
+            return Some(internal_error(check.file, &format!("the Luau load check panicked: {message}")));
+        }
+        Verdict::Fails(refusal) | Verdict::FoldingOnly(refusal) => refusal,
+    };
     let index = lines.partition_point(|&line| line <= refusal.error.line).saturating_sub(1);
     let anchor = check.anchor(index);
     let luau_says = format!("\"{}\" (output line {})", refusal.error.message, refusal.error.line);
@@ -398,15 +416,19 @@ pub(crate) fn load_check_diagnostic(check: &LoadCheck, verdict: &Verdict, lines:
                 ),
             )
         }
-        _ => PluginDiagnostic::warning(
-            anchor,
-            format!(
-                "This file loads only with Luau's constant folding: Luau {LUAU_VERSION} refuses it at {} and debug \
-                 level {}: {luau_says}. It fails to load at --!optimize 0 or debug level 2.",
-                level(refusal.optimization_level),
-                refusal.debug_level
-            ),
-        ),
+        _ => {
+            // a directive sets the optimisation level, so only the debug level can make the file fail
+            let fails_at = if check.directive.is_some() { "debug level 2" } else { "--!optimize 0 or debug level 2" };
+            PluginDiagnostic::warning(
+                anchor,
+                format!(
+                    "This file loads only with Luau's constant folding: Luau {LUAU_VERSION} refuses it at {} and \
+                     debug level {}: {luau_says}. It fails to load at {fails_at}.",
+                    level(refusal.optimization_level),
+                    refusal.debug_level
+                ),
+            )
+        }
     };
     Some(to_diagnostic(&diagnostic))
 }
@@ -711,7 +733,7 @@ mod tests {
 
     fn refused_at(verdict: &Verdict) -> Option<(u8, u8, &str)> {
         match verdict {
-            Verdict::Loads => None,
+            Verdict::Loads | Verdict::Panicked(_) => None,
             Verdict::Fails(r) | Verdict::FoldingOnly(r) => {
                 Some((r.optimization_level, r.debug_level, r.error.message.as_str()))
             }

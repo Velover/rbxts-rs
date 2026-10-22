@@ -469,3 +469,71 @@ fn an_artifact_may_not_overwrite_an_asset_output() {
     assert!(!root.join("out").exists(), "a failing build writes nothing");
     drop(copy);
 }
+
+#[test]
+fn a_watch_rebuild_load_checks_what_a_plugin_emitted_into() {
+    let Some(node_modules) = node_modules() else {
+        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        return;
+    };
+    let root = std::env::temp_dir().join(format!("rbxts-rs-watch-luau-{}", std::process::id()));
+    parity::remove_tree(&root);
+    let copy = Copy(root.clone());
+    parity::copy_tree(&fixtures().join("basic"), &root).unwrap();
+    parity::junction(&root.join("node_modules"), &node_modules).unwrap();
+    let plugins = vec![rbxts_test_plugins::by_name("identity-call").expect("the identity-call plugin")];
+    let path = |p: &str| root.join(p).to_string_lossy().replace('\\', "/");
+    // `count` locals from calls the plugin claims: Luau allows 200
+    let big = |count: usize| {
+        let locals: String = (0..count).map(|i| format!("const a{i} = mk();\n")).collect();
+        std::fs::write(
+            root.join("src/shared/big.ts"),
+            format!("declare function mk(): number;\n{locals}export const total = a0 + a1;\n"),
+        )
+        .unwrap();
+    };
+    let output = root.join("out/shared/big.luau");
+    big_stack(|| {
+        let options =
+            PluginOptions { plugins: &plugins, ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
+        let mut session = BuildSession::new(
+            CompileOptions {
+                tsconfig: "tsconfig.json".into(),
+                cwd: root.to_string_lossy().into_owned(),
+                project_options: ProjectOptionLayer::default(),
+                out_dir_override: None,
+                write_partial: false,
+                no_write: false,
+            },
+            &options,
+            true,
+        );
+        big(150);
+        let (report, _) = session.build(&[]);
+        assert!(!report.has_errors(), "{:?}", report.fatal);
+        assert!(report.timings.load_checked > 0);
+        let written = std::fs::read_to_string(&output).unwrap();
+
+        // the rebuild Luau refuses fails, and the old output stays as it was
+        big(205);
+        let (report, _) = session.build(&[path("src/shared/big.ts")]);
+        let refused: Vec<String> = report
+            .files
+            .iter()
+            .flat_map(|f| f.diagnostics.iter())
+            .map(|d| tsrs_compiler::diagnosticwriter::flatten_diagnostic_message(*d, " "))
+            .collect();
+        assert!(
+            refused.iter().any(|m| m.contains("refuses this file") && m.contains("Out of local registers")),
+            "{refused:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), written, "a failing rebuild writes nothing");
+
+        // fixed, it is written
+        big(190);
+        let (report, _) = session.build(&[path("src/shared/big.ts")]);
+        assert!(!report.has_errors(), "{:?}", report.fatal);
+        assert!(std::fs::read_to_string(&output).unwrap().contains("local a189 = mk()"));
+    });
+    drop(copy);
+}
