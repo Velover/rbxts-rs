@@ -3,6 +3,12 @@
 //! rbxts-probe jsdoc-links [-p tsconfig.json] [--files <path substring>]
 //!   Resolves every JSDoc `{@link name}` in the matching files (default: `@flamework-experimental`) with the checker,
 //!   as Flamework's `@metadata macro {@link param intrinsic-...}` detection does.
+//!
+//! rbxts-probe property-order [-p tsconfig.json] [--files <path substring>] [--raw] [--check-first]
+//!   The property order of classes, interfaces, annotated variables and `createGuard<T>()` type arguments: TypeScript
+//!   7's (`--raw`) or the rebuilt TypeScript 5 one (`ts5_property_order`). See `property_order.rs`.
+
+mod property_order;
 
 #[global_allocator]
 static GLOBAL: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
@@ -105,7 +111,19 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let command = args.next().unwrap_or_default();
     let (mut tsconfig, mut filter) = ("tsconfig.json".to_owned(), "@flamework-experimental".to_owned());
+    let (mut raw, mut check_first) = (false, false);
     while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--raw" => {
+                raw = true;
+                continue;
+            }
+            "--check-first" => {
+                check_first = true;
+                continue;
+            }
+            _ => {}
+        }
         match (arg.as_str(), args.next()) {
             ("-p" | "--project", Some(v)) => tsconfig = v,
             ("--files", Some(v)) => filter = v,
@@ -119,8 +137,9 @@ fn main() {
         .stack_size(STACK_SIZE)
         .spawn(move || match command.as_str() {
             "jsdoc-links" => jsdoc_links(tsconfig, &filter),
+            "property-order" => property_order::run(&property_order::Options { tsconfig, filter, raw, check_first }),
             other => {
-                eprintln!("rbxts-probe: unknown command {other:?}; expected jsdoc-links");
+                eprintln!("rbxts-probe: unknown command {other:?}; expected jsdoc-links or property-order");
                 2
             }
         })

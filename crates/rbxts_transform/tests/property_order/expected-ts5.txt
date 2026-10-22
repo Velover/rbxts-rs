@@ -1,0 +1,23 @@
+# typescript 5.9.3 (ts5props.cjs, lines sorted)
+src/augment.ts decl CustomSettings: volume, extra, theme, scale
+src/augment.ts decl Settings: volume, theme, scale
+src/chain.ts decl Alias: size, label, kind
+src/chain.ts decl BaseClass: x, y, z
+src/chain.ts decl Both: b, a
+src/chain.ts decl Boxed: value, size, label, kind
+src/chain.ts decl BoxedLeaf: size, value, label, kind
+src/chain.ts decl DerivedClass: w, x, y, z
+src/chain.ts decl First: a
+src/chain.ts decl Leaf: size, label, kind
+src/chain.ts decl LeafClass: w, x, y, z
+src/chain.ts decl Middle: size, label, kind
+src/chain.ts decl Root: kind, size
+src/chain.ts decl Second: b
+src/chain.ts decl WithComputed: tail, dyn, kind, size
+src/chain.ts var boxedValue: value, size, label, kind
+src/chain.ts var leafValue: size, label, kind
+src/chain.ts var mixedValue: size, label, kind, b, a
+src/display.ts decl Card: title, body, icon, rank
+src/item.ts decl Item: a, b, c, title, body, icon, rank
+src/merge.ts decl Settings: volume, theme, scale
+src/merge.ts decl Settings: volume, theme, scale

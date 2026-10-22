@@ -568,9 +568,12 @@ version = "0.0.0"
 dependencies = [
  "mimalloc-safe",
  "rbxts_project",
+ "rbxts_transform",
  "tsrs_ast",
+ "tsrs_checker",
  "tsrs_compiler",
  "tsrs_core",
+ "tsrs_scanner",
 ]
 
 [[package]]
