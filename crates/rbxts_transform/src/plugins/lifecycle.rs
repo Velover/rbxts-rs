@@ -8,6 +8,7 @@
 use std::cell::{OnceCell, RefCell};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use rustc_hash::FxHashSet;
@@ -16,7 +17,13 @@ use serde_json::{Map, Value};
 use rbxts_luau::LateStrings;
 use rbxts_plugin::erased::{DynPlugin, ErasedPart, ErasedShared, ErasedState};
 use rbxts_plugin::{
-    BuildKind, ChangeSet, FileIndex, FinishBackend, FinishCx, PluginInfo, SetupBackend, SetupCx, StateOrigin, Utf16Pos,
+    BuildKind, ChangeSet, DirEntry, FileIndex, FinishBackend, FinishCx, GlobMatcher, PluginInfo, SetupBackend,
+    SetupCx, StateOrigin, Utf16Pos,
+};
+
+use crate::build::plugin_inputs::{
+    DirRules, EnvSnapshot, FinishRead, RecordedGlob, plain, read_answer, read_dir_now, read_file_now,
+    record_read, valid_env_name,
 };
 use rbxts_project::{ModuleResolver, ProjectServices, ResolvedModuleInfo, nodepath};
 use tsrs_compiler::Program;
@@ -55,6 +62,8 @@ pub enum BuildInput {
     Env { plugin: &'static str, name: String, value: Option<String> },
     /// A `resolve_module` from `setup`.
     Resolution { plugin: &'static str, specifier: String, from: String, resolved: Option<String> },
+    /// A glob matched through `record_glob`, with its matcher and answer.
+    Glob { plugin: &'static str, glob: RecordedGlob },
 }
 
 /// One plugin's hook times.
@@ -174,6 +183,8 @@ pub(crate) struct Setup<'s> {
     pub plugin: &'static str,
     pub entry: Option<&'s Map<String, Value>>,
     pub resolver: &'s OnceCell<ModuleResolver>,
+    /// The build's environment snapshot (`Cx::env` reads the same).
+    pub env: &'s EnvSnapshot,
     /// What setup read (a `RefCell`: `resolve_module` takes `&self`).
     pub inputs: RefCell<Vec<BuildInput>>,
     pub messages: &'s mut Vec<String>,
@@ -232,13 +243,29 @@ impl SetupBackend for Setup<'_> {
     }
 
     fn env(&mut self, name: &str) -> Option<String> {
-        let value = std::env::var(name).ok();
+        // a name the environment cannot hold is unset (on Windows `std::env::var` would answer for the hidden `=C:`
+        // variables), as `Cx::env` has it; nothing to record
+        if !valid_env_name(name) {
+            return None;
+        }
+        let value = self.env.get(name);
         self.inputs.borrow_mut().push(BuildInput::Env {
             plugin: self.plugin,
             name: name.to_owned(),
             value: value.clone(),
         });
         value
+    }
+
+    fn record_glob(&mut self, root: &Path, pattern: &str, matcher: Arc<dyn GlobMatcher>) -> Vec<String> {
+        let root = plain(&plugin_path(self.services, root));
+        let glob = RecordedGlob::record(0, root, pattern, matcher);
+        let answer = glob.answer.clone();
+        let mut inputs = self.inputs.borrow_mut();
+        // one plugin's records with an equal (root, pattern) are one record
+        inputs.retain(|input| !matches!(input, BuildInput::Glob { glob: g, .. } if g.same_record(&glob)));
+        inputs.push(BuildInput::Glob { plugin: self.plugin, glob });
+        answer
     }
 
     fn build_kind(&self) -> BuildKind {
@@ -302,6 +329,11 @@ pub(crate) struct CommitQueue {
     pub removals: Vec<(&'static str, String)>,
     /// Glob roots to watch.
     pub watch_dirs: Vec<(&'static str, String)>,
+    /// `remove_empty_dir` calls (checked at the call): removed in step 3, last, when empty.
+    pub empty_dirs: Vec<(&'static str, String)>,
+    /// What `finish` read through the compiler (`record_glob`, `read_dir`, `exists`, `read_file`), for the
+    /// watcher.
+    pub reads: Vec<FinishRead>,
 }
 
 /// The compiler's side of `FinishCx` for one plugin.
@@ -309,6 +341,10 @@ pub(crate) struct Finish<'s> {
     pub program: &'static Program,
     pub services: &'s ProjectServices,
     pub plugin: &'static str,
+    /// The plugin's index among the active plugins.
+    pub index: usize,
+    /// The directory rules of `remove_empty_dir`.
+    pub rules: &'s DirRules,
     /// Where outputs go (the override when there is one).
     pub out_dir: &'s str,
     /// The path keys of this build's outputs (Luau, assets, declaration and transformed outputs).
@@ -406,6 +442,50 @@ impl FinishBackend for Finish<'_> {
         if let Some(path) = self.checked_path(path, "watched directory") {
             self.queue.watch_dirs.push((self.plugin, path));
         }
+    }
+
+    fn record_glob(&mut self, root: &Path, pattern: &str, matcher: Arc<dyn GlobMatcher>) -> Vec<String> {
+        // only read: the root is not path-checked (Flamework's is the package root)
+        let root = plain(&plugin_path(self.services, root));
+        let glob = RecordedGlob::record(self.index, root, pattern, matcher);
+        let answer = glob.answer.clone();
+        record_read(&mut self.queue.reads, FinishRead::Glob(glob));
+        answer
+    }
+
+    fn remove_empty_dir(&mut self, path: &Path) -> Result<(), String> {
+        let absolute = plugin_path(self.services, path);
+        match self.rules.refusal(self.services, &absolute, self.luau_outputs) {
+            Some(why) => self.errors.push(format!("plugin `{}`: remove_empty_dir: {absolute} {why}", self.plugin)),
+            None => {
+                if !self.queue.empty_dirs.iter().any(|(_, queued)| *queued == absolute) {
+                    self.queue.empty_dirs.push((self.plugin, absolute));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn read_dir(&mut self, path: &Path) -> Option<Vec<DirEntry>> {
+        let path = plain(&plugin_path(self.services, path));
+        let answer = read_dir_now(Path::new(&path));
+        record_read(&mut self.queue.reads, FinishRead::ReadDir { plugin: self.index, path, answer: answer.clone() });
+        answer
+    }
+
+    fn exists(&mut self, path: &Path) -> bool {
+        let path = plain(&plugin_path(self.services, path));
+        let answer = Path::new(&path).exists();
+        record_read(&mut self.queue.reads, FinishRead::Exists { plugin: self.index, path, answer });
+        answer
+    }
+
+    fn read_file(&mut self, path: &Path) -> io::Result<Option<String>> {
+        let path = plain(&plugin_path(self.services, path));
+        let result = read_file_now(Path::new(&path));
+        let answer = read_answer(&result);
+        record_read(&mut self.queue.reads, FinishRead::ReadFile { plugin: self.index, path, answer });
+        result
     }
 
     fn warn_at(&mut self, file: FileIndex, pos: Utf16Pos, message: &str, hint: Option<&str>) {

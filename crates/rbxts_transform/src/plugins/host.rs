@@ -18,6 +18,7 @@ use tsrs_core::P;
 use super::HookKind;
 use super::facts::{self, FileLines};
 use super::lifecycle::ActivePlugin;
+use crate::build::plugin_inputs::EnvSnapshot;
 
 /// Where `specifier` resolves from `from_file` (an absolute path; the file need not exist): the program's own
 /// resolution when a program file imports it from there, else a resolver with the program's options.
@@ -84,6 +85,10 @@ pub struct HookTime {
 pub struct PluginHost {
     pub(crate) program: &'static Program,
     pub(crate) plugins: Vec<HostPlugin>,
+    /// Each plugin's `diagnostic_source()`.
+    pub(crate) sources: Vec<Option<&'static str>>,
+    /// The build's environment snapshot (`Cx::env`; `SetupCx::env` reads the same).
+    pub(crate) env: Arc<EnvSnapshot>,
     /// Any call interest at all: the call claim points return at once without one.
     pub(crate) any_calls: bool,
     /// Some plugin classifies callee symbols.
@@ -128,6 +133,8 @@ impl PluginHost {
         let mut host = PluginHost {
             program,
             plugins: Vec::with_capacity(active.len()),
+            sources: active.iter().map(|plugin| plugin.plugin.diagnostic_source()).collect(),
+            env: Arc::default(),
             any_calls: false,
             any_symbol: false,
             receiver_methods: FxHashSet::default(),

@@ -8,9 +8,12 @@
 //!    `SourceFile` objects), so only edited files are parsed again. (tsrs's `reuse_program` would keep the old
 //!    module resolution: an import that failed to resolve stays unresolved after its package is installed.)
 //! 2. **Decide the files to transform** ([`super::graph`]): every project file in a clean build, after a change of
-//!    the salt (compiler, options, configs, Rojo files, plugin list), after a plugin's `setup` re-ran, or in an
-//!    incremental build with plugins (their file parts are not persisted); otherwise roblox-ts's closure with
-//!    TypeScript's global rule and the augmentation edges, plus the project files whose output is missing.
+//!    the salt (compiler, options, configs, Rojo files, plugin list), after a plugin's `setup` re-ran or read a
+//!    changed build input; otherwise roblox-ts's closure with TypeScript's global rule and the augmentation edges,
+//!    plus the project files whose output is missing, the files without a cached part for every plugin (an
+//!    incremental build brings the parts the plugins encoded, [`super::state`]), the files whose recorded
+//!    `Cx::env` reads differ (a new process) or whose recorded `Cx::record_glob` answers differ (watch; a new
+//!    process has no matcher and transforms them all) ([`super::plugin_inputs`]).
 //! 3. **Check** those files (the others are unchanged since a build without errors).
 //! 4. **Plugins:** per plugin, `rebuild_start` on a watch rebuild with a kept `Shared` and no changed build input, or
 //!    `setup` on a working copy of the committed state (`default_state()` for clean and incremental builds).
@@ -18,8 +21,12 @@
 //! 5. **Transform** the files; 6. plugin **`finish`** with the parts of all current files (cached for the files
 //!    not transformed); 7. **render**, and re-render kept files whose late strings changed value;
 //! 8. **commit** (no errors only): Luau and assets, artifacts, deletions (stale outputs, artifacts of the last build
-//!    not written by this one, removals), plugin state files, then the incremental state; 9. the working states
-//!    and `Shared`s become the committed ones, with every file's facts, parts and late values.
+//!    not written by this one, removals, the directories those stale artifacts emptied, `remove_empty_dir`s),
+//!    plugin state files, then the incremental state (with each file's encoded parts); 9. the working states and
+//!    `Shared`s become the committed ones, with every file's facts, parts, late values and recorded inputs.
+//!
+//! A cached file whose late strings change value is rendered again from its kept Luau; one with no Luau kept (its
+//! parts came from the incremental state) makes the build start over once, transforming it.
 //!
 //! A build that does not commit leaves the committed state as it was: the next build diffs against the last
 //! committed one, re-runs `setup` where this one made a new `Shared`, and gets the changes of both.
@@ -44,7 +51,11 @@ use tsrs_diagnostics::Category;
 
 use super::graph::{self, FileFacts, Version};
 use super::outputs::{self, OutputInputs};
-use super::state::{self, DiskState};
+use super::plugin_inputs::{
+    DirRules, DiskInput, EnvSnapshot, FileInputs, FinishRead, InputWatch, RecordedGlob, plain, remove_emptied_dirs,
+    remove_queued_dirs,
+};
+use super::state::{self, DiskState, FileRecord};
 use crate::classes::macro_manager::MacroManager;
 use crate::classes::multi_transform_state::MultiTransformState;
 use crate::compile::{
@@ -87,6 +98,54 @@ struct CommittedFile {
     /// Its load-check mark, kept with `ast` when a plugin emitted into it: a late string's new value can decide whether
     /// Luau accepts the re-rendered file (a folded comparison, a dead branch).
     load_check: Option<LoadCheck>,
+    /// What its hooks read through `Cx::env` and `Cx::record_glob`.
+    inputs: FileInputs,
+    /// Per active plugin, the part's encoded bytes (made for the incremental state, or read from it).
+    encoded: Option<Vec<Option<Vec<u8>>>>,
+}
+
+impl CommittedFile {
+    fn new(facts: FileFacts) -> CommittedFile {
+        CommittedFile {
+            facts,
+            parts: Vec::new(),
+            late: Vec::new(),
+            ast: None,
+            load_check: None,
+            inputs: FileInputs::default(),
+            encoded: None,
+        }
+    }
+
+    /// A file of the incremental state. It keeps its parts when every plugin's decodes, its `Cx::env` reads read
+    /// the same and it recorded no glob (a glob's matcher is not persisted); otherwise it has none, so it is
+    /// transformed again.
+    fn from_disk(facts: FileFacts, record: FileRecord, active: &[ActivePlugin<'_>], env: &EnvSnapshot) -> CommittedFile {
+        let inputs = FileInputs {
+            env: record.env,
+            globs: record
+                .globs
+                .into_iter()
+                .map(|(plugin, root, pattern, answer)| RecordedGlob { plugin, root, pattern, matcher: None, answer })
+                .collect(),
+        };
+        let reusable = !active.is_empty()
+            && record.parts.len() == active.len()
+            && inputs.globs.is_empty()
+            && !inputs.env_changed(env);
+        let parts: Vec<Option<ErasedPart>> = if reusable {
+            let decoded: Option<Vec<ErasedPart>> = active
+                .iter()
+                .zip(&record.parts)
+                .map(|(plugin, bytes)| plugin.plugin.decode_file_part(bytes.as_deref()?))
+                .collect();
+            decoded.map(|parts| parts.into_iter().map(Some).collect()).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let encoded = (!parts.is_empty()).then_some(record.parts);
+        CommittedFile { facts, parts, late: record.late, ast: None, load_check: None, inputs, encoded }
+    }
 }
 
 /// A plugin's committed state, and the `Shared` made from it with the inputs its `setup` read.
@@ -106,8 +165,10 @@ struct Committed {
     artifacts: Vec<String>,
     /// The directories plugins asked to watch (`watch_dir`).
     watch_dirs: Vec<String>,
-    /// Read from the incremental state: no parts, no plugin states.
+    /// Read from the incremental state: no plugin states, parts only where the plugins encoded them.
     from_disk: bool,
+    /// Read from the incremental state: what the plugins' `setup` read.
+    setup_inputs: Option<Vec<DiskInput>>,
 }
 
 /// One project's builds: the committed state, the parsed files and the last program, across builds.
@@ -129,6 +190,10 @@ pub struct BuildSession<'p> {
     disk_checked: bool,
     /// What the last load read (recorded in watch sessions only), kept when the load failed.
     reads: Option<Arc<rbxts_project::ReadLog>>,
+    /// What the last build that ran `finish` read through `FinishCx` (globs, listings, existence, files).
+    finish_reads: Vec<FinishRead>,
+    /// Cached files to transform in the build's second run (late strings changed value, no Luau kept).
+    retransform: FxHashSet<String>,
 }
 
 /// What one build decided, for reports and events.
@@ -163,6 +228,8 @@ impl<'p> BuildSession<'p> {
             seed: None,
             disk_checked: false,
             reads: None,
+            finish_reads: Vec::new(),
+            retransform: FxHashSet::default(),
         }
     }
 
@@ -272,6 +339,43 @@ impl<'p> BuildSession<'p> {
             .collect()
     }
 
+    /// What the plugins' recorded inputs ask a watcher to watch: the roots of the globs the files recorded and
+    /// `setup` recorded (the last committed build's), and what the last `finish` read (its globs' roots, the
+    /// directories it listed, the paths it tested or read).
+    pub fn recorded_input_watches(&self) -> Vec<InputWatch> {
+        let mut watches = BTreeSet::new();
+        for glob in self.recorded_globs() {
+            watches.insert(InputWatch::Tree(glob.root.clone()));
+        }
+        for read in &self.finish_reads {
+            watches.insert(read.watch());
+        }
+        watches.into_iter().collect()
+    }
+
+    /// Whether a recorded input answers differently now: a glob of a file (that file is transformed again) or of
+    /// `setup` (a changed build input), or a read of the last `finish` (it runs again). With `paths` (events a
+    /// watcher saw), only the inputs one of them may concern are asked (a glob: under its root and accepted by its
+    /// matcher's `affected_by`, or on the way to its root); with `None`, every input.
+    pub fn recorded_inputs_changed(&self, paths: Option<&[String]>) -> bool {
+        let paths: Option<Vec<String>> = paths.map(|paths| paths.iter().map(|p| plain(p)).collect());
+        let concerned =
+            |test: &dyn Fn(&str) -> bool| paths.as_ref().is_none_or(|paths| paths.iter().any(|p| test(p)));
+        self.recorded_globs().any(|glob| concerned(&|p| glob.concerned_by(p)) && glob.changed())
+            || self.finish_reads.iter().any(|read| concerned(&|p| read.concerned_by(p)) && read.changed())
+    }
+
+    /// The globs of the last committed build's files and setup that have their matcher.
+    fn recorded_globs(&self) -> impl Iterator<Item = &RecordedGlob> {
+        let committed = self.committed.as_ref();
+        let files = committed.into_iter().flat_map(|c| c.files.values()).flat_map(|f| &f.inputs.globs);
+        let setup = committed.into_iter().flat_map(|c| &c.plugins).flat_map(|p| &p.inputs).filter_map(|input| match input {
+            BuildInput::Glob { glob, .. } => Some(glob),
+            _ => None,
+        });
+        files.chain(setup).filter(|glob| glob.matcher.is_some())
+    }
+
     /// The directories plugins asked the last committed build to watch (`FinishCx::watch_dir`).
     pub fn plugin_watch_dirs(&self) -> Vec<String> {
         self.committed.as_ref().map_or_else(Vec::new, |c| c.watch_dirs.clone())
@@ -292,9 +396,17 @@ impl<'p> BuildSession<'p> {
 
     /// One build. `touched`: the paths a watcher saw change since the last build (empty for the first build).
     pub fn build(&mut self, touched: &[String]) -> (CompileReport, BuildSummary) {
+        let rebuilds = self.rebuilds;
         let committed = self.committed.take();
         let last = self.last.take();
-        let (report, summary, committed, last) = self.run(touched, committed, last);
+        let (mut report, mut summary, mut committed, mut last) = self.run(touched, committed, last);
+        if !self.retransform.is_empty() {
+            // cached files whose late strings changed value with no Luau kept to render again (their parts came from
+            // the incremental state): the build starts over once, transforming them
+            self.rebuilds = rebuilds;
+            (report, summary, committed, last) = self.run(&[], committed, last);
+            self.retransform.clear();
+        }
         self.committed = committed;
         self.last = last;
         (report, summary)
@@ -395,6 +507,10 @@ impl<'p> BuildSession<'p> {
         let mut report = CompileReport::default();
         let mut summary = BuildSummary::default();
         self.pending.extend(touched.iter().cloned());
+        // the second run of a build (`build`): these files are transformed whatever else decides
+        let retrying = !self.retransform.is_empty();
+        // one snapshot of the process environment for the build: setup and the hooks read the same values
+        let env = Arc::new(EnvSnapshot::default());
         let parses_before = self.cache.parses();
 
         // 1. load the program, over the source cache
@@ -456,6 +572,7 @@ impl<'p> BuildSession<'p> {
                 && disk.compiler == state::compiler_identity()
                 && disk.plugins == plugin_ids
             {
+                let mut records = disk.records;
                 committed = Some(Committed {
                     salt: disk.salt,
                     plugin_ids: disk.plugins,
@@ -463,22 +580,16 @@ impl<'p> BuildSession<'p> {
                         .files
                         .into_iter()
                         .map(|(k, facts)| {
-                            (
-                                k,
-                                CommittedFile {
-                                    facts,
-                                    parts: Vec::new(),
-                                    late: Vec::new(),
-                                    ast: None,
-                                    load_check: None,
-                                },
-                            )
+                            let record = records.remove(&k).unwrap_or_default();
+                            let file = CommittedFile::from_disk(facts, record, &active, &env);
+                            (k, file)
                         })
                         .collect(),
                     plugins: Vec::new(),
                     artifacts: disk.artifacts,
                     watch_dirs: Vec::new(),
                     from_disk: true,
+                    setup_inputs: Some(disk.setup_inputs),
                 });
             }
         }
@@ -505,7 +616,7 @@ impl<'p> BuildSession<'p> {
         let services = &loaded.services;
         let mut all = match &committed {
             None => true,
-            Some(c) => c.salt != salt || c.plugin_ids != plugin_ids || (c.from_disk && !active.is_empty()),
+            Some(c) => c.salt != salt || c.plugin_ids != plugin_ids,
         };
         let mut changes = ChangeSet::default();
         let mut affected = FxHashSet::default();
@@ -528,8 +639,45 @@ impl<'p> BuildSession<'p> {
             }
         }
 
-        // plugins: keep the Shared (rebuild_start) or set up again
         let resolver = OnceCell::new();
+        // an incremental build: what the last process's setup read, read again (a glob's answer is compared once setup
+        // recorded it anew, below)
+        if let Some(inputs) = committed.as_ref().and_then(|c| c.setup_inputs.as_ref())
+            && inputs.iter().any(|input| {
+                input.changed_before_setup(&env, |specifier, from| {
+                    resolve_module_from(project.program, &resolver, specifier, from).map(|r| r.file_name)
+                })
+            })
+        {
+            all = true;
+        }
+        // watch: the globs recorded by files and by setup, matched again after events under their roots
+        if let Some(c) = &committed
+            && !c.from_disk
+            && !self.pending.is_empty()
+        {
+            let pending: Vec<String> = self.pending.iter().map(|p| plain(p)).collect();
+            for (key, file) in &c.files {
+                let changed = file.inputs.globs.iter().any(|glob| {
+                    glob.matcher.is_some() && pending.iter().any(|p| glob.concerned_by(p)) && glob.changed()
+                });
+                if changed {
+                    affected.insert(key.clone());
+                }
+            }
+            // a setup glob that answers differently is a changed build input, named by its root
+            for record in &c.plugins {
+                for input in &record.inputs {
+                    if let BuildInput::Glob { glob, .. } = input
+                        && glob.changed()
+                    {
+                        changes.config_inputs.push(glob.root.clone());
+                    }
+                }
+            }
+        }
+
+        // plugins: keep the Shared (rebuild_start) or set up again
         let mut plans: Vec<Option<(ErasedShared, ErasedState, Vec<BuildInput>)>> = Vec::with_capacity(active.len());
         for plugin in &active {
             let record = committed.as_ref().and_then(|c| c.plugins.iter().find(|r| r.name == plugin.info.name));
@@ -584,7 +732,7 @@ impl<'p> BuildSession<'p> {
                 return (report, summary, committed, Some(loaded));
             }
         };
-        let to_transform: Vec<P<SourceFile>> = if all {
+        let mut to_transform: Vec<P<SourceFile>> = if all {
             files.clone()
         } else {
             let committed = committed.as_ref().expect("a committed build");
@@ -593,7 +741,7 @@ impl<'p> BuildSession<'p> {
                 .copied()
                 .filter(|&file| {
                     let key = file.path().to_string();
-                    if affected.contains(&key) {
+                    if affected.contains(&key) || self.retransform.contains(&key) {
                         return true;
                     }
                     // a file with no cached part for every plugin (it never transformed with them)
@@ -608,6 +756,10 @@ impl<'p> BuildSession<'p> {
                 .collect()
         };
 
+        if !all && !files.is_empty() && to_transform.len() == files.len() {
+            all = true;
+            summary.all = true;
+        }
         report.timings.invalidate = invalidate_start.elapsed();
 
         // 3. check the files to transform
@@ -621,7 +773,7 @@ impl<'p> BuildSession<'p> {
             }
         }
         report.timings.check = start.elapsed();
-        let check_failed = report.diagnostics.iter().any(|d| d.category() == Category::Error);
+        let mut check_failed = report.diagnostics.iter().any(|d| d.category() == Category::Error);
 
         // 4. plugin setup, also when the check failed (explain_checker_diagnostic needs the instances)
         let start = Instant::now();
@@ -648,6 +800,7 @@ impl<'p> BuildSession<'p> {
                     plugin: plugin.info.name,
                     entry: plugin.entry.as_ref(),
                     resolver: &resolver,
+                    env: &env,
                     inputs: Default::default(),
                     messages: &mut report.plugin_messages,
                     warnings: &mut report.warnings,
@@ -686,9 +839,28 @@ impl<'p> BuildSession<'p> {
         if !report.fatal.is_empty() {
             return (report, summary, committed, Some(loaded));
         }
+        // an incremental build whose setup read something else than the last process's (a glob answering
+        // differently): a changed build input, so every file is transformed (and the ones not checked yet checked)
+        if !all
+            && let (Some(run), Some(before)) = (&run, committed.as_ref().and_then(|c| c.setup_inputs.as_ref()))
+            && DiskInput::all_of(run.inputs.iter().flatten()) != *before
+        {
+            all = true;
+            summary.all = true;
+            let transforming: FxHashSet<P<SourceFile>> = to_transform.iter().copied().collect();
+            let unchecked: Vec<P<SourceFile>> = files.iter().copied().filter(|f| !transforming.contains(f)).collect();
+            report.diagnostics.extend(project.check_files(&ctx, &unchecked));
+            if !services.data.options.allow_comment_directives {
+                for &file in &unchecked {
+                    report.diagnostics.extend(comment_directive_diagnostics(file));
+                }
+            }
+            check_failed = report.diagnostics.iter().any(|d| d.category() == Category::Error);
+            to_transform = files.clone();
+        }
         if check_failed {
             if let Some(run) = &run {
-                explain_failures(&mut report, project, services, &run.active, &run.shared, &run.times, &ctx);
+                explain_failures(&mut report, project, services, &run.active, &run.shared, &run.times, &ctx, &env);
             }
             return (report, summary, committed, Some(loaded));
         }
@@ -700,6 +872,7 @@ impl<'p> BuildSession<'p> {
         let mut new_parts: Vec<Vec<Option<ErasedPart>>> = Vec::with_capacity(to_transform.len());
         let mut file_late_keys: Vec<Vec<(usize, String)>> = Vec::with_capacity(to_transform.len());
         let mut load_checks = Vec::with_capacity(to_transform.len());
+        let mut file_inputs: Vec<FileInputs> = Vec::with_capacity(to_transform.len());
         let mut hook_times = None;
         {
             let mut checker = project.program.get_type_checker(&ctx);
@@ -717,14 +890,16 @@ impl<'p> BuildSession<'p> {
                         file_diagnostics.entry(file).or_default().push(d);
                     }
                 }
-                PluginHost::new(
+                let mut host = PluginHost::new(
                     project.program,
                     &run.active,
                     &run.shared,
                     CheckerInfo { index: 0, count: 1 },
                     file_diagnostics,
                     claims_all,
-                )
+                );
+                host.env = Arc::clone(&env);
+                host
             });
             if let Some(host) = &host
                 && !host.unsupported_interests.is_empty()
@@ -741,6 +916,7 @@ impl<'p> BuildSession<'p> {
                 new_parts.push(transformed.parts);
                 file_late_keys.push(transformed.late_keys);
                 load_checks.push(transformed.load_check);
+                file_inputs.push(transformed.inputs);
                 report.files.push(FileOutcome {
                     file_name: file_name.clone(),
                     out_path,
@@ -781,6 +957,7 @@ impl<'p> BuildSession<'p> {
             to_transform.iter().enumerate().map(|(i, &f)| (f, i)).collect();
         let mut late_strings = LateStrings::new();
         let mut queue = CommitQueue::default();
+        let rules = DirRules::new(services, &project.program.options(), &report.out_dir);
         let mut finished = run.is_none();
         if !any_errors && let Some(run) = run.as_mut() {
             let mut luau_outputs = FxHashSet::default();
@@ -818,6 +995,8 @@ impl<'p> BuildSession<'p> {
                     program: project.program,
                     services,
                     plugin: plugin.info.name,
+                    index,
+                    rules: &rules,
                     out_dir: &report.out_dir,
                     luau_outputs: &luau_outputs,
                     late: &mut late_strings,
@@ -873,6 +1052,7 @@ impl<'p> BuildSession<'p> {
             }
             report.fatal.extend(errors);
             finished = report.fatal.is_empty();
+            self.finish_reads = std::mem::take(&mut queue.reads);
         }
         report.timings.plugin_finish = start.elapsed();
         if let Some(run) = &run {
@@ -923,6 +1103,7 @@ impl<'p> BuildSession<'p> {
         let mut rerendered: Vec<(String, String)> = Vec::new();
         // per re-rendered file with a load-check mark: (index in `rerendered`, its file, statement lines, mark)
         let mut rerendered_checks: Vec<(usize, P<SourceFile>, Vec<u32>, &LoadCheck)> = Vec::new();
+        let mut retransform = FxHashSet::default();
         if finished && let Some(c) = &committed {
             for &file in &files {
                 if transformed_at.contains_key(&file) {
@@ -934,9 +1115,13 @@ impl<'p> BuildSession<'p> {
                 }
                 let name = file.get().file_name();
                 let Some(ast) = &cached.ast else {
-                    report.fatal.push(format!(
-                        "internal error: the late strings of {name} changed value, but its Luau was not kept"
-                    ));
+                    if retrying {
+                        report.fatal.push(format!(
+                            "internal error: the late strings of {name} changed value, but its Luau was not kept"
+                        ));
+                    } else {
+                        retransform.insert(file.path().to_string());
+                    }
                     continue;
                 };
                 // rbxts-rs: rendered as a transformed file is, under the panic guard and with statement lines when a
@@ -954,6 +1139,10 @@ impl<'p> BuildSession<'p> {
                     }
                 }
             }
+        }
+        if !retransform.is_empty() {
+            self.retransform = retransform;
+            return (report, summary, committed, Some(loaded));
         }
         report.timings.render = start.elapsed();
         // Luau's compiler on every file a plugin emitted into, in parallel: an error keeps the file from being written
@@ -1002,6 +1191,7 @@ impl<'p> BuildSession<'p> {
         // 8. commit
         let start = Instant::now();
         let success = !report.has_errors() && finished;
+        let mut records: FxHashMap<String, FileRecord> = FxHashMap::default();
         // the assets' bytes are read before the first write, so a vanished asset fails the build with nothing written
         let asset_bytes = if success && !self.options.no_write {
             match outputs::read_assets(&project_outputs) {
@@ -1059,12 +1249,28 @@ impl<'p> BuildSession<'p> {
                     .map(|c| c.artifacts.iter().filter(|a| !artifacts.contains(a)).cloned().collect())
                     .unwrap_or_default();
                 let disk = state_path.as_ref().map(|path| {
+                    let (records, setup_inputs) = match &run {
+                        Some(run) => (
+                            disk_records(
+                                &run.active,
+                                &files,
+                                &transformed_at,
+                                (&new_parts, &file_late_keys, &file_inputs),
+                                &late_strings,
+                                committed.as_ref(),
+                            ),
+                            DiskInput::all_of(run.inputs.iter().flatten()),
+                        ),
+                        None => Default::default(),
+                    };
                     let state = DiskState {
                         compiler: state::compiler_identity(),
                         plugins: plugin_ids.clone(),
                         salt,
                         files: facts.iter().map(|(k, f)| (k.clone(), f.clone())).collect(),
                         artifacts: artifacts.clone(),
+                        records,
+                        setup_inputs,
                     };
                     (path.as_str(), state)
                 });
@@ -1078,9 +1284,13 @@ impl<'p> BuildSession<'p> {
                     &queue,
                     &stale,
                     &listing,
-                    disk,
+                    &rules,
+                    disk.as_ref().map(|(path, state)| (*path, state)),
                 ) {
                     report.fatal.push(message);
+                }
+                if let Some((_, state)) = disk {
+                    records = state.records;
                 }
             }
         }
@@ -1105,6 +1315,8 @@ impl<'p> BuildSession<'p> {
             to_transform.iter().copied().zip(file_late_keys).collect();
         let mut checks_by_file: FxHashMap<P<SourceFile>, Option<LoadCheck>> =
             to_transform.iter().copied().zip(load_checks).collect();
+        let mut inputs_by_file: FxHashMap<P<SourceFile>, FileInputs> =
+            to_transform.iter().copied().zip(file_inputs).collect();
         let program_files: FxHashMap<String, P<SourceFile>> =
             project.program.source_files().iter().map(|&f| (f.path().to_string(), f)).collect();
         for (key, facts) in facts {
@@ -1117,11 +1329,16 @@ impl<'p> BuildSession<'p> {
                         .collect();
                     let ast = if self.watch && !late.is_empty() { asts_by_file.remove(&file).flatten() } else { None };
                     let load_check = if ast.is_some() { checks_by_file.remove(&file).flatten() } else { None };
-                    CommittedFile { facts, parts, late, ast, load_check }
+                    let inputs = inputs_by_file.remove(&file).unwrap_or_default();
+                    let encoded = records.remove(&key).map(|record| record.parts);
+                    CommittedFile { facts, parts, late, ast, load_check, inputs, encoded }
                 }
                 None => match old_files.remove(&key) {
                     Some(mut old) => {
                         old.facts = facts;
+                        if let Some(record) = records.remove(&key) {
+                            old.encoded = Some(record.parts);
+                        }
                         for (_, k, value) in &mut old.late {
                             if let Some(v) = late_strings.get(k) {
                                 *value = v.to_owned();
@@ -1129,7 +1346,7 @@ impl<'p> BuildSession<'p> {
                         }
                         old
                     }
-                    None => CommittedFile { facts, parts: Vec::new(), late: Vec::new(), ast: None, load_check: None },
+                    None => CommittedFile::new(facts),
                 },
             };
             new_files.insert(key, entry);
@@ -1152,6 +1369,7 @@ impl<'p> BuildSession<'p> {
             artifacts: queue.artifacts.iter().map(|(_, p, _)| p.clone()).collect(),
             watch_dirs: queue.watch_dirs.iter().map(|(_, p)| p.clone()).collect(),
             from_disk: false,
+            setup_inputs: None,
         };
         summary.changes = changes;
         self.pending.clear();
@@ -1171,7 +1389,8 @@ impl<'p> BuildSession<'p> {
         queue: &CommitQueue,
         stale: &[String],
         listing: &outputs::Listing,
-        disk: Option<(&str, DiskState)>,
+        rules: &DirRules,
+        disk: Option<(&str, &DiskState)>,
     ) -> Result<(), String> {
         let services = &loaded.services;
         // this build's artifacts, state files and incremental state are kept too
@@ -1199,6 +1418,9 @@ impl<'p> BuildSession<'p> {
         let deleted = commit_removals(queue, stale)?;
         summary.deleted.extend(deleted.iter().cloned());
         report.artifacts_deleted.extend(deleted);
+        // the directories the stale artifacts leave empty, then the plugins' `remove_empty_dir`s
+        report.artifacts_deleted.extend(remove_emptied_dirs(services, rules, stale)?);
+        report.artifacts_deleted.extend(remove_queued_dirs(&queue.empty_dirs)?);
         // 4. plugin state files, then the incremental state
         let written = commit_state_files(queue)?;
         summary.written.extend(written.iter().cloned());
@@ -1314,5 +1536,64 @@ fn input_changed(
         BuildInput::Resolution { specifier, from, resolved, .. } => {
             resolve_module_from(program, resolver, specifier, from).map(|r| r.file_name) != *resolved
         }
+        BuildInput::Glob { glob, .. } => glob.changed(),
     }
+}
+
+/// What the incremental state keeps of each project file with plugins ([`FileRecord`]): the parts encoded (a cached
+/// file's bytes as read or made before), the late strings with this build's values, the recorded inputs.
+#[allow(clippy::type_complexity)]
+fn disk_records(
+    active: &[ActivePlugin<'_>],
+    files: &[P<SourceFile>],
+    transformed_at: &FxHashMap<P<SourceFile>, usize>,
+    (parts, late_keys, inputs): (&[Vec<Option<ErasedPart>>], &[Vec<(usize, String)>], &[FileInputs]),
+    late: &LateStrings,
+    committed: Option<&Committed>,
+) -> FxHashMap<String, FileRecord> {
+    let encode = |parts: &[Option<ErasedPart>]| -> Vec<Option<Vec<u8>>> {
+        if parts.len() != active.len() {
+            return Vec::new();
+        }
+        // a plugin's encode never panics by contract; one that does stores the file without a part
+        active
+            .iter()
+            .zip(parts)
+            .map(|(plugin, part)| {
+                let part = part.as_ref()?;
+                catch_unwind(AssertUnwindSafe(|| plugin.plugin.encode_file_part(part))).ok().flatten()
+            })
+            .collect()
+    };
+    let value = |key: &str| late.get(key).unwrap_or_default().to_owned();
+    let globs = |inputs: &FileInputs| -> Vec<(usize, String, String, Vec<String>)> {
+        inputs.globs.iter().map(|g| (g.plugin, g.root.clone(), g.pattern.clone(), g.answer.clone())).collect()
+    };
+    let mut records = FxHashMap::default();
+    for &file in files {
+        let key = file.path().to_string();
+        let record = match transformed_at.get(&file) {
+            Some(&t) => FileRecord {
+                parts: encode(&parts[t]),
+                late: late_keys[t].iter().map(|(p, k)| (*p, k.clone(), value(k))).collect(),
+                env: inputs[t].env.clone(),
+                globs: globs(&inputs[t]),
+            },
+            None => {
+                let Some(cached) = committed.and_then(|c| c.files.get(&key)) else { continue };
+                FileRecord {
+                    parts: cached.encoded.clone().unwrap_or_else(|| encode(&cached.parts)),
+                    late: cached
+                        .late
+                        .iter()
+                        .map(|(p, k, v)| (*p, k.clone(), late.get(k).map_or_else(|| v.clone(), str::to_owned)))
+                        .collect(),
+                    env: cached.inputs.env.clone(),
+                    globs: globs(&cached.inputs),
+                }
+            }
+        };
+        records.insert(key, record);
+    }
+    records
 }

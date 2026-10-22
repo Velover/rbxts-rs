@@ -127,18 +127,26 @@ Every build loads the program (over a cache of parsed files) and the project set
 resolution sees packages installed or upgraded since the last build.
 
 - **What is transformed:** every file after a change of the salt (the compiler binary, options, tsconfig and Rojo
-  texts, the plugin list and tsconfig entries) or when a plugin's `setup` runs again; otherwise roblox-ts's closure
+  texts, the plugin list and tsconfig entries) or when a plugin's `setup` runs again or read a changed build input
+  (a file, an environment variable, a module resolution, a glob's matches); otherwise roblox-ts's closure
   (changed files plus everything that reaches them through the reversed references), TypeScript's global rule (a
   changed or reached script file, `declare global` or ambient module declaration invalidates every file), the
-  augmentation edges, case-only renames, and the files whose output is missing. `assumeChangesOnlyAffectDirectDependencies` is refused.
-- **What is kept:** each file's facts (text version, references, augmentations), its plugin file parts and the late
-  strings its Luau uses (in memory; the Luau of files with late strings, for re-rendering), the plugins' committed
-  states with the `Shared` made from them and the build inputs their `setup` read, and the artifacts of the last
-  build. Only a build without errors commits; a failing build writes nothing and changes none of it.
+  augmentation edges, case-only renames, the files whose output is missing, the files without a cached part for
+  every plugin, and the files whose hooks' recorded inputs changed (`Cx::env` in a new process; `Cx::record_glob`
+  matched again in watch, and always in a new process, which has no matcher). `assumeChangesOnlyAffectDirectDependencies` is refused.
+- **What is kept:** each file's facts (text version, references, augmentations), its plugin file parts, the late
+  strings its Luau uses and what its hooks read (`Cx::env`, `Cx::record_glob`); in memory, the Luau of files with
+  late strings (for re-rendering), the plugins' committed states with the `Shared` made from them and the build
+  inputs their `setup` read, and what the last `finish` read; and the artifacts of the last build. The incremental
+  state keeps the facts, the parts as the plugins encode them (`Plugin::encode_file_part`), the late strings, the
+  hooks' and `setup`'s recorded inputs and the artifacts, so a new process transforms only what changed (a cached
+  file whose late string changes value there, with no Luau kept, makes the build start over once, transforming it).
+  Only a build without errors commits; a failing build writes nothing and changes none of it.
 - **The commit:** Luau and assets, plugin artifacts, then deletions (stale outputs, as roblox-ts's clean of the
   output roots with its `getProjectOutputs` keep set, declaration outputs and both build infos included, plus the
-  include folder; links removed as links; artifacts of the last build that this one did not write), plugin state
-  files, the incremental state last.
+  include folder; links removed as links; artifacts of the last build that this one did not write, and the
+  directories they leave empty inside the artifact roots; then plugins' `remove_empty_dir`s), plugin state files,
+  the incremental state last.
 - **Errors before writes:** the output set (roblox-ts's `getProjectOutputs`: two inputs emitting to one output, an
   output root holding sources) is computed before anything is compiled, and the assets are read before the first
   write, so a failing build writes nothing; only I/O errors can stop a commit midway.
@@ -150,7 +158,9 @@ resolution sees packages installed or upgraded since the last build.
   `node_modules`, its scopes and the type roots for packages added or removed, and for appearing or going themselves
   (also before the first install). A directory watched for the first time is compared with what the build read
   (entries created since the build started, the directory's own modification time, reads the disk now contradicts,
-  program files' times and sizes). A trailing 100 ms debounce, `--usePolling`, `--events json` (`build-start` and
+  program files' times and sizes). Plugins' recorded inputs are watched too (globs' roots recursively, what
+  `finish` listed, tested or read): an event only they care about starts a rebuild when an answer changed (a file's
+  glob transforms that file, a setup glob runs setup, a `finish` read runs `finish`). A trailing 100 ms debounce, `--usePolling`, `--events json` (`build-start` and
   `build-end` lines), and a restart of the watcher process past `RBXTS_WATCH_MEMORY_LIMIT_MB` (default 2048; 0 turns
   it off), since programs are never freed. A crashed rebuild is reported and the next one starts clean.
 

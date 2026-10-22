@@ -1,15 +1,17 @@
 //! `CxBackend` over the transform state (DESIGN §9, §11.3): one [`HookBackend`] per hook call, anchored at the node
 //! being dispatched, with the phase table of `rbxts_plugin::CxBackend` enforced.
 
+use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use rbxts_luau::{Effects, Expr, Stmt, create};
 use rbxts_plugin::erased::DynInstance;
 use rbxts_plugin::{
-    Aborted, AccessPosition, Arg, BinOp, CallKind, CallSite, Callee, Cx, CxBackend, FileInfo, JsDocTag, LocalCounts,
-    LuauIdent, ObjectEdits, PResult, PluginDiagnostic, Utf16Pos, text_literal,
+    Aborted, AccessPosition, Arg, BinOp, CallKind, CallSite, Callee, Cx, CxBackend, FileInfo, GlobMatcher, JsDocTag,
+    LocalCounts, LuauIdent, ObjectEdits, PResult, PluginDiagnostic, Utf16Pos, text_literal,
 };
+use rustc_hash::FxHashMap;
 use rbxts_project::{PackageInfo, ProjectServices, ResolvedModuleInfo};
 use tsrs_ast::{Diagnostic, DiagnosticExt, Kind, Node, SourceFile, Symbol, new_diagnostic};
 use tsrs_checker::Checker;
@@ -262,9 +264,25 @@ pub(crate) fn has_errors_since(state: &TransformState<'_>, index: usize) -> bool
     state.diagnostics.diagnostics[index..].iter().any(|d| d.category() == Category::Error)
 }
 
+/// The sources of plugin diagnostics, by the address of their ad hoc message (each diagnostic gets its own, leaked,
+/// so an address is never reused).
+static SOURCES: Mutex<Option<FxHashMap<usize, &'static str>>> = Mutex::new(None);
+
+fn message_address(diagnostic: P<Diagnostic>) -> Option<usize> {
+    diagnostic.message().map(|message| std::ptr::from_ref(message) as usize)
+}
+
+/// The source a plugin diagnostic names (`PluginDiagnostic::source`, else its plugin's `diagnostic_source()`), for
+/// the reporter's code slot: `error TS <source>: …`. `None` for every other diagnostic.
+pub fn diagnostic_source(diagnostic: P<Diagnostic>) -> Option<&'static str> {
+    let address = message_address(diagnostic)?;
+    SOURCES.lock().unwrap_or_else(PoisonError::into_inner).as_ref()?.get(&address).copied()
+}
+
 /// A plugin diagnostic as a tsrs diagnostic: the node's `getStart()` to its end, the hint on a line of its own,
-/// related information attached.
-pub(crate) fn to_diagnostic(diagnostic: &PluginDiagnostic) -> P<Diagnostic> {
+/// related information attached. `plugin_source` is the plugin's `diagnostic_source()`; the diagnostic's own
+/// source wins over it.
+pub(crate) fn to_diagnostic(diagnostic: &PluginDiagnostic, plugin_source: Option<&'static str>) -> P<Diagnostic> {
     let at = |node: P<Node>, message: String, category: Category| {
         let (file, range) = node_range(node);
         let d = new_diagnostic(file, range, new_ad_hoc_message(&message), &[]);
@@ -278,6 +296,11 @@ pub(crate) fn to_diagnostic(diagnostic: &PluginDiagnostic) -> P<Diagnostic> {
         None => diagnostic.message.clone(),
     };
     let d = at(diagnostic.node, message, diagnostic.category);
+    if let Some(source) = diagnostic.source.or(plugin_source)
+        && let Some(address) = message_address(d)
+    {
+        SOURCES.lock().unwrap_or_else(PoisonError::into_inner).get_or_insert_with(FxHashMap::default).insert(address, source);
+    }
     if !diagnostic.related.is_empty() {
         let related: Vec<P<Diagnostic>> =
             diagnostic.related.iter().map(|(node, message)| at(*node, message.clone(), Category::Message)).collect();
@@ -789,7 +812,44 @@ impl CxBackend for HookBackend<'_, '_> {
             return;
         }
         self.touch();
-        self.state.add_diagnostic(to_diagnostic(&diagnostic));
+        self.state.add_diagnostic(to_diagnostic(&diagnostic, self.host.sources[self.plugin]));
+    }
+
+    // --- build inputs ---
+
+    fn env(&mut self, name: &str) -> Option<String> {
+        // which file first asks about a symbol depends on the checker count: no inputs recorded there
+        if self.phase == Phase::Classify {
+            let message = format!("plugin `{}` called env in {}", self.name(), self.hook.label());
+            self.state.internal_error(self.anchor, &message);
+            return None;
+        }
+        let value = self.host.env.get(name);
+        if crate::build::plugin_inputs::valid_env_name(name) {
+            self.state.plugin_file.inputs.record_env(self.plugin, name, &value);
+        }
+        value
+    }
+
+    fn record_glob(&mut self, root: &Path, pattern: &str, matcher: Arc<dyn GlobMatcher>) -> Vec<String> {
+        if self.phase == Phase::Classify {
+            let message = format!("plugin `{}` called record_glob in {}", self.name(), self.hook.label());
+            self.state.internal_error(self.anchor, &message);
+            return Vec::new();
+        }
+        let text = root.to_string_lossy();
+        let root = if rbxts_project::nodepath::is_absolute(&text) {
+            crate::build::plugin_inputs::plain(&text)
+        } else {
+            crate::build::plugin_inputs::plain(&rbxts_project::nodepath::resolve(&[
+                &self.state.services.data.project_path,
+                &text,
+            ]))
+        };
+        let glob = crate::build::plugin_inputs::RecordedGlob::record(self.plugin, root, pattern, matcher);
+        let answer = glob.answer.clone();
+        self.state.plugin_file.inputs.record_glob(glob);
+        answer
     }
 }
 

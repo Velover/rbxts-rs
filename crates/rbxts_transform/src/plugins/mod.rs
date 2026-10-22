@@ -128,6 +128,7 @@ mod facts;
 mod lowering;
 pub(crate) mod spill;
 
+pub use backend::diagnostic_source;
 pub use host::PluginHost;
 pub use lifecycle::{BuildInput, PluginOptions, PluginTimings};
 

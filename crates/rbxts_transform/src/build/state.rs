@@ -7,8 +7,12 @@
 //! salt (options, configs, Rojo files), each program file's facts, and the artifacts the build wrote. A different
 //! compiler binary or plugin version, or an unreadable file, makes the next build a clean one.
 //!
-//! Plugin file parts are not stored: `rbxts_plugin` has no way to serialise them yet. An incremental build with
-//! plugins therefore transforms every file (with the plugins' states starting fresh, as the API says).
+//! With plugins it also holds, per project file, what the next process needs to skip it ([`FileRecord`]): each
+//! plugin's file part as the plugin encoded it (`Plugin::encode_file_part`, base64), the late strings its Luau
+//! uses with their values, and what its hooks read (`Cx::env` values, `Cx::record_glob` answers); and what the
+//! plugins' `setup` read ([`DiskInput`]). A file whose parts are all there and decode, whose environment reads
+//! the same and which recorded no glob brings its parts to `finish` untransformed (with the plugins' states
+//! starting fresh, as the API says).
 
 use std::path::Path;
 
@@ -16,9 +20,23 @@ use rustc_hash::FxHashMap;
 use serde_json::{Map, Value, json};
 
 use super::graph::{FileFacts, Version};
+use super::plugin_inputs::DiskInput;
 
 /// The state file's format version.
-const FORMAT: u64 = 1;
+const FORMAT: u64 = 2;
+
+/// What the plugins keep of one project file.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FileRecord {
+    /// Per active plugin: the part's bytes, `None` when the plugin could not encode it (empty: no parts).
+    pub parts: Vec<Option<Vec<u8>>>,
+    /// (plugin, namespaced key, value) of each late string its Luau uses.
+    pub late: Vec<(usize, String, String)>,
+    /// (plugin, name, value) of its `Cx::env` reads.
+    pub env: Vec<(usize, String, Option<String>)>,
+    /// (plugin, root, pattern, answer) of its `Cx::record_glob` calls.
+    pub globs: Vec<(usize, String, String, Vec<String>)>,
+}
 
 /// The incremental state of the last committed build.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -32,6 +50,10 @@ pub struct DiskState {
     pub files: FxHashMap<String, FileFacts>,
     /// Plugin artifacts the build wrote (absolute paths).
     pub artifacts: Vec<String>,
+    /// By path key: what the plugins keep of each project file.
+    pub records: FxHashMap<String, FileRecord>,
+    /// What the plugins' `setup` read (sorted, each once).
+    pub setup_inputs: Vec<DiskInput>,
 }
 
 /// The compiler's identity: the running executable's path, size and modification time, plus the roblox-ts version
@@ -63,6 +85,117 @@ fn strings(value: &Value) -> Option<Vec<String>> {
     value.as_array()?.iter().map(|v| v.as_str().map(str::to_owned)).collect()
 }
 
+fn optional_string(value: &Value) -> Option<Option<String>> {
+    match value {
+        Value::Null => Some(None),
+        Value::String(s) => Some(Some(s.clone())),
+        _ => None,
+    }
+}
+
+fn index(value: &Value) -> Option<usize> {
+    usize::try_from(value.as_u64()?).ok()
+}
+
+const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Standard base64 with padding.
+fn base64_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, &b)| n | (u32::from(b) << (16 - 8 * i)));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(BASE64[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// [`base64_encode`]'s inverse; `None` for anything else.
+fn base64_decode(text: &str) -> Option<Vec<u8>> {
+    let bytes = text.as_bytes();
+    if !bytes.len().is_multiple_of(4) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    let chunks = bytes.len() / 4;
+    for (index, chunk) in bytes.chunks(4).enumerate() {
+        let padding = chunk.iter().rev().take_while(|&&b| b == b'=').count();
+        if padding > 2 || (padding > 0 && index + 1 != chunks) {
+            return None;
+        }
+        let mut n = 0u32;
+        for (i, &b) in chunk[..4 - padding].iter().enumerate() {
+            let value = BASE64.iter().position(|&c| c == b)? as u32;
+            n |= value << (18 - 6 * i);
+        }
+        for i in 0..3 - padding {
+            out.push((n >> (16 - 8 * i)) as u8);
+        }
+    }
+    Some(out)
+}
+
+impl FileRecord {
+    fn is_empty(&self) -> bool {
+        self.parts.is_empty() && self.late.is_empty() && self.env.is_empty() && self.globs.is_empty()
+    }
+
+    fn read(file: &Value) -> Option<FileRecord> {
+        let list = |name: &str| file.get(name).map_or(Some(&[][..]), |v| v.as_array().map(Vec::as_slice));
+        Some(FileRecord {
+            parts: list("parts")?
+                .iter()
+                .map(|p| match p {
+                    Value::Null => Some(None),
+                    Value::String(s) => base64_decode(s).map(Some),
+                    _ => None,
+                })
+                .collect::<Option<_>>()?,
+            late: list("late")?
+                .iter()
+                .map(|l| Some((index(l.get(0)?)?, l.get(1)?.as_str()?.to_owned(), l.get(2)?.as_str()?.to_owned())))
+                .collect::<Option<_>>()?,
+            env: list("env")?
+                .iter()
+                .map(|e| Some((index(e.get(0)?)?, e.get(1)?.as_str()?.to_owned(), optional_string(e.get(2)?)?)))
+                .collect::<Option<_>>()?,
+            globs: list("globs")?
+                .iter()
+                .map(|g| {
+                    Some((
+                        index(g.get(0)?)?,
+                        g.get(1)?.as_str()?.to_owned(),
+                        g.get(2)?.as_str()?.to_owned(),
+                        strings(g.get(3)?)?,
+                    ))
+                })
+                .collect::<Option<_>>()?,
+        })
+    }
+
+    fn write(&self, file: &mut Map<String, Value>) {
+        if !self.parts.is_empty() {
+            let parts = self.parts.iter().map(|p| p.as_deref().map_or(Value::Null, |b| json!(base64_encode(b))));
+            file.insert("parts".into(), Value::Array(parts.collect()));
+        }
+        if !self.late.is_empty() {
+            file.insert("late".into(), json!(self.late.iter().map(|(p, k, v)| json!([p, k, v])).collect::<Vec<_>>()));
+        }
+        if !self.env.is_empty() {
+            file.insert("env".into(), json!(self.env.iter().map(|(p, n, v)| json!([p, n, v])).collect::<Vec<_>>()));
+        }
+        if !self.globs.is_empty() {
+            let globs = self.globs.iter().map(|(p, root, pattern, answer)| json!([p, root, pattern, answer]));
+            file.insert("globs".into(), Value::Array(globs.collect()));
+        }
+    }
+}
+
 impl DiskState {
     /// Reads the state; `None` when it is missing, unreadable or of another format.
     pub fn read(path: &str) -> Option<DiskState> {
@@ -78,7 +211,12 @@ impl DiskState {
             .map(|p| Some((p.get(0)?.as_str()?.to_owned(), p.get(1)?.as_str()?.to_owned())))
             .collect::<Option<Vec<_>>>()?;
         let mut files = FxHashMap::default();
+        let mut records = FxHashMap::default();
         for (key, file) in value.get("files")?.as_object()? {
+            let record = FileRecord::read(file)?;
+            if !record.is_empty() {
+                records.insert(key.clone(), record);
+            }
             files.insert(
                 key.clone(),
                 FileFacts {
@@ -96,6 +234,11 @@ impl DiskState {
             salt: Version::from_hex(value.get("salt")?.as_str()?)?,
             files,
             artifacts: strings(value.get("artifacts")?)?,
+            records,
+            setup_inputs: match value.get("setup") {
+                Some(inputs) => inputs.as_array()?.iter().map(DiskInput::from_json).collect::<Option<_>>()?,
+                None => Vec::new(),
+            },
         })
     }
 
@@ -106,18 +249,19 @@ impl DiskState {
         let mut files = Map::new();
         for key in keys {
             let f = &self.files[key];
-            files.insert(
-                key.clone(),
-                json!({
-                    "name": f.file_name,
-                    "v": f.version.to_hex(),
-                    "refs": f.references,
-                    "aug": f.augments,
-                    "global": f.global,
-                }),
-            );
+            let mut file = json!({
+                "name": f.file_name,
+                "v": f.version.to_hex(),
+                "refs": f.references,
+                "aug": f.augments,
+                "global": f.global,
+            });
+            if let (Some(record), Some(object)) = (self.records.get(key), file.as_object_mut()) {
+                record.write(object);
+            }
+            files.insert(key.clone(), file);
         }
-        let value = json!({
+        let mut value = json!({
             "format": FORMAT,
             "compiler": self.compiler,
             "plugins": self.plugins.iter().map(|(n, v)| json!([n, v])).collect::<Vec<_>>(),
@@ -125,6 +269,11 @@ impl DiskState {
             "files": Value::Object(files),
             "artifacts": self.artifacts,
         });
+        if !self.setup_inputs.is_empty()
+            && let Some(object) = value.as_object_mut()
+        {
+            object.insert("setup".into(), Value::Array(self.setup_inputs.iter().map(DiskInput::to_json).collect()));
+        }
         let mut bytes = serde_json::to_vec(&value).unwrap_or_default();
         bytes.push(b'\n');
         bytes
@@ -153,12 +302,24 @@ mod tests {
                 global: false,
             },
         );
+        let mut records = FxHashMap::default();
+        records.insert(
+            "e:/p/src/a.ts".to_owned(),
+            FileRecord {
+                parts: vec![Some(vec![0, 1, 2, 255]), None],
+                late: vec![(0, "stamp\u{0}k".into(), "v".into())],
+                env: vec![(1, "X".into(), None), (0, "Y".into(), Some("y".into()))],
+                globs: vec![(0, "E:/p/assets".into(), "*.txt".into(), vec!["b.txt".into(), "a.txt".into()])],
+            },
+        );
         let state = DiskState {
             compiler: "c".into(),
             plugins: vec![("stamp".into(), "0.1.0".into())],
             salt: Version::of("salt"),
             files,
             artifacts: vec!["E:/p/out/x.json".into()],
+            records,
+            setup_inputs: vec![DiskInput::Env { plugin: "stamp".into(), name: "STAMP_PREFIX".into(), value: None }],
         };
         let dir = std::env::temp_dir().join(format!("rbxts-rs-state-{}", std::process::id()));
         let path = dir.join("tsconfig.rbxts-rs.buildinfo");
@@ -168,5 +329,18 @@ mod tests {
         assert_eq!(DiskState::read(&path), Some(state));
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(state_path("E:/p/out/tsconfig.rbxtsc.tsbuildinfo"), "E:/p/out/tsconfig.rbxts-rs.buildinfo");
+    }
+
+    #[test]
+    fn base64_round_trips() {
+        for bytes in [&b""[..], b"f", b"fo", b"foo", b"foob", b"fooba", b"foobar", &[0, 255, 128, 7]] {
+            let text = base64_encode(bytes);
+            assert_eq!(base64_decode(&text).as_deref(), Some(bytes), "{text}");
+        }
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_decode("Zm8"), None);
+        assert_eq!(base64_decode("Z=8="), None);
+        assert_eq!(base64_decode("Zm8=Zm8="), None);
     }
 }

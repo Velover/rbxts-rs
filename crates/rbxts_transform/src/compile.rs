@@ -240,6 +240,8 @@ pub(crate) struct FileTransform {
     pub late_keys: Vec<(usize, String)>,
     /// A plugin emitted into it: Luau's compiler checks it once rendered.
     pub load_check: Option<crate::plugins::spill::LoadCheck>,
+    /// What its hooks read through `Cx::env` and `Cx::record_glob`.
+    pub inputs: crate::build::plugin_inputs::FileInputs,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -283,11 +285,13 @@ pub(crate) fn transform_file(
     let parts = std::mem::take(&mut state.plugin_file.parts);
     let late_keys = std::mem::take(&mut state.plugin_file.late_keys);
     let load_check = state.plugin_file.load_check.take();
-    FileTransform { ast, diagnostics, unsupported, internal_errors, panicked, parts, late_keys, load_check }
+    let inputs = std::mem::take(&mut state.plugin_file.inputs);
+    FileTransform { ast, diagnostics, unsupported, internal_errors, panicked, parts, late_keys, load_check, inputs }
 }
 
 /// The check failed: each plugin may explain the checker diagnostics of the failing files
-/// (`explain_checker_diagnostic`); an explanation replaces the diagnostic.
+/// (`explain_checker_diagnostic`); an explanation replaces the diagnostic. `env` is the build's environment snapshot.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn explain_failures(
     report: &mut CompileReport,
     project: &Project,
@@ -296,6 +300,7 @@ pub(crate) fn explain_failures(
     shared: &[ErasedShared],
     times: &[[HookTime; HookKind::ALL.len()]],
     ctx: &Context,
+    env: &std::sync::Arc<crate::build::plugin_inputs::EnvSnapshot>,
 ) {
     let failing: Vec<P<SourceFile>> = {
         let mut seen = FxHashSet::default();
@@ -313,7 +318,7 @@ pub(crate) fn explain_failures(
     let mut checker = project.program.get_type_checker(ctx);
     let Ok(macro_manager) = MacroManager::new(&mut checker) else { return };
     let mut multi = MultiTransformState::new();
-    let host = PluginHost::new(
+    let mut host = PluginHost::new(
         project.program,
         active,
         shared,
@@ -321,6 +326,7 @@ pub(crate) fn explain_failures(
         FxHashMap::default(),
         false,
     );
+    host.env = std::sync::Arc::clone(env);
     let mut replacements: FxHashMap<P<Diagnostic>, P<Diagnostic>> = FxHashMap::default();
     let mut extra = Vec::new();
     for file in failing {
@@ -350,7 +356,7 @@ pub(crate) fn explain_failures(
                     }
                 };
                 if let Ok(Some(explanation)) = explained {
-                    replacements.insert(diagnostic, to_diagnostic(&explanation));
+                    replacements.insert(diagnostic, to_diagnostic(&explanation, host.sources[plugin]));
                     break;
                 }
             }

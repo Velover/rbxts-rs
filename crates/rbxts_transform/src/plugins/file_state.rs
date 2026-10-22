@@ -122,6 +122,8 @@ pub struct PluginFileState {
     pub parts: Vec<Option<ErasedPart>>,
     /// The late keys the file's Luau uses: (plugin, namespaced key), in first-use order.
     pub late_keys: Vec<(usize, String)>,
+    /// What the file's hooks read through `Cx::env` and `Cx::record_glob`, kept with its parts.
+    pub inputs: crate::build::plugin_inputs::FileInputs,
     late_seen: FxHashSet<String>,
     /// `header` statements, in call order.
     pub header: Vec<Stmt>,
