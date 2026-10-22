@@ -39,11 +39,17 @@
 //!   in the shared `node_modules`, and `@rbxts/greeter` (the fixture's `packages/greeter`) outside any
 //!   `node_modules`, with either the packages or the whole `node_modules` linked. Imports keep their `node_modules`
 //!   paths, as with stock roblox-ts (`guessVirtualPath`).
+//! - `junction_augmentation`: a module augmentation of a linked package, first in root order: its resolution counts
+//!   like an import's, so another file's import through a second link to the package goes through the augmented one.
+//! - `junction_interleaved_imports`, `junction_interleaved_type_refs`: a file's resolutions (imports, or
+//!   `/// <reference types>`) all come before those of the files it reaches, so of two links to one package the one
+//!   the file names wins over the one its dependency names.
 //! - `junction_relative_dependency`: a package imported by relative path while also linked into `node_modules` as a
 //!   dependency: TypeScript 5 learns links from resolutions only, so the import keeps the package's own path.
 //! - `junction_two_links`: two links to one package: imports of both go through the one TypeScript 5 met first.
 //! - `junction_workspace`: a bun / pnpm isolated workspace (`packages/game` and its sibling `packages/core`, both
 //!   linking `@rbxts/services` from `node_modules/.store`): the first link met is game's own.
+//!   `junction_workspace_core_first` imports `core` before `services`: game's link still comes first.
 //! - `literals`: object and array literals, methods in object literals, spread in objects, arrays and calls, every
 //!   iterable kind an array spread accepts. TypeScript 5 lists exported functions first and TypeScript 7 in source
 //!   order, so the fixture declares its exported functions first.
@@ -369,6 +375,26 @@ fn check(area: &'static str) {
 #[test]
 fn junction() {
     check("junction");
+}
+
+#[test]
+fn junction_augmentation() {
+    check("junction_augmentation");
+}
+
+#[test]
+fn junction_interleaved_imports() {
+    check("junction_interleaved_imports");
+}
+
+#[test]
+fn junction_interleaved_type_refs() {
+    check("junction_interleaved_type_refs");
+}
+
+#[test]
+fn junction_workspace_core_first() {
+    check("junction_workspace_core_first");
 }
 
 #[test]

@@ -4,14 +4,18 @@
 //! tsrs has the TypeScript 7 cache (`Program::get_symlink_cache`), which differs in what `guessVirtualPath` sees:
 //! - it keeps a directory's symlinks in a set, where TypeScript 5 keeps them in the order it met them and
 //!   `guessVirtualPath` takes the first;
-//! - it also learns links from the `package.json` dependencies of emitted files, where TypeScript 5.9 learns them from
-//!   module and type reference resolutions only.
+//! - it also learns links from the `package.json` dependencies of emitted files up front. TypeScript 5.9's
+//!   `getSymlinkCache` starts from module and type reference resolutions; its module-specifier generation
+//!   (`getAllModulePathsWorker`, run by declaration emit for one) adds package.json runtime-dependency links later,
+//!   after the resolution-derived ones. That later addition is not reproduced: it can only matter when a real
+//!   directory has no link from a resolution, a narrow corner for roblox-ts output.
 //!
 //! So the map is rebuilt here the TypeScript 5 way (`setSymlinksFromResolutions`, `processResolution`,
-//! `guessDirectorySymlink`, `setSymlinkedDirectory`): over the resolved modules of each file in the order TypeScript
-//! 5's program processes files (each root file depth first: `/// <reference path>`, then `/// <reference types>`,
-//! then imports; then the automatic type directives), then each file's type reference directives in the same order,
-//! then the automatic type directives.
+//! `guessDirectorySymlink`, `setSymlinkedDirectory`): over the resolved modules of each file, in the order TypeScript
+//! 5's program processes files, then each file's type reference directives in the same order, then the automatic type
+//! directives. TypeScript 5 processes each root file depth first (`/// <reference path>`, then `/// <reference types>`,
+//! then imports), then the automatic type directives; a file's whole resolution cache enters the map before the files
+//! it names are processed, so a file's resolutions all come before those of the files it reaches.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsrs_ast::{Kind, SourceFile};
@@ -152,7 +156,9 @@ impl<'p> Walk<'p> {
             self.visit_file_name(&tspath::resolve_tripleslash_reference(&reference.file_name, file.file_name()));
         }
 
-        // processTypeReferenceDirectives
+        // processTypeReferenceDirectives: the file's whole cache goes into the map before the loop that visits the
+        // files it names, so all of a file's resolutions come before its children's
+        let mut children = Vec::new();
         for &reference in file.type_reference_directives() {
             let Some(resolved) =
                 program.get_resolved_type_reference_directive_from_type_reference_directive(reference, file)
@@ -164,11 +170,15 @@ impl<'p> Walk<'p> {
                 resolved_file_name: resolved.resolved_file_name,
             });
             if resolved.is_resolved() {
-                self.visit_file_name(resolved.resolved_file_name);
+                children.push(resolved.resolved_file_name);
             }
         }
+        for child in children.drain(..) {
+            self.visit_file_name(child);
+        }
 
-        // processImportedModules: imports, then string-named module augmentations (not followed)
+        // processImportedModules: imports, then string-named module augmentations (not followed); as above, the file's
+        // resolutions before its children's
         let imports = file.imports();
         let augmentations = file.module_augmentations.get().iter().filter(|a| a.kind() == Kind::StringLiteral);
         let mut names = FxHashSet::default();
@@ -183,8 +193,11 @@ impl<'p> Walk<'p> {
                 });
             }
             if resolved.is_resolved() && index < imports.len() {
-                self.visit_file_name(resolved.resolved_file_name);
+                children.push(resolved.resolved_file_name);
             }
+        }
+        for child in children {
+            self.visit_file_name(child);
         }
     }
 
@@ -202,6 +215,8 @@ impl<'p> Walk<'p> {
         let mut names: Vec<(&str, P<_>)> = resolutions.iter().map(|(key, resolved)| (key.name, *resolved)).collect();
         match &program.options().types {
             Some(types) => names.sort_by_key(|(name, _)| types.iter().position(|t| t == name)),
+            // rbxts-rs: unreachable on tsrs, which (as TypeScript 6+) loads no automatic type directives when `types` is
+            // unset; TypeScript 5 would take the type roots in order, each in directory order
             None => names.sort_by_key(|(name, _)| *name),
         }
         for (_, resolved) in names {
