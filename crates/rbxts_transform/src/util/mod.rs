@@ -33,6 +33,7 @@ pub mod is_valid_method_index_without_call;
 pub mod offset;
 pub mod pointer;
 pub mod symbols;
+pub mod symlink_cache;
 pub mod traversal;
 pub mod types;
 pub mod validate_method_assignment;

@@ -6,13 +6,19 @@
 //! project (everything but `expected*/`) to a temporary directory, links in a `node_modules`, builds it and checks:
 //! - every output equals its `expected/` file byte for byte, and every `expected/` file is produced;
 //! - the build reports nothing: no diagnostic of any category (checker, setup or transform), no warning, no fatal
-//!   error, no unsupported kind, no internal error. A fixture has no expected diagnostics.
+//!   error, no unsupported kind, no internal error. A fixture has no expected diagnostics. As with stock roblox-ts,
+//!   diagnostics in declaration files under `src` are not reported, so a fixture can't test them.
 //!
-//! The `node_modules` (with `@rbxts/compiler-types`, `@rbxts/types`, `@rbxts/testez` and `@rbxts/services`) is
+//! The shared `node_modules` (with `@rbxts/compiler-types`, `@rbxts/types`, `@rbxts/testez` and `@rbxts/services`) is
 //! `RBXTS_RS_FIXTURE_NODE_MODULES` when set (a path that lacks the packages fails the test), else the roblox-ts
 //! tests project's, found as `roblox-ts/tests/node_modules` or `roblox-ts-test/roblox-ts/tests/node_modules` under
 //! the crate's directory or any directory above it. Without one the test is skipped and says so on the terminal
-//! (outside the captured output).
+//! (outside the captured output), and passes, unless `RBXTS_RS_FIXTURE_REQUIRE=1` or `CI` is set: then it fails.
+//!
+//! A fixture's copy links the shared `node_modules` in as its `node_modules`, or, with a `links.json`, makes the
+//! links that describes, in each of its layouts (see [`check`]). Linked `@rbxts/types` means no type counts as a
+//! Roblox type (`is_in_rbxts_types`, as in stock roblox-ts), so the fixtures can't exercise the Roblox-type paths
+//! (wrapping, the `instanceof` diagnostic).
 //!
 //! - `binding`: destructuring in declarations (`export let` and hoisted names included), parameters (rest tuples
 //!   too) and assignments (optimized, nested, below a rest element, used as values), over arrays, tuples, LuaTuple
@@ -31,8 +37,13 @@
 //!   and entities, `@jsx` / `@jsxFrag` pragmas, and the JSX factory import kept alive when only JSX uses it.
 //! - `junction`: static and dynamic imports of packages behind junctions (symlinks elsewhere): `@rbxts/services`
 //!   in the shared `node_modules`, and `@rbxts/greeter` (the fixture's `packages/greeter`) outside any
-//!   `node_modules`, with either the packages or the whole `node_modules` linked (see `check_junction`). Imports keep
-//!   their `node_modules` paths, as with stock roblox-ts (`guessVirtualPath`).
+//!   `node_modules`, with either the packages or the whole `node_modules` linked. Imports keep their `node_modules`
+//!   paths, as with stock roblox-ts (`guessVirtualPath`).
+//! - `junction_relative_dependency`: a package imported by relative path while also linked into `node_modules` as a
+//!   dependency: TypeScript 5 learns links from resolutions only, so the import keeps the package's own path.
+//! - `junction_two_links`: two links to one package: imports of both go through the one TypeScript 5 met first.
+//! - `junction_workspace`: a bun / pnpm isolated workspace (`packages/game` and its sibling `packages/core`, both
+//!   linking `@rbxts/services` from `node_modules/.store`): the first link met is game's own.
 //! - `literals`: object and array literals, methods in object literals, spread in objects, arrays and calls, every
 //!   iterable kind an array spread accepts. TypeScript 5 lists exported functions first and TypeScript 7 in source
 //!   order, so the fixture declares its exported functions first.
@@ -95,9 +106,16 @@ fn node_modules() -> Result<PathBuf, String> {
         })
 }
 
-/// Says why a test is skipped on the terminal: written to stderr directly, since the test harness captures (and,
-/// for a passing test, drops) `eprintln!`.
-fn announce_skip(test: &str, why: &str) {
+/// Fixtures must run (a missing `node_modules` fails them): `RBXTS_RS_FIXTURE_REQUIRE=1`, or `CI` set.
+fn fixtures_required() -> bool {
+    std::env::var_os("RBXTS_RS_FIXTURE_REQUIRE").is_some_and(|v| v == "1") || std::env::var_os("CI").is_some()
+}
+
+/// Skips a test without a `node_modules`, saying why on the terminal: written to stderr directly, since the test
+/// harness captures (and, for a passing test, drops) `eprintln!`. A skipped test passes, unless
+/// [`fixtures_required`].
+fn skip(test: &str, why: &str) {
+    assert!(!fixtures_required(), "fixtures::{test}: {why} (fixtures are required: CI or RBXTS_RS_FIXTURE_REQUIRE=1)");
     let _ = writeln!(std::io::stderr(), "fixtures::{test} skipped: {why}");
 }
 
@@ -158,7 +176,7 @@ struct TempProject {
 }
 
 impl TempProject {
-    /// A copy of `fixture` without its `expected*/` folders (and any `node_modules` or `out`).
+    /// A copy of `fixture` without its `expected*/` folders and `links.json` (and any `node_modules` or `out`).
     fn copy_of(fixture: &Path, label: &str) -> TempProject {
         let root = std::env::temp_dir().join(format!("rbxts-rs-fixture-{label}-{}", std::process::id()));
         // a copy left by a killed run of the same process id
@@ -168,7 +186,7 @@ impl TempProject {
         for entry in std::fs::read_dir(fixture).unwrap() {
             let entry = entry.unwrap();
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with("expected") || name == "node_modules" || name == "out" {
+            if name.starts_with("expected") || name == "links.json" || name == "node_modules" || name == "out" {
                 continue;
             }
             if entry.file_type().unwrap().is_dir() {
@@ -290,70 +308,82 @@ fn compare(report: &CompileReport, root: &Path, expected: &Path) -> Vec<String> 
     failures
 }
 
+/// Builds a fixture copy, in each layout of its `links.json` (one default layout without one), and checks it.
+///
+/// `links.json` is `{ "project"?: dir, "layouts": { name: [[link, target], …] } }`: the project directory inside the
+/// copy (default: the copy itself), and per layout the links to make, in order, each a path inside the copy and a
+/// target, `@shared/<package>` for the shared `node_modules`'s `@rbxts/<package>` or a path inside the copy. Without
+/// `links.json`, `node_modules` links to the shared `node_modules`.
 fn check(area: &'static str) {
     let node_modules = match node_modules() {
         Ok(path) => path,
-        Err(why) => return announce_skip(area, &why),
+        Err(why) => return skip(area, &why),
     };
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(area);
-    let mut project = TempProject::copy_of(&fixture, area);
-    project.link("node_modules", &node_modules);
-    let report = build(&project.root);
-    let failures = compare(&report, &project.root, &fixture.join("expected"));
-    assert!(failures.is_empty(), "{area}:\n{}", failures.join("\n"));
-}
+    let links: Option<serde_json::Value> = std::fs::read_to_string(fixture.join("links.json"))
+        .ok()
+        .map(|text| serde_json::from_str(&text).unwrap_or_else(|e| panic!("{area}/links.json: {e}")));
+    let project_dir = links.as_ref().and_then(|l| l["project"].as_str()).unwrap_or(".").to_owned();
+    let layouts: Vec<(String, Vec<(String, String)>)> = match &links {
+        None => vec![(String::new(), vec![("node_modules".to_owned(), node_modules.to_string_lossy().into_owned())])],
+        Some(links) => links["layouts"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{area}/links.json: no layouts"))
+            .iter()
+            .map(|(name, pairs)| {
+                let pairs = pairs.as_array().unwrap_or_else(|| panic!("{area}/links.json: {name} is not a list"));
+                let pairs = pairs
+                    .iter()
+                    .map(|pair| match pair.as_array().map(Vec::as_slice) {
+                        Some([link, target]) => (link.as_str().unwrap().to_owned(), target.as_str().unwrap().to_owned()),
+                        _ => panic!("{area}/links.json: {name}: a link is [link, target]"),
+                    })
+                    .collect();
+                (name.clone(), pairs)
+            })
+            .collect(),
+    };
 
-/// How the `junction` fixture's packages are linked in.
-#[derive(Clone, Copy)]
-enum Layout {
-    /// `node_modules/@rbxts` is a real directory whose packages are links: the shared `node_modules`'s, and
-    /// `greeter` to the copy's `packages/greeter`.
-    LinkedPackages,
-    /// `node_modules` links to `store/node_modules`, laid out as in `LinkedPackages`.
-    LinkedNodeModules,
-}
-
-/// The `junction` fixture in `layout`. Module resolution gives every package its real path (in the shared
-/// `node_modules`, or `packages/greeter` outside any `node_modules`); imports must still go through the project's
-/// `node_modules`, as stock roblox-ts's do in both layouts (`expected/` is its output, the same for both).
-fn check_junction(layout: Layout) {
-    const AREA: &str = "junction";
-    let label = match layout {
-        Layout::LinkedPackages => "junction-packages",
-        Layout::LinkedNodeModules => "junction-node-modules",
-    };
-    let node_modules = match node_modules() {
-        Ok(path) => path,
-        Err(why) => return announce_skip(label, &why),
-    };
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(AREA);
-    let mut project = TempProject::copy_of(&fixture, label);
-    let scope = match layout {
-        Layout::LinkedPackages => "node_modules/@rbxts",
-        Layout::LinkedNodeModules => "store/node_modules/@rbxts",
-    };
-    for name in PACKAGES {
-        project.link(&format!("{scope}/{name}"), &node_modules.join("@rbxts").join(name));
+    let mut failures = Vec::new();
+    for (layout, pairs) in layouts {
+        let label = if layout.is_empty() { area.to_owned() } else { format!("{area}-{layout}") };
+        let mut project = TempProject::copy_of(&fixture, &label);
+        for (link, target) in pairs {
+            let target = match target.strip_prefix("@shared/") {
+                Some(package) => node_modules.join("@rbxts").join(package),
+                None if Path::new(&target).is_absolute() => PathBuf::from(target),
+                None => project.root.join(target),
+            };
+            project.link(&link, &target);
+        }
+        let root = project.root.join(&project_dir);
+        let report = build(&root);
+        let layout_failures = compare(&report, &root, &fixture.join("expected"));
+        if !layout_failures.is_empty() {
+            failures.push(format!("{label}:\n{}", layout_failures.join("\n")));
+        }
     }
-    let greeter = project.root.join("packages/greeter");
-    project.link(&format!("{scope}/greeter"), &greeter);
-    if let Layout::LinkedNodeModules = layout {
-        let store = project.root.join("store/node_modules");
-        project.link("node_modules", &store);
-    }
-    let report = build(&project.root);
-    let failures = compare(&report, &project.root, &fixture.join("expected"));
-    assert!(failures.is_empty(), "{label}:\n{}", failures.join("\n"));
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
-fn junction_linked_packages() {
-    check_junction(Layout::LinkedPackages);
+fn junction() {
+    check("junction");
 }
 
 #[test]
-fn junction_linked_node_modules() {
-    check_junction(Layout::LinkedNodeModules);
+fn junction_relative_dependency() {
+    check("junction_relative_dependency");
+}
+
+#[test]
+fn junction_two_links() {
+    check("junction_two_links");
+}
+
+#[test]
+fn junction_workspace() {
+    check("junction_workspace");
 }
 
 #[test]

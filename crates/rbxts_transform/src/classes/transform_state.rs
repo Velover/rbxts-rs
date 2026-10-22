@@ -19,6 +19,7 @@ use crate::shared::diagnostics::{errors, internal_error, unsupported, warnings};
 use crate::util::create_get_service::create_get_service;
 use crate::util::expression_chain::property_access_expression_chain;
 use crate::util::get_block_comment_text::get_block_comment_text;
+use crate::util::symlink_cache::SymlinkedDirectories;
 use crate::util::traversal::{get_module_ancestor, skip_upwards};
 
 /// `TryUses`
@@ -327,28 +328,34 @@ impl<'a> TransformState<'a> {
     /// through, from its real path. Module resolution gives packages under a linked `node_modules`, or linked packages
     /// inside it, their real paths; imports need the `node_modules` ones.
     ///
-    /// rbxts-rs: TS7's cache keeps a directory's symlinks in a set, not in insertion order as TS5's `MultiMap` does,
-    /// so of several symlinks to one directory this takes the first in sort order instead of the first seen.
-    pub fn guess_virtual_path(&self, fs_path: &str) -> Option<String> {
+    /// rbxts-rs: the map is TypeScript 5's, rebuilt from the program's resolutions ([`SymlinkedDirectories`]), not
+    /// tsrs's TypeScript 7 symlink cache.
+    pub fn guess_virtual_path(&mut self, fs_path: &str) -> Option<String> {
         use rbxts_project::nodepath;
-        let reverse_symlink_map = self.program.get_symlink_cache();
-        let reverse_symlink_map = reverse_symlink_map.directories_by_realpath();
-        let cwd = self.program.get_current_directory();
-        let case_sensitive = self.program.use_case_sensitive_file_names();
+        let program = self.program;
+        let reverse_symlink_map = match &self.multi_transform_state.symlinked_directories {
+            Some((for_program, map)) if std::ptr::eq(*for_program, program) => Rc::clone(map),
+            _ => {
+                let map = Rc::new(SymlinkedDirectories::new(program));
+                self.multi_transform_state.symlinked_directories = Some((program, Rc::clone(&map)));
+                map
+            }
+        };
+        let cwd = program.get_current_directory();
+        let case_sensitive = program.use_case_sensitive_file_names();
 
         let original = fs_path;
         let mut fs_path = fs_path.to_owned();
         loop {
-            // the map's keys always have trailing slashes, as it is built from `SymlinkedDirectory.real`
+            // reverseSymlinkMap always has trailing slashes, as it is constructed from `SymlinkedDirectory.real`
             let parent = tsrs_core::tspath::ensure_trailing_directory_separator(nodepath::dirname(&fs_path));
             if fs_path == parent {
                 break;
             }
             fs_path = parent;
             let key = tsrs_core::tspath::to_path(&fs_path, cwd, case_sensitive);
-            let symlink = reverse_symlink_map.load(&key).and_then(|set| set.to_slice().into_iter().min());
-            if let Some(symlink) = symlink {
-                return Some(nodepath::join(&[&symlink, &nodepath::relative(&fs_path, original)]));
+            if let Some(symlink) = reverse_symlink_map.first_symlink(&key) {
+                return Some(nodepath::join(&[symlink, &nodepath::relative(&fs_path, original)]));
             }
         }
         None

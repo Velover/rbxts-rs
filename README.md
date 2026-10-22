@@ -82,8 +82,9 @@ Hand-written transform fixtures live in `crates/rbxts_transform/tests/fixtures/<
 `node_modules` linked in). `cargo test -p rbxts_transform --test fixtures` builds each one in a temporary copy, linking
 in `RBXTS_RS_FIXTURE_NODE_MODULES` (default: the roblox-ts tests project's `node_modules`, found as
 `roblox-ts/tests` or `roblox-ts-test/roblox-ts/tests` beside the checkout or a directory above it), and compares byte
-for byte; any diagnostic fails the fixture. Without a `node_modules` the tests are skipped with a note on the terminal;
-a variable naming a directory without the packages is an error.
+for byte; any diagnostic fails the fixture. A fixture with a `links.json` is built in each linked layout it describes
+(junctions made at test time). Without a `node_modules` the tests are skipped with a note on the terminal, or fail
+when `CI` or `RBXTS_RS_FIXTURE_REQUIRE=1` is set; a variable naming a directory without the packages is an error.
 
 ## Plugins (`rbxts_plugin`, `rbxts_transform::plugins`, `rbxts_cli`)
 

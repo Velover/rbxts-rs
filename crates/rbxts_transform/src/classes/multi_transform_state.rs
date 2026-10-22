@@ -11,6 +11,7 @@ use tsrs_checker::Type;
 use tsrs_core::P;
 
 use crate::util::evaluation::bindings::BindingUsage;
+use crate::util::symlink_cache::SymlinkedDirectories;
 
 /// `MultiTransformState`. Type classifications stay valid for the compilation; emitted AST facts can still change.
 #[derive(Default)]
@@ -33,6 +34,9 @@ pub struct MultiTransformState {
     /// rbxts-rs: the resolver for `$getModuleTree` specifiers no import resolves (`ts.resolveModuleName` with `ts.sys`),
     /// made on first use.
     pub module_resolver: Option<rbxts_project::ModuleResolver>,
+    /// rbxts-rs: TypeScript 5's symlinked directories by real path for `guessVirtualPath`, and the program they are
+    /// for, made on first use.
+    pub symlinked_directories: Option<(&'static tsrs_compiler::Program, Rc<SymlinkedDirectories>)>,
 }
 
 impl MultiTransformState {
