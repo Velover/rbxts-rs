@@ -22,9 +22,11 @@ use crate::{ProjectError, node_path, uuid};
 /// The test-only switch that pins the build seed (DESIGN §10.4), so obfuscated builds can be compared.
 pub const FIXED_SEED_VAR: &str = "FLAMEWORK_RS_FIXED_SEED";
 
-/// A switch for measuring builds: macro sites that a later milestone brings and that are errors by default
+/// A test and measurement switch only: macro sites that a later milestone brings and that are errors by default
 /// (`Modding.Generic<T, "guard">`, F3) are declined and listed in the build's warning instead, as the others are.
-/// The output of such a build is not what Flamework emits.
+/// The build succeeds, but its output is not what Flamework emits: a declined site compiles as a plain call without
+/// the values Flamework generates for it (a guard macro returns `nil`). **Such a build must not be run**; it exists
+/// only to compare and time the rest of the output.
 pub const DECLINE_UNPORTED_VAR: &str = "FLAMEWORK_RS_DECLINE_UNPORTED";
 
 /// What every hook reads, made once per build (DESIGN §10.1). Read-only during the transform.

@@ -251,7 +251,7 @@ impl<'c, 'a> MacroCx<'c, 'a> {
                 name: name.to_owned(),
                 ty,
                 optional: property.flags().intersects(SymbolFlags::Optional),
-                readonly: property.declarations().iter().any(|&d| is_declaration_readonly(d)),
+                readonly: property.declarations().iter().any(|&d| tsrs_checker::is_declaration_readonly(d)),
             });
         }
         Some(fields)
@@ -313,14 +313,10 @@ impl<'c, 'a> MacroCx<'c, 'a> {
         Some(checker.get_element_type_of_array_type_exported(t).unwrap_or_else(|| checker.get_any_type()))
     }
 
-    /// `isReadonly`: `readonly T[]` or `ReadonlyArray<T>`.
+    /// `isReadonly`: `readonly T[]` or `ReadonlyArray<T>` (`isReadonlyArrayType`: a reference to the global
+    /// `ReadonlyArray`, which is what the TS facade's symbol test matches).
     pub fn is_readonly_array(&mut self, t: P<Type>) -> bool {
-        let Some(symbol) = t.symbol() else { return false };
-        let checker = self.checker();
-        let Some(readonly) = checker.resolve_name_exported("ReadonlyArray", None, SymbolFlags::Type, false) else {
-            return false;
-        };
-        checker.get_merged_symbol(symbol) == checker.get_merged_symbol(readonly)
+        self.checker().is_readonly_array_type(t)
     }
 
     /// `getElements`: a tuple's elements; `None` when it is not a tuple.
@@ -421,12 +417,6 @@ pub(crate) fn intrinsic_name(t: P<Type>) -> Option<&'static str> {
         };
     }
     (t.data_tag() == TypeDataTag::Intrinsic).then(|| t.as_intrinsic_type().intrinsic_name())
-}
-
-/// `ts.isDeclarationReadonly` (pub(crate) in tsrs).
-pub(crate) fn is_declaration_readonly(declaration: P<Node>) -> bool {
-    tsrs_ast::get_combined_modifier_flags(declaration).intersects(tsrs_ast::ModifierFlags::Readonly)
-        && !declaration.parent().is_some_and(|parent| tsrs_ast::is_parameter_property_declaration(declaration, parent))
 }
 
 /// `isTriviallyDuplicable`: a literal or a name is emitted at every use rather than hoisted.

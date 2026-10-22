@@ -1,20 +1,24 @@
 //! [`FwFilePart`] as bytes, for the compiler's incremental state on disk (`Plugin::encode_file_part` /
 //! `decode_file_part`).
 //!
-//! **Format, version 1.** All integers little-endian.
+//! **Format, version 2.** All integers little-endian.
 //! - header: the magic `FWPT`, then the format version as a `u16` ([`FORMAT_VERSION`]);
 //! - a string: its UTF-8 length as a `u32`, then the bytes; a list: its length as a `u32`, then the items;
 //! - the part: `file_id`; `new_ids` (each `internal_id`, `name`, `file_name`); `late_keys`; `events` (each a tag byte,
 //!   `0` a glob use: `glob`, `text`, `macro_name`, `line`, `column`; `1` a path use: `path`, `macro_name`, `line`,
 //!   `column`, `raises` as a byte `0` / `1`); `unported` (each `what`, `milestone`, then `pos` as `offset`, `line`,
-//!   `character`). Numbers are `u32`.
+//!   `character`); `env_inputs` (each `name`, `hash`, in the part's order: `inputs.env` keeps the TS transformer's
+//!   order). Numbers are `u32`.
+//!
+//! Version 1 (before `env_inputs`) is not read: a version 1 part decodes to `None`, so the compiler transforms the
+//! file again.
 //!
 //! Decoding rejects (`None`) another magic or version, a truncated input, bytes left over, invalid UTF-8, an unknown
 //! tag or flag, and a milestone this version does not name. It never panics.
 //!
 //! **Changing [`FwFilePart`]** (a field added, removed or retyped) changes the format: bump [`FORMAT_VERSION`]. The
 //! encoder destructures every struct it writes, so a new field does not compile until it is encoded, and the golden
-//! test pins the bytes of version 1.
+//! test pins the bytes of the current version.
 
 use rbxts_plugin::Utf16Pos;
 
@@ -25,7 +29,7 @@ use crate::plugin::{FwFilePart, PathEvent, Unported};
 const MAGIC: &[u8; 4] = b"FWPT";
 
 /// The version of the byte format; bumped on every change of what is written.
-pub const FORMAT_VERSION: u16 = 1;
+pub const FORMAT_VERSION: u16 = 2;
 
 /// The milestones an [`Unported`] site can name; decoding maps the text back to these.
 const MILESTONES: [&str; 10] = ["F0", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9"];
@@ -33,7 +37,7 @@ const MILESTONES: [&str; 10] = ["F0", "F1", "F2", "F3", "F4", "F5", "F6", "F7", 
 /// The part as bytes. `None` when it cannot be written: a milestone this format does not name, or a string or list
 /// longer than `u32::MAX`.
 pub fn encode(part: &FwFilePart) -> Option<Vec<u8>> {
-    let FwFilePart { file_id, new_ids, late_keys, events, unported } = part;
+    let FwFilePart { file_id, new_ids, late_keys, events, unported, env_inputs } = part;
     let mut w = Writer(Vec::with_capacity(64));
     w.0.extend_from_slice(MAGIC);
     w.0.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
@@ -81,6 +85,11 @@ pub fn encode(part: &FwFilePart) -> Option<Vec<u8>> {
         w.u32(line);
         w.u32(character);
     }
+    w.len(env_inputs.len())?;
+    for (name, hash) in env_inputs {
+        w.string(name)?;
+        w.string(hash)?;
+    }
     Some(w.0)
 }
 
@@ -121,7 +130,8 @@ pub fn decode(bytes: &[u8]) -> Option<FwFilePart> {
         let pos = Utf16Pos { offset: r.u32()?, line: r.u32()?, character: r.u32()? };
         Some(Unported { what, milestone, pos })
     })?;
-    r.0.is_empty().then_some(FwFilePart { file_id, new_ids, late_keys, events, unported })
+    let env_inputs = r.list(|r| Some((r.string()?, r.string()?)))?;
+    r.0.is_empty().then_some(FwFilePart { file_id, new_ids, late_keys, events, unported, env_inputs })
 }
 
 struct Writer(Vec<u8>);
@@ -226,6 +236,11 @@ mod tests {
                 },
                 Unported { what: String::new(), milestone: "F6", pos: Utf16Pos::default() },
             ],
+            env_inputs: vec![
+                ("ZETA".into(), "5f1c0e7d-1111-5aaa-8bbb-000000000001".into()),
+                ("ALPHA".into(), "5f1c0e7d-2222-5aaa-8bbb-000000000002".into()),
+                ("ünï ".into(), String::new()),
+            ],
         }
     }
 
@@ -248,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn version_1_bytes_are_stable() {
+    fn version_2_bytes_are_stable() {
         let part = FwFilePart {
             file_id: "a".into(),
             new_ids: vec![NewId { internal_id: "i".into(), name: "n".into(), file_name: "f".into() }],
@@ -274,12 +289,13 @@ mod tests {
                 milestone: "F3",
                 pos: Utf16Pos { offset: 6, line: 7, character: 8 },
             }],
+            env_inputs: vec![("Z".into(), "h1".into()), ("A".into(), "h2".into())],
         };
         let s = |t: &str| [(t.len() as u32).to_le_bytes().as_slice(), t.as_bytes()].concat();
         let n = |v: u32| v.to_le_bytes().to_vec();
         let expected: Vec<u8> = [
             b"FWPT".to_vec(),
-            1u16.to_le_bytes().to_vec(),
+            2u16.to_le_bytes().to_vec(),
             s("a"),
             n(1),
             s("i"),
@@ -306,10 +322,42 @@ mod tests {
             n(6),
             n(7),
             n(8),
+            n(2),
+            s("Z"),
+            s("h1"),
+            s("A"),
+            s("h2"),
         ]
         .concat();
         assert_eq!(encode(&part), Some(expected.clone()));
         assert_eq!(decode(&expected), Some(part));
+    }
+
+    #[test]
+    fn version_1_parts_are_not_read() {
+        // A version 1 part as its encoder wrote it (no `env_inputs`): not persistable now, so the file is transformed
+        // again. The same bytes with a version 2 header are short by the `env_inputs` count.
+        let s = |t: &str| [(t.len() as u32).to_le_bytes().as_slice(), t.as_bytes()].concat();
+        let n = |v: u32| v.to_le_bytes().to_vec();
+        let body = [s("a"), n(0), n(0), n(0), n(0)].concat();
+        let v1 = [b"FWPT".to_vec(), 1u16.to_le_bytes().to_vec(), body.clone()].concat();
+        assert_eq!(decode(&v1), None);
+        let v2_short = [b"FWPT".to_vec(), 2u16.to_le_bytes().to_vec(), body.clone()].concat();
+        assert_eq!(decode(&v2_short), None);
+        let v2 = [v2_short, n(0)].concat();
+        assert_eq!(decode(&v2), Some(FwFilePart { file_id: "a".into(), ..FwFilePart::default() }));
+    }
+
+    #[test]
+    fn env_inputs_keep_their_order() {
+        let order = ["Z", "B", "A", "B2", "A"];
+        let part = FwFilePart {
+            env_inputs: order.iter().map(|n| ((*n).to_owned(), format!("h{n}"))).collect(),
+            ..FwFilePart::default()
+        };
+        let back = decode(&encode(&part).unwrap()).unwrap();
+        assert_eq!(back.env_inputs.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), order);
+        assert_eq!(back, part);
     }
 
     #[test]
@@ -325,7 +373,7 @@ mod tests {
         assert_eq!(decode(&longer), None);
         // another version, another magic
         let mut other = bytes.clone();
-        other[4..6].copy_from_slice(&2u16.to_le_bytes());
+        other[4..6].copy_from_slice(&3u16.to_le_bytes());
         assert_eq!(decode(&other), None);
         let mut magic = bytes.clone();
         magic[0] = b'X';
@@ -333,9 +381,10 @@ mod tests {
         // an unknown event tag, a bad flag, invalid UTF-8, an unknown milestone
         let small = |event: Vec<u8>| {
             let mut b = encode(&FwFilePart::default()).unwrap();
-            b.truncate(b.len() - 8); // the empty events and unported counts
+            b.truncate(b.len() - 12); // the empty events, unported and env_inputs counts
             b.extend_from_slice(&1u32.to_le_bytes());
             b.extend(event);
+            b.extend_from_slice(&0u32.to_le_bytes());
             b.extend_from_slice(&0u32.to_le_bytes());
             b
         };
@@ -352,7 +401,7 @@ mod tests {
             ..FwFilePart::default()
         })
         .unwrap();
-        let at = unknown.len() - 12 - 1; // the milestone's last byte, before the position
+        let at = unknown.len() - 4 - 12 - 1; // the milestone's last byte, before the position and the env count
         unknown[at] = b'X';
         assert_eq!(decode(&unknown), None, "unknown milestone");
         // a huge count does not allocate up front

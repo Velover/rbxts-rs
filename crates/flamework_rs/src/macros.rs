@@ -15,7 +15,8 @@
 //! argument check).
 //!
 //! **Later milestones.** `guard` (`Generic<T, "guard">`) is F3 and an error naming it (unless
-//! `FLAMEWORK_RS_DECLINE_UNPORTED` is set, for measuring builds: then it is handled like the others). `tuple-guards`
+//! `FLAMEWORK_RS_DECLINE_UNPORTED` is set: a test and measurement switch whose build must not be run, see
+//! [`crate::setup::DECLINE_UNPORTED_VAR`]; then it is handled like the others). `tuple-guards`
 //! (F3), `serializer` and `intrinsic-serializer-options` (F4), the network intrinsics and `intrinsic-middleware`
 //! (F5) and `intrinsic-component-config` (F6) decline the call before anything is compiled, so roblox-ts compiles it
 //! as a plain call, and finish gives one warning naming every such site's milestone. The decision reads only the
@@ -710,21 +711,24 @@ fn labels_of(ty: P<Type>) -> UserMacro {
     UserMacro::Many(names)
 }
 
-/// `getPropertyKey`: the key a type declares for a property, as `keyof` works it out: the literal type TypeScript
-/// keeps on the symbols it makes (a mapped type's, `Record<10, V>`), else the declaration's name (a numeric literal
-/// or a computed number is a number).
+/// `getPropertyKey`: the key a type declares for a property, as `keyof` works it out
+/// (`getLiteralTypeFromProperty`): the literal type TypeScript keeps on the symbols it makes (a mapped type's,
+/// `Record<10, V>`), else the declaration's name (a numeric literal or a computed number is a number).
 fn property_key(cx: &mut Cx<'_>, property: P<Symbol>) -> TableKey {
-    if property.flags().intersects(SymbolFlags::Transient)
-        && let Some(links) = cx.checker().value_symbol_links.try_get(property)
-        && let Some(name_type) = links.name_type()
-    {
-        return match literal_of(name_type) {
-            Some(TypeLiteral::Num(n)) if name_type.flags().intersects(TypeFlags::NumberLiteral) => TableKey::Num(n),
-            _ => TableKey::Str(property.name().to_owned()),
-        };
+    let key = cx.checker().get_literal_type_from_property(property, TypeFlags::NumberLiteral, true);
+    if let Some(TypeLiteral::Num(n)) = literal_of(key) {
+        return TableKey::Num(n);
     }
-    let declaration = property.value_declaration().or_else(|| property.declarations().first().copied());
-    if let Some(name) = declaration.and_then(tsrs_ast::get_name_of_declaration) {
+    // TS's `getPropertyKey` reads `valueDeclaration ?? declarations[0]`, the checker only the value declaration. A
+    // symbol TypeScript copies without one (a readonly property spread into an object literal, a reverse-mapped
+    // property) keeps its declarations: read the first, as TS does, unless the symbol carries a key type (which the
+    // checker read: TS returns the name then).
+    let has_name_type = property.flags().intersects(SymbolFlags::Transient)
+        && cx.checker().value_symbol_links.try_get(property).is_some_and(|links| links.name_type().is_some());
+    if property.value_declaration().is_some() || has_name_type {
+        return TableKey::Str(property.name().to_owned());
+    }
+    if let Some(name) = property.declarations().first().copied().and_then(tsrs_ast::get_name_of_declaration) {
         match name.kind() {
             Kind::NumericLiteral => {
                 if let Ok(value) = name.text().parse::<f64>() {
@@ -982,7 +986,7 @@ impl Builder<'_> {
             };
             fallback_value = Some(text);
         }
-        let variable = env_var(cx, &self.fw.shared, name);
+        let variable = self.fw.shared.env(cx, name);
         let hash = crate::env::hash_env_value(variable.as_deref());
         let mut file = self.fw.file.borrow_mut();
         let seq = file.next();
@@ -992,20 +996,6 @@ impl Builder<'_> {
             Some(value) => text_literal(value),
             None => create::nil(),
         })
-    }
-}
-
-/// An environment variable at transform time: `.env`, then `.env.local`, then the process, as setup's env.
-///
-/// The one place to swap for `Cx::env` (the papi worker's API, which records the read as a build input) once it
-/// lands: `cx.env(name).map(str::to_owned)`. Until then the variables the `.env` files and the config name are the
-/// setup's (recorded); any other comes from the process unrecorded, which only matters for incremental builds
-/// (TODO(S2)).
-pub(crate) fn env_var(cx: &mut Cx<'_>, shared: &crate::FwShared, name: &str) -> Option<String> {
-    let _ = cx;
-    match shared.loaded.env.get(name) {
-        Some(value) => Some(value.to_owned()),
-        None => std::env::var(name).ok(),
     }
 }
 
