@@ -326,23 +326,18 @@ fn obfuscated_globs_and_ids() {
     );
 }
 
-/// A user's class that asks for guards is refused, naming the milestone, rather than given partial metadata.
+/// A user's class that asks for guards gets them (F3; `guards_e2e.rs` covers every type kind).
 #[test]
-fn guards_are_refused_until_f3() {
+fn guards_are_generated() {
     let Some(project) = Project::new("guards") else { return };
     project.write(
         "src/server/guarded.ts",
-        "/** @metadata reflect flamework:guard */\nexport function Guarded() {\n\treturn (t: object, k: string) => print(t, k);\n}\n\nexport class G {\n\t@Guarded()\n\tvalue: number = 1;\n}\n",
+        "/** @metadata reflect flamework:guard */\nexport function Guarded() {\n\treturn (target: object, key: string) => print(target, key);\n}\n\nexport class G {\n\t@Guarded()\n\tvalue: number = 1;\n}\n",
     );
     let report = project.build();
-    let all = diagnostics(&report);
-    assert!(
-        all.iter().any(|d| d
-            == "error guarded.ts: flamework:guard needs guard generation, which rbxts-rs's Flamework does not have yet (F3)."),
-        "{all:#?}"
-    );
-    // A build with errors writes nothing.
-    assert!(!project.root.join("flamework.build").exists());
+    assert_clean(&report);
+    let luau = luau(&report, "server/guarded.luau");
+    assert!(luau.contains("Reflect.defineMetadata(G, \"flamework:guard\", t.number, \"value\")"), "{luau}");
 }
 
 /// A Flamework package built by another version is refused before anything is transformed.

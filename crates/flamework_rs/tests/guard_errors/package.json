@@ -1,0 +1,6 @@
+{
+	"name": "f3-guard-errors",
+	"version": "0.0.0",
+	"private": true,
+	"description": "flamework_rs F3: the guard builder refusing types it cannot check."
+}

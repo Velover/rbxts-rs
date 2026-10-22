@@ -1,0 +1,7 @@
+{
+	// F3_DEDUP sets the dedup limit; dedup.ts and recursive.ts rely on 3.
+	"transformer": {
+		"optimizations": { "guardGenerationDedupLimit": "${F3_DEDUP:-3}" }
+	},
+	"core": { "profiling": false }
+}

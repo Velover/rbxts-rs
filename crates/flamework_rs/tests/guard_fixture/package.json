@@ -1,0 +1,6 @@
+{
+	"name": "f3-guard-fixture",
+	"version": "0.0.0",
+	"private": true,
+	"description": "flamework_rs F3: guards of every type kind the TS guard builder handles."
+}

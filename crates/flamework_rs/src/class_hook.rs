@@ -200,13 +200,12 @@ fn parameter_fields(
     }
 
     if metadata.is_requested("flamework:parameter_guards") {
-        match parameters.first() {
-            // No parameter, no guard to generate.
-            None => fields.push(("flamework:parameter_guards", create::array(Vec::new()))),
-            Some(first) => {
-                return Err(unported_error(cx, first.trace, "flamework:parameter_guards", "guard generation", "F3"));
-            }
+        let mut values = Vec::new();
+        for parameter in parameters {
+            let at = parameter.declaration.unwrap_or(parameter.trace);
+            values.push(crate::guards::guard_for(cx, fw.shared.guard_config(), at, parameter.ty)?);
         }
+        fields.push(("flamework:parameter_guards", create::array(values)));
     }
 
     if metadata.is_requested("flamework:dependencies") {
@@ -248,7 +247,7 @@ fn field_fields(fw: &FwInstance, cx: &mut Cx<'_>, field: P<Node>, metadata: &Nod
     }
     if metadata.is_requested("flamework:guard") {
         let at = field.type_node().unwrap_or(field);
-        return Err(unported_error(cx, at, "flamework:guard", "guard generation", "F3"));
+        fields.push(("flamework:guard", crate::guards::guard_for(cx, fw.shared.guard_config(), at, ty)?));
     }
     Ok(fields)
 }
@@ -270,7 +269,8 @@ fn method_fields(fw: &FwInstance, cx: &mut Cx<'_>, method: P<Node>, metadata: &N
     }
     if metadata.is_requested("flamework:return_guard") {
         let at = method.type_node().unwrap_or(method);
-        return Err(unported_error(cx, at, "flamework:return_guard", "guard generation", "F3"));
+        let return_type = cx.checker().get_return_type_of_signature_exported(signature);
+        fields.push(("flamework:return_guard", crate::guards::guard_for(cx, fw.shared.guard_config(), at, return_type)?));
     }
     Ok(fields)
 }
