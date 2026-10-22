@@ -11,11 +11,14 @@
 //! - [`identity`]: claims calls, accesses (`property_key`), assignments or most expression kinds, and lowers them as
 //!   roblox-ts would (`compile_expr`, `compile_call`, `compile_binary`, `compile_object_literal`): its output must
 //!   equal a build without plugins.
+//! - [`inputs`]: `probe-inputs`, every build input and persistence method of DESIGN §14 (environment, globs,
+//!   recorded finish reads, `remove_empty_dir`, encoded file parts, a diagnostic source).
 
 #[path = "../../rbxts_plugin/tests/support/stamp.rs"]
 pub mod stamp;
 
 pub mod identity;
+pub mod inputs;
 pub mod probe;
 
 use rbxts_plugin::erased::{DynPlugin, erase};
@@ -42,6 +45,7 @@ pub const NAMES: &[&str] = &[
     "identity-key",
     "identity-assign",
     "identity-fallback",
+    "probe-inputs",
 ];
 
 /// A test plugin by name (`rbxts-bench build --plugin <name>`).
@@ -68,6 +72,7 @@ pub fn by_name(name: &str) -> Option<Box<dyn DynPlugin>> {
         "identity-key" => erase(identity::Identity(identity::IdentityMode::Key)),
         "identity-assign" => erase(identity::Identity(identity::IdentityMode::Assign)),
         "identity-fallback" => erase(identity::Identity(identity::IdentityMode::Fallback)),
+        "probe-inputs" => erase(inputs::InputsProbe),
         _ => return None,
     })
 }
