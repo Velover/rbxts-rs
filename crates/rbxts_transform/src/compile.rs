@@ -74,7 +74,7 @@ pub struct Timings {
     /// Plugin `finish` (all plugins) and the late-string key check.
     pub plugin_finish: Duration,
     pub render: Duration,
-    /// Luau's compiler on the files near one of its limits (`plugins::spill`), and how many were checked.
+    /// Luau's compiler on the files plugins emitted into (`plugins::spill`), and how many were checked.
     pub load_check: Duration,
     pub load_checked: u32,
     pub write: Duration,
@@ -238,7 +238,7 @@ pub(crate) struct FileTransform {
     pub parts: Vec<Option<ErasedPart>>,
     /// The late keys its Luau uses: (plugin, namespaced key).
     pub late_keys: Vec<(usize, String)>,
-    /// It is near one of Luau's limits: Luau's compiler checks it once rendered.
+    /// A plugin emitted into it: Luau's compiler checks it once rendered.
     pub load_check: Option<crate::plugins::spill::LoadCheck>,
 }
 

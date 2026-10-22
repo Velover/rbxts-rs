@@ -295,7 +295,9 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
     let mut plugins = Vec::new();
     for name in &args.plugins {
         // `flamework`: the Flamework plugin (flamework_rs), the one real plugin; the rest are the seam's test plugins.
-        match rbxts_test_plugins::by_name(name).or_else(|| (name == "flamework").then(|| rbxts_plugin::erased::erase(flamework_rs::Flamework::new()))) {
+        match rbxts_test_plugins::by_name(name)
+            .or_else(|| (name == "flamework").then(|| rbxts_plugin::erased::erase(flamework_rs::Flamework::new())))
+        {
             Some(plugin) => plugins.push(plugin),
             None => {
                 eprintln!(
@@ -368,7 +370,7 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
         }
         let _ = writeln!(out, "  {:<13} {:>9.1} ms", "total", ms(total));
         if t.load_checked > 0 {
-            let _ = writeln!(out, "Luau load check: {} files near a limit", t.load_checked);
+            let _ = writeln!(out, "Luau load check: {} files", t.load_checked);
         }
         let _ = writeln!(
             out,

@@ -552,7 +552,7 @@ fn seam_misuse_is_refused_naming_the_plugin() {
 }
 
 #[test]
-fn luau_decides_files_near_its_limits() {
+fn luau_decides_every_file_plugins_emitted_into() {
     let Some(project) = Project::new("locals") else { return };
     let lines = |count: usize, line: &dyn Fn(usize) -> String| (1..=count).map(|i| line(i) + "\n").collect::<String>();
     let tables = |count: usize| lines(count, &|i| format!("export const v{i} = [{i}];"));
@@ -654,6 +654,33 @@ fn luau_decides_files_near_its_limits() {
         &(tables(199)
             + "for (const i of $range(1, 3)) {\n\tconst z = mk();\n\tprint(i, z);\n}\nprint(probeHoist([0]));\n"),
     ));
+
+    // every file a plugin emitted into is compiled, however few locals it has: Luau's 255 registers, held by a wide
+    // call or a `..` chain (round 5's t01, t02, t08), and its nesting limit (t09: 1005 `else if`s)
+    let wide = "declare function wide(...a: unknown[]): void;\ndeclare function text(): string;\n";
+    let terms = |count: usize, term: &dyn Fn(usize) -> String| (0..count).map(term).collect::<Vec<_>>().join(" + ");
+    let t01 = format!(
+        "{wide}export function t01(x: unknown, s: string) {{\n\twide({}, {});\n}}\nprint(probeHoist([0]));\n",
+        vec!["x"; 220].join(", "),
+        terms(40, &|_| "s".to_owned())
+    );
+    fails_at(&build(&t01), "optimisation level 1", "Out of registers when trying to allocate");
+    for (locals, chained) in [(160, 98), (185, 97)] {
+        let source = wide.to_owned()
+            + &lines(locals, &|i| format!("const a{i} = text();"))
+            + &format!(
+                "wide({});\nprint(probeHoist([0]));\nexport {{}};\n",
+                terms(chained, &|i| format!("a{}", i + 1))
+            );
+        let report = build(&source);
+        fails_at(&report, "optimisation level 1", "Out of registers when trying to allocate");
+        at_line(&report, "wide(a1 + a2");
+    }
+    let t09 = format!(
+        "{wide}export function pick(x: number) {{\n\t{}\n}}\nprint(probeHoist([0]));\n",
+        (0..1005).map(|i| format!("if (x === {i}) {{\n\t\twide({i});\n\t}}")).collect::<Vec<_>>().join(" else ")
+    );
+    fails_at(&build(&t09), "optimisation level 1", "Exceeded allowed recursion depth");
 
     // a file no plugin emitted anything into is left as roblox-ts leaves it, however many locals it has
     let report = build(&tables(205));

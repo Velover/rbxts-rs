@@ -183,7 +183,7 @@ pub struct PluginFileState {
     /// (index, count) in the order they were inserted: plugin imports, the header, `local exports`, the
     /// `Compiled with` comment and `local TS`. They move `root_ranges` to the final list.
     pub front_inserts: Vec<(usize, usize)>,
-    /// The file is near one of Luau's limits: Luau's compiler checks it once rendered (`spill::load_check`).
+    /// A plugin emitted into the file: Luau's compiler checks it once rendered (`spill::decide_all`).
     pub(crate) load_check: Option<super::spill::LoadCheck>,
     /// `local` names declared at the top level of the main chunk so far (statements done, root insertions,
     /// imports, header).

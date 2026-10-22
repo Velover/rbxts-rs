@@ -1,30 +1,31 @@
-//! Luau's limits (200 local registers, 255 registers, 200 upvalues per function, its recursion depth), checked on
+//! Luau's limits (200 local registers, 255 registers and 200 upvalues per function, its nesting depth), checked on
 //! every file a plugin emitted anything into (DESIGN §9: the compiler owns the check for all code, its own output
 //! included). Files no plugin emitted into, and builds without plugins, are left as roblox-ts leaves them.
 //!
-//! Whether a file is within the limits is decided by Luau's own compiler, not predicted: whether a `local` takes a
-//! register depends on Luau's constant folding, dead-branch elimination and inlining, which vary with the optimisation
-//! and debug levels and between releases. The compiler is [`rbxts_luau_check`]: Luau 0.740 (luau0-src
-//! 0.22.0+luau740), pinned exactly in that crate's `Cargo.toml`; a bump can move a file across a limit. Two steps:
-//! 1. **Pre-count** (transform time, cheap): a lexical walk counts, per function, every local name live at once
-//!    (enclosing blocks and loop variables included), the registers an expression may add on top, the distinct locals
-//!    of enclosing functions it uses (upvalues, nested functions' included), and the nesting depth. In the main chunk a
-//!    local count past 200 spills the locals plugins hoisted with `hoist_spillable` into one table local (an unneeded
-//!    spill is harmless). A file near a limit ([`near_limit`]) is marked for the load check, with the TS statement of
-//!    each of its final statements.
-//! 2. **Load check** (after rendering): Luau compiles the rendered file, its `--!optimize` directive honoured as in
-//!    Roblox ([`decide`]). It fails at optimisation level 1 and debug level 1 (Roblox's default when testing in
-//!    Studio), or at level 2 (live games): an error, with Luau's message, at the TS statement that holds the line
-//!    Luau names (for a function, the main chunk's statement that contains it). Else it fails at `--!optimize 0` or
-//!    debug level 2: a warning, the file loads only with Luau's constant folding. Else it is clean.
+//! Every file a plugin emitted into is compiled by Luau 0.740 once rendered: whether a file is within the limits is
+//! decided by Luau's own compiler, not predicted, since whether a `local` takes a register depends on Luau's constant
+//! folding, dead-branch elimination and inlining, which vary with the optimisation and debug levels and between
+//! releases. The compiler is [`rbxts_luau_check`] (luau0-src 0.22.0+luau740, pinned exactly in that crate's
+//! `Cargo.toml`; a bump can move a file across a limit).
+//! 1. **Spill** (transform time): a cheap pre-count of the main chunk (every local name live at once, enclosing
+//!    blocks and loop variables included, and the registers an expression holds on top) decides whether to spill the
+//!    locals plugins hoisted with `hoist_spillable` into one table local: past 200 locals or 255 registers (an
+//!    unneeded spill is harmless). The file is then marked for the load check ([`LoadCheck`]).
+//! 2. **Load check** (after rendering, files in parallel: [`decide_all`]): Luau compiles the rendered file, its
+//!    `--!optimize` directive honoured as in Roblox ([`decide`]). Refused at optimisation level 1 with debug level 1
+//!    (Roblox's default when testing in Studio) or at level 2 (live games): an error quoting Luau's message, at the TS
+//!    statement whose Luau holds the line Luau names (for a function, the main chunk's statement that contains it).
+//!    Else refused at `--!optimize 0` or debug level 2: a warning, the file loads only with Luau's constant folding.
+//!    Else it is clean.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use rbxts_luau::{AnyIdentifier, ElseBody, Expr, IfStatement, InterpolatedStringPart, Stmt, TableField, create};
+use rbxts_luau::{
+    AnyIdentifier, BinaryOperator, ElseBody, Expr, IfStatement, InterpolatedStringPart, Stmt, TableField, create,
+};
 use rbxts_luau_check::{CompileError, LUAU_VERSION};
 use rbxts_plugin::PluginDiagnostic;
-use tsrs_ast::Diagnostic;
-use tsrs_ast::Node;
+use tsrs_ast::{Diagnostic, Node};
 use tsrs_core::P;
 
 use super::backend::to_diagnostic;
@@ -34,405 +35,200 @@ use crate::classes::transform_state::TransformState;
 /// The most local registers Luau allows in one function, the main chunk included.
 pub const LUAU_MAX_LOCALS: u32 = 200;
 
-/// The pre-count's thresholds for the load check: locals or upvalues (Luau allows 200), locals plus the registers an
-/// expression adds (Luau allows 255 in all), and the nesting depth of expressions and blocks (Luau's parser and
-/// compiler refuse deep nesting). They leave a margin for what the pre-count does not see.
-const NEAR_LOCALS: u32 = 190;
-const NEAR_UPVALUES: u32 = 190;
-const NEAR_REGISTERS: u32 = 230;
-const NEAR_DEPTH: u32 = 100;
+/// The most registers Luau allows in one function: locals and the values an expression holds.
+pub const LUAU_MAX_REGISTERS: u32 = 255;
 
-/// One function's pre-count (or the main chunk's).
+/// The main chunk's pre-count.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Counts {
+struct Pressure {
     /// The most local names live at once.
     locals: u32,
-    /// The most local names live at once plus the registers an expression evaluated there may add.
+    /// The most local names live at once plus the registers an expression evaluated there holds.
     registers: u32,
-    /// The distinct locals of enclosing functions it uses (0 for the main chunk).
-    upvalues: u32,
 }
 
-/// The pre-count of a complete file.
-#[derive(Debug, Default)]
-struct Analysis {
-    main: Counts,
-    functions: Vec<Counts>,
-    /// The deepest nesting of expressions and blocks.
-    depth: u32,
+impl Pressure {
+    fn note(&mut self, active: u32, extra: u32) {
+        self.locals = self.locals.max(active);
+        self.registers = self.registers.max(active + extra);
+    }
 }
 
-/// A file may be near one of Luau's limits: Luau's compiler decides.
-fn near_limit(analysis: &Analysis) -> bool {
-    analysis.depth >= NEAR_DEPTH
-        || std::iter::once(&analysis.main).chain(&analysis.functions).any(|counts| {
-            counts.locals >= NEAR_LOCALS || counts.upvalues >= NEAR_UPVALUES || counts.registers >= NEAR_REGISTERS
-        })
-}
-
-/// A local's name in a scope: an identifier's text, or a temporary's id (temporaries never shadow one another, and
-/// an identifier never names a temporary).
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum Name<'a> {
-    Text(&'a str),
-    Temporary(u32),
-}
-
-impl<'a> Name<'a> {
-    fn of(id: &'a AnyIdentifier) -> Name<'a> {
-        match id {
-            AnyIdentifier::Identifier(id) => Name::Text(&id.name),
-            AnyIdentifier::Temporary(id) => Name::Temporary(id.id),
+/// The registers evaluating `e` holds at once (an estimate: one per value held; a function is one, its body is its
+/// own).
+fn expr_registers(e: &Expr) -> u32 {
+    match e {
+        Expr::ComputedIndex(c) => expr_registers(&c.expression).max(1 + expr_registers(&c.index)),
+        Expr::PropertyAccess(p) => expr_registers(&p.expression),
+        Expr::Call(c) => expr_registers(&c.expression).max(list_registers(c.args.iter(), 1)),
+        Expr::MethodCall(m) => expr_registers(&m.expression).max(list_registers(m.args.iter(), 2)),
+        Expr::Parenthesized(p) => expr_registers(&p.expression),
+        // Luau evaluates a whole `..` chain into consecutive registers (rendered without parentheses, it is one chain)
+        Expr::Binary(b) if b.operator == BinaryOperator::Concat => {
+            let mut operands = Vec::new();
+            concat_operands(e, &mut operands);
+            list_registers(operands.into_iter(), 0)
         }
-    }
-
-    /// The name an identifier expression uses.
-    fn used(e: &'a Expr) -> Option<Name<'a>> {
-        match e {
-            Expr::Identifier(id) => Some(Name::Text(&id.name)),
-            Expr::TemporaryIdentifier(id) => Some(Name::Temporary(id.id)),
-            _ => None,
+        Expr::Binary(b) => expr_registers(&b.left).max(1 + expr_registers(&b.right)),
+        Expr::Unary(u) => expr_registers(&u.expression),
+        Expr::If(i) => {
+            expr_registers(&i.condition).max(expr_registers(&i.expression)).max(expr_registers(&i.alternative))
         }
-    }
-}
-
-/// One function being walked.
-#[derive(Default)]
-struct Frame {
-    /// The bindings of enclosing functions it uses.
-    upvalues: FxHashSet<usize>,
-    counts: Counts,
-}
-
-/// Walks a file in lexical order with its scopes, resolving every use of a local to its binding.
-#[derive(Default)]
-struct Walker<'a> {
-    /// Per binding: the depth of the function that declares it (0: the main chunk).
-    bindings: Vec<usize>,
-    /// The locals in scope, innermost last.
-    scopes: Vec<FxHashMap<Name<'a>, usize>>,
-    /// The functions being walked, outermost (the main chunk) first.
-    frames: Vec<Frame>,
-    functions: Vec<Counts>,
-    /// The current and deepest nesting.
-    depth: u32,
-    deepest: u32,
-}
-
-impl<'a> Walker<'a> {
-    fn lookup(&self, name: Name<'a>) -> Option<usize> {
-        self.scopes.iter().rev().find_map(|scope| scope.get(&name).copied())
-    }
-
-    fn bind(&mut self, name: Name<'a>) {
-        let index = self.bindings.len();
-        self.bindings.push(self.frames.len() - 1);
-        self.scopes.last_mut().expect("a scope").insert(name, index);
-    }
-
-    /// A use of a name: an upvalue of every function between its declaration and here.
-    fn use_name(&mut self, name: Name<'a>) {
-        if let Some(index) = self.lookup(name) {
-            let depth = self.bindings[index];
-            for frame in &mut self.frames[depth + 1..] {
-                frame.upvalues.insert(index);
-            }
+        Expr::InterpolatedString(s) => list_registers(
+            s.parts.iter().filter_map(|part| match part {
+                InterpolatedStringPart::Expression(e) => Some(e),
+                InterpolatedStringPart::Text(_) => None,
+            }),
+            1,
+        ),
+        Expr::Array(items) | Expr::Set(items) => list_registers(items.iter(), 1),
+        Expr::Map(fields) => {
+            fields.iter().map(|f| 1 + expr_registers(&f.index).max(1 + expr_registers(&f.value))).max().unwrap_or(1)
         }
-    }
-
-    /// Notes `active` live locals plus `extra` registers in the current function.
-    fn pressure(&mut self, active: u32, extra: u32) {
-        let counts = &mut self.frames.last_mut().expect("a frame").counts;
-        counts.locals = counts.locals.max(active);
-        counts.registers = counts.registers.max(active + extra);
-    }
-
-    fn nest(&mut self) {
-        self.depth += 1;
-        self.deepest = self.deepest.max(self.depth);
-    }
-
-    /// Walks the main chunk.
-    fn run(mut self, statements: &'a [Stmt]) -> Analysis {
-        self.frames.push(Frame::default());
-        self.scopes.push(FxHashMap::default());
-        self.top(statements, 0);
-        let main = self.frames.pop().expect("the main chunk's frame").counts;
-        Analysis { main, functions: self.functions, depth: self.deepest }
-    }
-
-    /// A function: its parameters (and `self`) and body in a new frame. Returns the registers its closure takes.
-    fn function(&mut self, parameters: &'a [AnyIdentifier], implicit_self: bool, body: &'a [Stmt]) -> u32 {
-        self.nest();
-        self.frames.push(Frame::default());
-        self.scopes.push(FxHashMap::default());
-        if implicit_self {
-            self.bind(Name::Text("self"));
-        }
-        for id in parameters {
-            self.bind(Name::of(id));
-        }
-        let entry = (parameters.len() + usize::from(implicit_self)) as u32;
-        self.pressure(entry, 0);
-        self.top(body, entry);
-        self.scopes.pop();
-        let frame = self.frames.pop().expect("the function's frame");
-        self.functions.push(Counts { upvalues: frame.upvalues.len() as u32, ..frame.counts });
-        self.depth -= 1;
-        1
-    }
-
-    /// The uses and functions in an expression, and the registers evaluating it may take (an estimate: one per
-    /// value held at once).
-    fn expr(&mut self, e: &'a Expr) -> u32 {
-        self.nest();
-        let registers = match e {
-            Expr::Identifier(_) | Expr::TemporaryIdentifier(_) => {
-                if let Some(name) = Name::used(e) {
-                    self.use_name(name);
-                }
-                1
-            }
-            Expr::Function(f) => self.function(&f.parameters, false, &f.statements),
-            Expr::ComputedIndex(c) => {
-                let object = self.expr(&c.expression);
-                let index = self.expr(&c.index);
-                object.max(1 + index)
-            }
-            Expr::PropertyAccess(p) => self.expr(&p.expression),
-            Expr::Call(c) => {
-                let callee = self.expr(&c.expression);
-                callee.max(self.list(&c.args, 1))
-            }
-            Expr::MethodCall(m) => {
-                let object = self.expr(&m.expression);
-                object.max(self.list(&m.args, 2))
-            }
-            Expr::Parenthesized(p) => self.expr(&p.expression),
-            Expr::Binary(b) => {
-                let left = self.expr(&b.left);
-                let right = self.expr(&b.right);
-                left.max(1 + right)
-            }
-            Expr::Unary(u) => self.expr(&u.expression),
-            Expr::If(i) => {
-                let condition = self.expr(&i.condition);
-                let then = self.expr(&i.expression);
-                let otherwise = self.expr(&i.alternative);
-                condition.max(then).max(otherwise)
-            }
-            Expr::InterpolatedString(s) => {
-                let mut most = 1;
-                let mut held = 1;
-                for part in &s.parts {
-                    if let InterpolatedStringPart::Expression(e) = part {
-                        most = most.max(held + self.expr(e));
+        Expr::MixedTable(fields) => {
+            let mut most = 1;
+            let mut held = 1;
+            for field in fields {
+                match field {
+                    TableField::Value(e) => {
+                        most = most.max(held + expr_registers(e));
                         held += 1;
                     }
-                }
-                most
-            }
-            Expr::Array(items) | Expr::Set(items) => self.list(items, 1),
-            Expr::Map(fields) => {
-                let mut most = 1;
-                for field in fields {
-                    let index = self.expr(&field.index);
-                    let value = self.expr(&field.value);
-                    most = most.max(1 + index.max(1 + value));
-                }
-                most
-            }
-            Expr::MixedTable(fields) => {
-                let mut most = 1;
-                let mut held = 1;
-                for field in fields {
-                    match field {
-                        TableField::Value(e) => {
-                            most = most.max(held + self.expr(e));
-                            held += 1;
-                        }
-                        TableField::Field(f) => {
-                            let index = self.expr(&f.index);
-                            let value = self.expr(&f.value);
-                            most = most.max(held + index.max(1 + value));
-                        }
+                    TableField::Field(f) => {
+                        most = most.max(held + expr_registers(&f.index).max(1 + expr_registers(&f.value)));
                     }
                 }
-                most
             }
-            Expr::None
-            | Expr::Nil
-            | Expr::False
-            | Expr::True
-            | Expr::Number(_)
-            | Expr::String(_)
-            | Expr::LateString(_)
-            | Expr::VarArgs => 1,
-        };
-        self.depth -= 1;
-        registers
-    }
-
-    /// Values evaluated into consecutive registers after `held` others (call arguments, table items, a statement's
-    /// values): the most registers at once.
-    fn list(&mut self, values: &'a [Expr], held: u32) -> u32 {
-        let mut most = held;
-        for (i, value) in values.iter().enumerate() {
-            most = most.max(held + i as u32 + self.expr(value));
+            most
         }
-        most
+        Expr::Identifier(_)
+        | Expr::TemporaryIdentifier(_)
+        | Expr::Function(_)
+        | Expr::None
+        | Expr::Nil
+        | Expr::False
+        | Expr::True
+        | Expr::Number(_)
+        | Expr::String(_)
+        | Expr::LateString(_)
+        | Expr::VarArgs => 1,
     }
+}
 
-    /// An assignment target, or the name of `function name()`.
-    fn target(&mut self, e: &'a Expr) -> u32 {
-        match Name::used(e) {
-            Some(name) => {
-                self.use_name(name);
-                0
-            }
-            None => self.expr(e),
+/// The operands of a `..` chain, in order (not through parentheses, which Luau keeps).
+fn concat_operands<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
+    match e {
+        Expr::Binary(b) if b.operator == BinaryOperator::Concat => {
+            concat_operands(&b.left, out);
+            concat_operands(&b.right, out);
         }
+        e => out.push(e),
     }
+}
 
-    /// What a statement declares in its block (binding the names), on top of `active` live locals.
-    fn statement(&mut self, statement: &'a Stmt, active: u32) -> u32 {
-        match statement {
-            Stmt::Assignment(a) => {
-                let values = self.list(&a.right, 0);
-                let targets = a.left.iter().map(|target| self.target(target)).max().unwrap_or(0);
-                self.pressure(active, values + targets);
-                0
-            }
-            Stmt::Break | Stmt::Continue | Stmt::Comment(_) => 0,
-            Stmt::Call(e) => {
-                let registers = self.expr(e);
-                self.pressure(active, registers);
-                0
-            }
-            Stmt::Do(block) => {
-                self.block(&block.statements, active);
-                0
-            }
-            Stmt::While(w) => {
-                let registers = self.expr(&w.condition);
-                self.pressure(active, registers);
-                self.block(&w.statements, active);
-                0
-            }
-            Stmt::Repeat(r) => {
-                // the condition sees the block's locals
-                self.nest();
-                self.scopes.push(FxHashMap::default());
-                let inner = self.top(&r.statements, active);
-                let registers = self.expr(&r.condition);
-                self.pressure(inner, registers);
-                self.scopes.pop();
-                self.depth -= 1;
-                0
-            }
-            Stmt::If(i) => {
-                self.if_statement(i, active);
-                0
-            }
-            Stmt::NumericFor(f) => {
-                let mut registers = self.expr(&f.start).max(1 + self.expr(&f.end));
-                if let Some(step) = &f.step {
-                    registers = registers.max(2 + self.expr(step));
-                }
-                // the loop's three internal registers, then its variable
-                self.pressure(active, registers.max(3));
-                self.scopes.push(FxHashMap::default());
-                self.bind(Name::of(&f.id));
-                self.block(&f.statements, active + 4);
-                self.scopes.pop();
-                0
-            }
-            Stmt::For(f) => {
-                let registers = self.expr(&f.expression);
-                self.pressure(active, registers.max(3));
-                self.scopes.push(FxHashMap::default());
-                for id in &f.ids {
-                    self.bind(Name::of(id));
-                }
-                self.block(&f.statements, active + 3 + f.ids.len() as u32);
-                self.scopes.pop();
-                0
-            }
-            Stmt::FunctionDeclaration(f) => {
-                // `local function f` is in scope in its own body; `function f()` writes `f`
-                let declared = match (f.localize, Name::used(&f.name)) {
-                    (true, Some(name)) => {
-                        self.bind(name);
-                        1
-                    }
-                    _ => {
-                        self.target(&f.name);
-                        0
+/// Values evaluated into consecutive registers after `held` others (call arguments, table items, a statement's
+/// values): the most registers at once.
+fn list_registers<'a>(values: impl Iterator<Item = &'a Expr>, held: u32) -> u32 {
+    values.enumerate().map(|(i, value)| held + i as u32 + expr_registers(value)).max().unwrap_or(held)
+}
+
+/// A block's statements on top of `active` live locals; returns the locals live at its end.
+fn block_pressure(statements: &[Stmt], start: u32, most: &mut Pressure) -> u32 {
+    let mut active = start;
+    for statement in statements {
+        active += statement_pressure(statement, active, most);
+        most.note(active, 0);
+    }
+    active
+}
+
+/// What a statement declares in its block, on top of `active` live locals.
+fn statement_pressure(statement: &Stmt, active: u32, most: &mut Pressure) -> u32 {
+    match statement {
+        Stmt::Assignment(a) => {
+            let targets = a.left.iter().map(expr_registers).max().unwrap_or(0);
+            most.note(active, list_registers(a.right.iter(), 0) + targets);
+            0
+        }
+        Stmt::Break | Stmt::Continue | Stmt::Comment(_) => 0,
+        Stmt::Call(e) => {
+            most.note(active, expr_registers(e));
+            0
+        }
+        Stmt::Do(block) => {
+            block_pressure(&block.statements, active, most);
+            0
+        }
+        Stmt::While(w) => {
+            most.note(active, expr_registers(&w.condition));
+            block_pressure(&w.statements, active, most);
+            0
+        }
+        Stmt::Repeat(r) => {
+            // the condition sees the block's locals
+            let inner = block_pressure(&r.statements, active, most);
+            most.note(inner, expr_registers(&r.condition));
+            0
+        }
+        Stmt::If(i) => {
+            let mut current = Some(i.as_ref());
+            while let Some(i) = current {
+                most.note(active, expr_registers(&i.condition));
+                block_pressure(&i.statements, active, most);
+                current = match &i.else_body {
+                    ElseBody::If(next) => Some(next.as_ref()),
+                    ElseBody::Block(statements) => {
+                        block_pressure(statements, active, most);
+                        None
                     }
                 };
-                self.function(&f.parameters, false, &f.statements);
-                self.pressure(active + declared, 1);
-                declared
             }
-            Stmt::MethodDeclaration(m) => {
-                let object = self.expr(&m.expression);
-                self.function(&m.parameters, true, &m.statements);
-                self.pressure(active, object + 1);
-                0
-            }
-            Stmt::VariableDeclaration(declaration) => {
-                let values = self.list(&declaration.right, 0);
-                for id in &declaration.left {
-                    self.bind(Name::of(id));
-                }
-                let declared = declaration.left.len() as u32;
-                self.pressure(active, values.max(declared));
-                declared
-            }
-            Stmt::Return(r) => {
-                let registers = self.list(&r.expressions, 0);
-                self.pressure(active, registers);
-                0
-            }
+            0
         }
-    }
-
-    fn if_statement(&mut self, statement: &'a IfStatement, active: u32) {
-        let registers = self.expr(&statement.condition);
-        self.pressure(active, registers);
-        self.block(&statement.statements, active);
-        match &statement.else_body {
-            ElseBody::If(next) => self.if_statement(next, active),
-            ElseBody::Block(statements) => self.block(statements, active),
+        Stmt::NumericFor(f) => {
+            let mut registers = expr_registers(&f.start).max(1 + expr_registers(&f.end));
+            if let Some(step) = &f.step {
+                registers = registers.max(2 + expr_registers(step));
+            }
+            // the loop's three internal registers, then its variable
+            most.note(active, registers.max(3));
+            block_pressure(&f.statements, active + 4, most);
+            0
         }
-    }
-
-    /// A nested block on top of `active` live locals.
-    fn block(&mut self, statements: &'a [Stmt], active: u32) {
-        self.nest();
-        self.scopes.push(FxHashMap::default());
-        self.top(statements, active);
-        self.scopes.pop();
-        self.depth -= 1;
-    }
-
-    /// A block's statements in the current scope, from `start` live locals; returns the locals live at its end.
-    fn top(&mut self, statements: &'a [Stmt], start: u32) -> u32 {
-        let mut active = start;
-        for statement in statements {
-            active += self.statement(statement, active);
-            self.pressure(active, 0);
+        Stmt::For(f) => {
+            most.note(active, expr_registers(&f.expression).max(3));
+            block_pressure(&f.statements, active + 3 + f.ids.len() as u32, most);
+            0
         }
-        active
+        Stmt::FunctionDeclaration(f) => {
+            let declared = u32::from(f.localize);
+            most.note(active + declared, 1 + if f.localize { 0 } else { expr_registers(&f.name) });
+            declared
+        }
+        Stmt::MethodDeclaration(m) => {
+            most.note(active, expr_registers(&m.expression) + 1);
+            0
+        }
+        Stmt::VariableDeclaration(declaration) => {
+            let declared = declaration.left.len() as u32;
+            most.note(active, list_registers(declaration.right.iter(), 0).max(declared));
+            declared
+        }
+        Stmt::Return(r) => {
+            most.note(active, list_registers(r.expressions.iter(), 0));
+            0
+        }
     }
 }
 
-/// The pre-count of a complete file.
-fn analyse(statements: &[Stmt]) -> Analysis {
-    Walker::default().run(statements)
+/// The main chunk's pre-count.
+fn main_pressure(statements: &[Stmt]) -> Pressure {
+    let mut most = Pressure::default();
+    block_pressure(statements, 0, &mut most);
+    most
 }
 
-/// The optimisation level a `--!optimize N` directive among the file's leading comments sets, if any.
+/// The level a `--!optimize N` directive among the file's leading comments sets, if it has one.
 fn optimize_directive(statements: &[Stmt]) -> Option<u32> {
     statements
         .iter()
@@ -443,36 +239,50 @@ fn optimize_directive(statements: &[Stmt]) -> Option<u32> {
         .find_map(|text| text.strip_prefix("!optimize").map(|level| level.trim().parse().unwrap_or(1)))
 }
 
-/// A file marked for the load check: the TS node of each of its final (main-chunk) statements, and its
-/// `--!optimize` directive.
+/// A file a plugin emitted into, for the load check: where its TS statements' Luau ends in the final statement list
+/// (for each, the index past its last statement), and its `--!optimize` directive's level.
 pub(crate) struct LoadCheck {
-    anchors: Vec<P<Node>>,
+    statement_ends: Vec<(usize, P<Node>)>,
+    file: P<Node>,
     directive: Option<u32>,
 }
 
+impl LoadCheck {
+    /// The TS statement whose Luau holds the final statement `index` (the file, before the first).
+    fn anchor(&self, index: usize) -> P<Node> {
+        self.statement_ends.iter().find(|(end, _)| *end > index).map_or(self.file, |(_, node)| *node)
+    }
+
+    /// The file has a `--!optimize` directive (the load check then compiles at every level it needs).
+    pub(crate) fn has_directive(&self) -> bool {
+        self.directive.is_some()
+    }
+}
+
 /// Checks a complete file a plugin emitted anything into (`plugin_file.emitted`): spills the `hoist_spillable`
-/// locals when the main chunk may pass Luau's local limit, and marks the file for the load check when it is near
-/// one of Luau's limits (`plugin_file.load_check`). Files no plugin emitted into are left as roblox-ts leaves them.
+/// locals when the main chunk may pass Luau's limits, and marks the file for the load check
+/// (`plugin_file.load_check`). Files no plugin emitted into are left as roblox-ts leaves them.
 pub(crate) fn check_main_chunk(state: &mut TransformState<'_>, statements: &mut Vec<Stmt>) {
     if !state.plugin_file.emitted {
         return;
     }
-    let analysis = analyse(statements);
-    if !near_limit(&analysis) {
-        return;
-    }
+    let pressure = main_pressure(statements);
     let mut spilled_at = None;
-    if analysis.main.locals > LUAU_MAX_LOCALS && !state.plugin_file.spillable.is_empty() {
+    if (pressure.locals > LUAU_MAX_LOCALS || pressure.registers > LUAU_MAX_REGISTERS)
+        && !state.plugin_file.spillable.is_empty()
+    {
         spilled_at = spill(state, statements);
     }
-    let file = state.source_file.as_node();
-    let anchors = (0..statements.len()).map(|i| statement_node(state, i, spilled_at).unwrap_or(file)).collect();
-    state.plugin_file.load_check = Some(LoadCheck { anchors, directive: optimize_directive(statements) });
+    state.plugin_file.load_check = Some(LoadCheck {
+        statement_ends: statement_ends(state, spilled_at),
+        file: state.source_file.as_node(),
+        directive: optimize_directive(statements),
+    });
 }
 
 /// Where Luau refused a file.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Refusal {
+pub(crate) struct Refusal {
     error: CompileError,
     optimization_level: u8,
     debug_level: u8,
@@ -480,7 +290,7 @@ struct Refusal {
 
 /// What Luau's compiler says about a rendered file.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Verdict {
+pub(crate) enum Verdict {
     Loads,
     /// It loads at optimisation levels 1 and 2 at debug level 1, but not at `--!optimize 0` or debug level 2: only
     /// with Luau's constant folding.
@@ -489,8 +299,11 @@ enum Verdict {
     Fails(Refusal),
 }
 
-/// Compiles `source` at the levels Roblox uses first, then at the ones that fold nothing.
-fn decide(source: &str) -> Verdict {
+/// Compiles `source` as Roblox loads it. Without a `--!optimize` directive, a file that loads at level 0 (debug 1, the
+/// level that folds nothing) and at level 2 (debug 1, inlining) loads at level 1 with debug levels 1 and 2 too (every
+/// probe of the limit validations bears this out), so a clean file takes two compiles. Otherwise, or when one of them
+/// fails, the levels Roblox runs are compiled first, then the ones that fold nothing.
+pub(crate) fn decide(source: &str, directive: bool) -> Verdict {
     let at = |optimization_level, debug_level| {
         rbxts_luau_check::compile(source, optimization_level, debug_level).err().map(|error| Refusal {
             error,
@@ -498,28 +311,78 @@ fn decide(source: &str) -> Verdict {
             debug_level,
         })
     };
+    let mut unfolded = None;
+    if !directive {
+        let level_0 = at(0, 1);
+        if level_0.is_none() {
+            return match at(2, 1) {
+                None => Verdict::Loads,
+                Some(level_2) => Verdict::Fails(at(1, 1).unwrap_or(level_2)),
+            };
+        }
+        unfolded = Some(level_0);
+    }
     if let Some(refusal) = at(1, 1).or_else(|| at(2, 1)) {
         return Verdict::Fails(refusal);
     }
-    match at(0, 1).or_else(|| at(1, 2)) {
+    match unfolded.unwrap_or_else(|| at(0, 1)).or_else(|| at(1, 2)) {
         Some(refusal) => Verdict::FoldingOnly(refusal),
         None => Verdict::Loads,
     }
 }
 
-/// The load check of a rendered file marked by [`check_main_chunk`]: an error when Luau refuses it where Roblox runs
-/// it, a warning when it loads only with Luau's constant folding. `lines` is the line each final statement starts on.
-pub(crate) fn load_check(check: &LoadCheck, luau: &str, lines: &[u32]) -> Option<P<Diagnostic>> {
-    let verdict = decide(luau);
-    let (Verdict::Fails(refusal) | Verdict::FoldingOnly(refusal)) = &verdict else { return None };
+/// The stack each load-check thread gets: Luau's compiler recurses up to its nesting limit (1000 levels), which took
+/// at most about 1.1 MiB of stack on the deepest shapes it accepts or refuses (`rbxts_luau_check`'s `stack` example,
+/// dev and measure profiles alike); 8 MiB leaves a wide margin.
+const LOAD_CHECK_STACK: usize = 8 << 20;
+
+/// [`decide`] for each `(source, directive)`, in parallel on up to one thread per core. Luau's compiler is reentrant.
+pub(crate) fn decide_all(jobs: &[(&str, bool)]) -> Vec<Verdict> {
+    let threads = std::thread::available_parallelism().map_or(1, usize::from).min(jobs.len());
+    if threads <= 1 {
+        return jobs.iter().map(|&(source, directive)| decide(source, directive)).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let work = || {
+        let mut done = Vec::new();
+        loop {
+            let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Some(&(source, directive)) = jobs.get(index) else { return done };
+            done.push((index, decide(source, directive)));
+        }
+    };
+    let mut verdicts: Vec<Option<Verdict>> = vec![None; jobs.len()];
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .filter_map(|_| std::thread::Builder::new().stack_size(LOAD_CHECK_STACK).spawn_scoped(scope, work).ok())
+            .collect();
+        // if no thread could be made, this one (the transform's, with its large stack) does the work
+        let mut results = if workers.is_empty() { work() } else { Vec::new() };
+        for worker in workers {
+            match worker.join() {
+                Ok(done) => results.extend(done),
+                Err(panic) => std::panic::resume_unwind(panic),
+            }
+        }
+        for (index, verdict) in results {
+            verdicts[index] = Some(verdict);
+        }
+    });
+    verdicts.into_iter().map(|verdict| verdict.expect("every file was checked")).collect()
+}
+
+/// The diagnostic for a rendered file's verdict: an error when Luau refuses it where Roblox runs it, a warning when it
+/// loads only with Luau's constant folding. `lines` is the line each final statement starts on.
+pub(crate) fn load_check_diagnostic(check: &LoadCheck, verdict: &Verdict, lines: &[u32]) -> Option<P<Diagnostic>> {
+    let (Verdict::Fails(refusal) | Verdict::FoldingOnly(refusal)) = verdict else { return None };
     let index = lines.partition_point(|&line| line <= refusal.error.line).saturating_sub(1);
-    let anchor = check.anchors.get(index).or(check.anchors.first())?;
+    let anchor = check.anchor(index);
     let luau_says = format!("\"{}\" (output line {})", refusal.error.message, refusal.error.line);
     let level = |optimization_level: u8| match check.directive {
         Some(directive) => format!("optimisation level {directive} (the file's --!optimize directive)"),
         None => format!("optimisation level {optimization_level}"),
     };
-    let diagnostic = match &verdict {
+    let diagnostic = match verdict {
         Verdict::Fails(refusal) => {
             let r#where = if refusal.optimization_level == 1 {
                 "Roblox's default when testing in Studio"
@@ -527,7 +390,7 @@ pub(crate) fn load_check(check: &LoadCheck, luau: &str, lines: &[u32]) -> Option
                 "what live games run"
             };
             PluginDiagnostic::error(
-                *anchor,
+                anchor,
                 format!(
                     "Luau {LUAU_VERSION} refuses this file at {} and debug level 1, {where}: {luau_says}. It would \
                      build, then fail to load.",
@@ -536,7 +399,7 @@ pub(crate) fn load_check(check: &LoadCheck, luau: &str, lines: &[u32]) -> Option
             )
         }
         _ => PluginDiagnostic::warning(
-            *anchor,
+            anchor,
             format!(
                 "This file loads only with Luau's constant folding: Luau {LUAU_VERSION} refuses it at {} and debug \
                  level {}: {luau_says}. It fails to load at --!optimize 0 or debug level 2.",
@@ -548,9 +411,9 @@ pub(crate) fn load_check(check: &LoadCheck, luau: &str, lines: &[u32]) -> Option
     Some(to_diagnostic(&diagnostic))
 }
 
-/// The top-level TS statement whose Luau holds the final statement `index`: the root ranges, moved by the
-/// statements inserted in front of them since (`plugin_file.front_inserts`) and by the spill table.
-fn statement_node(state: &TransformState<'_>, index: usize, spilled_at: Option<usize>) -> Option<P<Node>> {
+/// For each top-level TS statement, the index past its Luau in the final statement list: the root ranges, moved by
+/// the statements inserted in front of them since (`plugin_file.front_inserts`) and by the spill table.
+fn statement_ends(state: &TransformState<'_>, spilled_at: Option<usize>) -> Vec<(usize, P<Node>)> {
     let shift = |mut i: usize| {
         for &(at, count) in &state.plugin_file.front_inserts {
             if i >= at {
@@ -564,7 +427,7 @@ fn statement_node(state: &TransformState<'_>, index: usize, spilled_at: Option<u
         }
         i
     };
-    state.plugin_file.root_ranges.iter().find(|range| shift(range.end) > index).map(|range| range.node)
+    state.plugin_file.root_ranges.iter().map(|range| (shift(range.end), range.node)).collect()
 }
 
 /// The spilled hoists' table and fields.
@@ -804,6 +667,8 @@ fn rewrite_expr(expr: &mut Expr, spill: &Spill, misplaced: &mut bool) {
 
 #[cfg(test)]
 mod tests {
+    use rbxts_luau::BinaryOperator as B;
+
     use super::*;
 
     fn f() -> Expr {
@@ -815,55 +680,31 @@ mod tests {
         (0..count).map(|i| create::local(create::any_id(format!("{prefix}{i}")), Some(value()))).collect()
     }
 
-    fn uses(prefix: &str, count: usize) -> Vec<Expr> {
-        (0..count).map(|i| create::id(format!("{prefix}{i}"))).collect()
+    fn chain(count: usize, operator: B) -> Expr {
+        (1..count).fold(create::id("x0"), |e, i| create::binary(e, operator, create::id(format!("x{i}"))))
     }
 
     #[test]
-    fn the_pre_count_counts_every_name() {
+    fn the_pre_count_counts_every_name_and_whole_concat_chains() {
         // constants count: whether Luau folds them is the load check's question
-        let analysis = analyse(&locals("x", 195, &|| create::number(1.0)));
-        assert_eq!(analysis.main.locals, 195);
-        assert!(near_limit(&analysis));
-        let analysis = analyse(&locals("x", 150, &f));
-        assert!(!near_limit(&analysis), "{analysis:?}");
-        // nested blocks and loop variables add to the enclosing locals
+        assert_eq!(main_pressure(&locals("x", 195, &|| create::number(1.0))).locals, 195);
+        // nested blocks and loop variables add to the enclosing locals; function bodies are their own
         let mut statements = locals("x", 150, &f);
         let body = locals("y", 30, &f);
         statements.push(create::numeric_for(create::any_id("i"), create::number(1.0), create::number(3.0), None, body));
-        assert_eq!(analyse(&statements).main.locals, 150 + 4 + 30);
-        // a call with many arguments needs registers past the locals
+        statements.push(create::function_declaration(true, create::id("g"), vec![], false, locals("z", 100, &f)));
+        let pressure = main_pressure(&statements);
+        assert_eq!(pressure.locals, 150 + 4 + 30);
+        // a call's arguments, and a `..` chain, are held at once; a `+` chain is not
         let mut statements = locals("x", 150, &f);
-        statements.push(create::call_statement(create::call(create::id("print"), uses("x", 100))));
-        let analysis = analyse(&statements);
-        assert_eq!(analysis.main.locals, 150);
-        assert!(analysis.main.registers >= 250 && near_limit(&analysis), "{analysis:?}");
-        // deep nesting
-        let deep = (0..120).fold(create::number(0.0), |e, i| {
-            create::binary(e, rbxts_luau::BinaryOperator::Add, create::number(f64::from(i)))
-        });
-        let analysis = analyse(&[create::local(create::any_id("x"), Some(deep))]);
-        assert!(analysis.depth > 120 && near_limit(&analysis), "{analysis:?}");
+        statements.push(create::call_statement(create::call(create::id("print"), vec![chain(98, B::Concat)])));
+        assert_eq!(main_pressure(&statements).registers, 150 + 1 + 98);
+        let mut statements = locals("x", 150, &f);
+        statements.push(create::call_statement(create::call(create::id("print"), vec![chain(98, B::Add)])));
+        assert_eq!(main_pressure(&statements).registers, 150 + 1 + 2);
     }
 
-    #[test]
-    fn upvalues_are_the_enclosing_locals_a_function_and_its_nested_functions_use() {
-        // the main chunk declares a0…a149; `o` declares b0…b59 and returns a function that uses all of them
-        let mut statements = locals("a", 150, &f);
-        let mut body = locals("b", 60, &f);
-        let mut used = uses("a", 150);
-        used.extend(uses("b", 60));
-        let inner =
-            create::function(vec![], false, vec![create::call_statement(create::call(create::id("print"), used))]);
-        body.push(create::return_stmt(inner));
-        statements.push(create::function_declaration(true, create::id("o"), vec![], false, body));
-        let analysis = analyse(&statements);
-        let upvalues: Vec<u32> = analysis.functions.iter().map(|f| f.upvalues).collect();
-        assert_eq!(upvalues, vec![210, 150]);
-        assert!(near_limit(&analysis));
-    }
-
-    /// `count` lines of `local <name><i> = <value>`.
+    /// `count` lines of `local x<i> = <value>`.
     fn lua(count: usize, value: &str) -> String {
         (0..count).map(|i| format!("local x{i} = {value}\n")).collect()
     }
@@ -879,32 +720,47 @@ mod tests {
 
     #[test]
     fn luau_decides() {
-        assert_eq!(decide(&lua(200, "f()")), Verdict::Loads);
+        assert_eq!(decide(&lua(200, "f()"), false), Verdict::Loads);
+        assert_eq!(decide(&lua(200, "f()"), true), Verdict::Loads);
         // 201 calls: refused wherever it runs
-        let verdict = decide(&lua(201, "f()"));
+        let verdict = decide(&lua(201, "f()"), false);
         assert!(matches!(verdict, Verdict::Fails(_)), "{verdict:?}");
         let (o, d, message) = refused_at(&verdict).unwrap();
         assert_eq!((o, d), (1, 1));
         assert!(message.starts_with("Out of local registers"), "{message}");
         // 201 constants: folded at optimisation level 1+ and debug level 1 only
-        let verdict = decide(&lua(201, "1"));
+        let verdict = decide(&lua(201, "1"), false);
         assert!(matches!(verdict, Verdict::FoldingOnly(_)), "{verdict:?}");
         assert_eq!(refused_at(&verdict).map(|(o, d, _)| (o, d)), Some((0, 1)));
-        // what the old emulation got wrong: string comparisons (never folded), dead branches (skipped from level 1)
-        assert!(matches!(decide(&lua(201, "\"a\" == \"a\"")), Verdict::FoldingOnly(_) | Verdict::Fails(_)));
+        // dead branches: skipped from level 1
         let dead = format!("{}if false then\n{}end\n", lua(195, "f()"), lua(10, "f()"));
-        assert!(matches!(decide(&dead), Verdict::FoldingOnly(_)), "{:?}", decide(&dead));
-        // the file's directive wins
-        assert!(matches!(decide(&format!("--!optimize 0\n{}", lua(201, "1"))), Verdict::Fails(_)));
-        // upvalues and recursion depth are Luau's to judge too
-        let upvalues = format!("{}local g = function() print({}) end\n", lua(201, "f()"), {
-            (0..201).map(|i| format!("x{i}")).collect::<Vec<_>>().join(", ")
-        });
-        let verdict = decide(&upvalues);
-        assert!(matches!(verdict, Verdict::Fails(_)), "{verdict:?}");
+        assert!(matches!(decide(&dead, false), Verdict::FoldingOnly(_)), "{:?}", decide(&dead, false));
+        // the file's directive wins; with `--!optimize 2` level 0 is never compiled, so debug level 2 is asked
+        assert!(matches!(decide(&format!("--!optimize 0\n{}", lua(201, "1")), true), Verdict::Fails(_)));
+        let verdict = decide(&format!("--!optimize 2\n{}", lua(201, "1")), true);
+        assert_eq!(refused_at(&verdict).map(|(o, d, _)| (o, d)), Some((1, 2)), "{verdict:?}");
+        // upvalues and nesting depth are Luau's to judge too
+        let names = (0..201).map(|i| format!("x{i}")).collect::<Vec<_>>().join(", ");
+        let verdict = decide(&format!("{}local g = function() print({names}) end\n", lua(201, "f()")), false);
         assert!(refused_at(&verdict).unwrap().2.contains("upvalue"), "{verdict:?}");
-        let sum = (0..2000).map(|i| i.to_string()).collect::<Vec<_>>().join(" + ");
-        let verdict = decide(&format!("local s = {sum}\n"));
-        assert!(matches!(verdict, Verdict::Fails(_)), "{verdict:?}");
+        let elseifs = (0..1005).map(|i| format!("elseif y == {i} then\n\tprint({i})\n")).collect::<String>();
+        let verdict = decide(&format!("if y then\n\tprint(0)\n{elseifs}end\n"), false);
+        assert!(refused_at(&verdict).unwrap().2.starts_with("Exceeded allowed recursion depth"), "{verdict:?}");
+    }
+
+    #[test]
+    fn files_are_decided_in_parallel_as_one_by_one() {
+        let sources: Vec<String> = (0..40)
+            .map(|i| match i % 4 {
+                0 => lua(201, "f()"),
+                1 => lua(201, "1"),
+                2 => lua(150, "f()"),
+                _ => format!("--!optimize 2\n{}", lua(201, "1")),
+            })
+            .collect();
+        let jobs: Vec<(&str, bool)> = sources.iter().map(|s| (s.as_str(), s.starts_with("--!"))).collect();
+        let one_by_one: Vec<Verdict> = jobs.iter().map(|&(source, directive)| decide(source, directive)).collect();
+        assert_eq!(decide_all(&jobs), one_by_one);
+        assert_eq!(decide_all(&[]), Vec::new());
     }
 }

@@ -928,18 +928,30 @@ impl<'p> BuildSession<'p> {
             }
         }
         report.timings.render = start.elapsed();
-        // Luau's compiler on the files near one of its limits: an error keeps the file from being written
+        // Luau's compiler on every file a plugin emitted into, in parallel: an error keeps the file from being written
         let start = Instant::now();
-        for ((outcome, check), lines) in report.files.iter_mut().zip(&load_checks).zip(&statement_lines) {
-            let (Some(check), Some(lines), Some(luau)) = (check, lines, &outcome.luau) else { continue };
-            report.timings.load_checked += 1;
-            if let Some(diagnostic) = crate::plugins::spill::load_check(check, luau, lines) {
+        let checked: Vec<usize> = (0..report.files.len())
+            .filter(|&i| load_checks[i].is_some() && statement_lines[i].is_some() && report.files[i].luau.is_some())
+            .collect();
+        let jobs: Vec<(&str, bool)> = checked
+            .iter()
+            .map(|&i| {
+                let luau = report.files[i].luau.as_deref().expect("filtered above");
+                (luau, load_checks[i].as_ref().expect("filtered above").has_directive())
+            })
+            .collect();
+        let verdicts = crate::plugins::spill::decide_all(&jobs);
+        for (&i, verdict) in checked.iter().zip(&verdicts) {
+            let (Some(check), Some(lines)) = (&load_checks[i], &statement_lines[i]) else { continue };
+            if let Some(diagnostic) = crate::plugins::spill::load_check_diagnostic(check, verdict, lines) {
+                let outcome = &mut report.files[i];
                 if diagnostic.category() == Category::Error {
                     outcome.luau = None;
                 }
                 outcome.diagnostics.push(diagnostic);
             }
         }
+        report.timings.load_checked = checked.len() as u32;
         report.timings.load_check = start.elapsed();
         // a file that failed to render or Luau refuses fails the build as a transform error does
         if (!report.fatal.is_empty() || report.has_errors()) && !self.options.write_partial {

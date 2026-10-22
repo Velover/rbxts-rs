@@ -11,7 +11,7 @@
 //!   by-kind fallbacks, classes, files, root statements, imports).
 //! - [`lifecycle`]: activation from the tsconfig, `SetupBackend`, `FinishBackend`, the late-string key check, the
 //!   commit with atomic writes, and `explain_checker_diagnostic`.
-//! - `lowering`: `compile_binary` and `compile_object_literal`; `spill`: Luau's limits (pre-count, spill, load check).
+//! - `lowering`: `compile_binary` and `compile_object_literal`; `spill`: Luau's limits (spill, load check).
 //!
 //! **Offer kinds.** There are five: calls (with `new` and decorators), property keys, assignments, the expression
 //! and statement fallbacks, and the class hook. Within a kind, plugins are asked in registration order and the first
@@ -108,16 +108,15 @@
 //! any nested function); approved names and import names avoid the seam temporaries made before them in turn.
 //! roblox-ts's own temporaries keep its naming.
 //!
-//! **Luau's limits** (`spill`). Every file a plugin emitted anything into is checked once complete against Luau's
-//! limits: 200 live locals and 255 registers per function, 200 upvalues, and its nesting depth. A cheap pre-count
-//! (every local name, enclosing blocks, loop variables, `local exports` and `local TS` included) spills the
-//! `hoist_spillable` locals into one table local (`_spill`) when the main chunk has more than 200, and marks a file
-//! near a limit. Luau's own compiler (`rbxts_luau_check`, a pinned release built from source) then compiles the
-//! rendered file, its `--!optimize` directive honoured: refused at optimisation level 1 or 2 with debug level 1
-//! (Studio's default, live games) is an error with Luau's message, at the TS statement holding the line Luau names (a
-//! function's: the main chunk's statement containing it); refused only at `--!optimize 0` or debug level 2 is a
-//! warning (it loads only with Luau's constant folding). Other files, and builds without plugins, keep roblox-ts's
-//! behaviour.
+//! **Luau's limits** (`spill`). Every file a plugin emitted into is compiled by Luau 0.740 (`rbxts_luau_check`,
+//! pinned, built from source) once rendered, files in parallel, its `--!optimize` directive honoured: refused at
+//! optimisation level 1 or 2 with debug level 1 (Studio's default, live games) is an error quoting Luau's message
+//! (local registers, registers, upvalues, nesting depth), at the TS statement holding the line Luau names (a
+//! function's: the main chunk's statement containing it), and the file is not written; refused only at
+//! `--!optimize 0` or debug level 2 is a warning (it loads only with Luau's constant folding). Before that, a cheap
+//! pre-count of the main chunk (every local name, `local exports` and `local TS` included, and the registers an
+//! expression holds) spills the `hoist_spillable` locals into one table local (`_spill`) past 200 locals or 255
+//! registers. Other files, and builds without plugins, keep roblox-ts's behaviour.
 
 pub mod backend;
 pub mod dispatch;
