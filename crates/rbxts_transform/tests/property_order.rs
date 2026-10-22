@@ -2,7 +2,8 @@
 //! members, bases listed against their declaration order, a generic base, computed (late-bound) members, classes, an
 //! intersection, declaration merging with a module augmentation, a base in another file whose members' offsets fall
 //! inside the derived interface's range, type literals (alone, in an intersection, instantiated), object literal
-//! types with a spread (alone and as an interface's base) and homomorphic mapped types.
+//! types with a spread (alone and as an interface's base; class instances, falsy and object unions and generic operands
+//! spread) and homomorphic mapped types (a filtering `as` clause included).
 //!
 //! - The rebuilt order must equal TypeScript 5's, `expected-ts5.txt`, which `tests/property_order/ts5props.cjs`
 //!   writes with TypeScript 5.9.3 (the lines are compared as sorted sets: the two compilers list files in different
@@ -143,6 +144,15 @@ fn run(check_first: bool) {
         // Homomorphic mapped types sorted by their source's declarations.
         "src/literals.ts var partialLeafValue: kind, label, size",
         "src/literals.ts var partialBothValue: a, b",
+        // Spreads: a falsy union part, a union of objects, a generic operand, all sorted by declaration.
+        "src/spreads.ts var andSpreadValue: k1, k3, k2, k0",
+        "src/spreads.ts var emptySpreadValue: t1, t3, t2, t0",
+        "src/spreads.ts var countSpreadValue: n1, n3, n2, n0",
+        "src/spreads.ts var unionFirstValue: u2, u1, q, r",
+        "src/spreads.ts var unionSecondValue: u3, u2, q, r",
+        "src/spreads.ts var madeValue: a1, a2, gz, gy, gx2, gx1, gx",
+        // A filtering `as` clause sorted by declaration.
+        "src/spreads.ts var filteredValue: s2, sd, s1",
     ] {
         assert!(raw.contains(&line), "TypeScript 7 order {line:?} not found in:\n{}", raw.join("\n"));
     }

@@ -30,3 +30,19 @@ src/literals.ts var plainValue: pz, py, px
 src/literals.ts var spreadValue: sd, sa, sb, sc
 src/merge.ts decl Settings: volume, theme, scale
 src/merge.ts decl Settings: volume, theme, scale
+src/spreads.ts decl GX: gx2, gx1
+src/spreads.ts decl Instance: m, f, g, p, z
+src/spreads.ts decl Source: s2, s1
+src/spreads.ts decl SourceD: sd, s1, s2
+src/spreads.ts decl UFirst: u2, u1
+src/spreads.ts decl USecond: u3, u2
+src/spreads.ts var andSpreadValue: k0, k3, k2, k1
+src/spreads.ts var countSpreadValue: n0, n3, n2, n1
+src/spreads.ts var emptySpreadValue: t0, t3, t2, t1
+src/spreads.ts var filteredValue: sd, s1, s2
+src/spreads.ts var madeValue: gy, a1, a2, gz, gx2, gx1, gx
+src/spreads.ts var uFirst: u2, u1
+src/spreads.ts var uSecond: u3, u2
+src/spreads.ts var unionFirstValue: r, u2, u1, q
+src/spreads.ts var unionSecondValue: r, u3, u2, q
+src/spreads.ts var withInstanceValue: f, z, m, g, q

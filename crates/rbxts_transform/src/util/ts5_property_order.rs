@@ -25,16 +25,21 @@
 //!   which TypeScript 7 sorts.
 //!
 //! [`ts5_property_order`] rebuilds TypeScript 5's order, recursively, for class and interface types (declared, or
-//! references to generic ones), intersections, type literals, object literal types (spreads included), instantiations
-//! of anonymous types (in their target's order) and homomorphic mapped types without an `as` clause. Elsewhere it
-//! keeps TypeScript 7's order:
+//! references to generic ones), intersections, type literals, instantiations of anonymous types (in their target's
+//! order), homomorphic mapped types and object literal types. For a spread it follows `checkObjectLiteral`: only
+//! spreadable members, union operands as `tryMergeUnionOfObjectTypeAndEmptyObject` and `mapType` treat them, and a
+//! generic operand's intersection, whose object parts it orders one by one. Elsewhere it keeps TypeScript 7's order:
 //! - mapped types over a union of keys (`Record<K, V>`, `Pick`, `{ [P in K]: ... }`): TypeScript 5 follows the
 //!   union's type ids there, which no declaration gives (Flamework's serializer sorts these runs itself);
-//! - mapped types with an `as` clause, object literals spreading a generic operand (TypeScript 5 makes an
-//!   intersection there), unions, tuples.
+//! - properties an `as` clause renames (``as `get${K}` ``): TypeScript 5 lists them in `T`'s order but keeps no link
+//!   to the property they came from, so they go after the others (a filtering `as` clause keeps the link, and its
+//!   properties are placed);
+//! - unions, tuples.
 
-use tsrs_ast::{Kind, Node, Symbol, SymbolFlags};
-use tsrs_checker::{Checker, ObjectFlags, Type, TypeFlags};
+use tsrs_ast::{Kind, ModifierFlags, Node, Symbol, SymbolFlags};
+use tsrs_checker::{
+    Checker, MappedType, ObjectFlags, Type, TypeFlags, get_declaration_modifier_flags_from_symbol_exported,
+};
 use tsrs_core::P;
 
 /// Deeper than any real inheritance chain; past it the order is TypeScript 7's.
@@ -180,19 +185,167 @@ fn anonymous_names(checker: &mut Checker, t: P<Type>, stack: &mut Vec<P<Type>>) 
     names
 }
 
-/// `getSpreadType`'s order: the right side's names, then the left side's it lacks.
-fn spread(left: Option<Vec<&'static str>>, right: Vec<&'static str>) -> Vec<&'static str> {
-    let mut names = Vec::with_capacity(right.len());
-    for name in right.into_iter().chain(left.into_iter().flatten()) {
+/// `getSpreadType`'s order for two non-generic object types: the right side's names, then the left side's it lacks.
+fn spread(left: Vec<&'static str>, right: Vec<&'static str>) -> Vec<&'static str> {
+    let mut names = Vec::with_capacity(right.len() + left.len());
+    for name in right.into_iter().chain(left) {
         push_unique(&mut names, name);
     }
     names
 }
 
+/// One side of a spread: a non-generic object type's names (spreadable ones only, in order), or a generic type.
+enum Part {
+    Object(Vec<&'static str>),
+    Generic,
+}
+
+/// `getSpreadType(left, right)` on the spread so far: empty (`emptyObjectType`), one object type, or an
+/// intersection of object types and generic types (5.9.3:67526-67536: a generic side makes an intersection; a
+/// non-generic right side after it is spread into the intersection's last part when that part is not generic).
+fn spread_onto(state: &mut Vec<Part>, right: Part) {
+    match right {
+        Part::Generic => {
+            // `isEmptyObjectType(left)`: the generic side alone.
+            if state.iter().all(|p| matches!(p, Part::Object(names) if names.is_empty())) {
+                state.clear();
+            }
+            state.push(Part::Generic);
+        }
+        Part::Object(right) => match state.last_mut() {
+            Some(Part::Object(left)) => *left = spread(std::mem::take(left), right),
+            _ => state.push(Part::Object(right)),
+        },
+    }
+}
+
+/// `isSpreadableProperty` (5.9.3:67555) and not private or protected (`getSpreadType` and
+/// `getAnonymousPartialType` skip those): a class's methods, accessors and `#private` members are not spread.
+fn is_spread(property: P<Symbol>) -> bool {
+    let declarations = property.declarations();
+    let in_class = |d: &P<Node>| d.parent().is_some_and(tsrs_ast::is_class_like);
+    if declarations.iter().any(|d| in_class(d) && d.name().is_some_and(|n| n.kind() == Kind::PrivateIdentifier)) {
+        return false;
+    }
+    if property.flags().intersects(SymbolFlags::Method | SymbolFlags::GetAccessor | SymbolFlags::SetAccessor)
+        && declarations.iter().any(in_class)
+    {
+        return false;
+    }
+    !get_declaration_modifier_flags_from_symbol_exported(property)
+        .intersects(ModifierFlags::Private | ModifierFlags::Protected)
+}
+
+/// `isGenericObjectType`: a type variable, a generic mapped type, or an intersection with one.
+fn is_generic(checker: &mut Checker, t: P<Type>) -> bool {
+    let flags = t.flags();
+    if flags.intersects(TypeFlags::Instantiable) {
+        return true;
+    }
+    if flags.intersects(TypeFlags::Intersection) {
+        return t.types().iter().any(|&part| is_generic(checker, part));
+    }
+    if flags.intersects(TypeFlags::Object) && t.object_flags().intersects(ObjectFlags::Mapped) {
+        MappedType::resolve_components(checker, t);
+        return t.as_mapped_type().constraint_type().is_some_and(|c| c.flags().intersects(TypeFlags::Instantiable));
+    }
+    false
+}
+
+/// `isEmptyObjectTypeOrSpreadsIntoEmptyObject` (5.9.3:67435): a union part a spread drops.
+fn spreads_into_empty(checker: &mut Checker, t: P<Type>) -> bool {
+    if t.flags().intersects(
+        TypeFlags::Null
+            | TypeFlags::Undefined
+            | TypeFlags::BooleanLike
+            | TypeFlags::NumberLike
+            | TypeFlags::BigIntLike
+            | TypeFlags::StringLike
+            | TypeFlags::EnumLike
+            | TypeFlags::NonPrimitive
+            | TypeFlags::Index,
+    ) {
+        return true;
+    }
+    t.flags().intersects(TypeFlags::Object)
+        && checker.get_properties_of_type_exported(t).is_empty()
+        && checker.get_index_infos_of_type_exported(t).is_empty()
+        && !checker.type_has_call_or_construct_signatures_exported(t)
+}
+
+/// The union member `t` was spread from: TypeScript 5 spreads each member (`mapType`), so `t` is one member of a
+/// union of object literal types. The member all of whose spread names `t` has, sharing the most declarations with
+/// `t`'s properties.
+fn spread_member(checker: &mut Checker, members: &[P<Type>], t: P<Type>) -> Option<P<Type>> {
+    let own = checker.get_properties_of_type_exported(t);
+    let mut best: Option<(usize, P<Type>)> = None;
+    let mut candidates = 0;
+    for &member in members {
+        let properties: Vec<P<Symbol>> =
+            checker.get_properties_of_type_exported(member).iter().copied().filter(|&p| is_spread(p)).collect();
+        if !properties.iter().all(|p| own.iter().any(|q| q.name() == p.name())) {
+            continue;
+        }
+        candidates += 1;
+        let shared = properties
+            .iter()
+            .filter(|p| {
+                own.iter().any(|q| q.name() == p.name() && q.declarations().iter().any(|d| p.declarations().contains(d)))
+            })
+            .count();
+        if best.is_none_or(|(score, _)| shared > score) {
+            best = Some((shared, member));
+        }
+    }
+    match best {
+        Some((score, member)) if score > 0 || candidates == 1 => Some(member),
+        _ => None,
+    }
+}
+
+/// A spread operand as a [`Part`]: `Some(None)` when it spreads nothing (a primitive, `{}`, a union of those),
+/// `None` when the order cannot be rebuilt (TypeScript 7's then).
+fn operand_part(
+    checker: &mut Checker,
+    t: P<Type>,
+    mut operand: P<Type>,
+    stack: &mut Vec<P<Type>>,
+) -> Option<Option<Part>> {
+    if is_generic(checker, operand) {
+        return Some(Some(Part::Generic));
+    }
+    if operand.flags().intersects(TypeFlags::Union) {
+        // `tryMergeUnionOfObjectTypeAndEmptyObject` (5.9.3:67437): the parts that spread into nothing go; one object
+        // left spreads alone (as a partial, in its order); several are spread one by one (`mapType`), and `t` is
+        // what one of them gave.
+        let parts: Vec<P<Type>> =
+            operand.types().iter().copied().filter(|&p| !spreads_into_empty(checker, p)).collect();
+        operand = match parts.as_slice() {
+            [] => return Some(None),
+            [only] => *only,
+            several => spread_member(checker, several, t)?,
+        };
+        if is_generic(checker, operand) {
+            return Some(Some(Part::Generic));
+        }
+    }
+    if spreads_into_empty(checker, operand) {
+        return Some(None);
+    }
+    if !operand.flags().intersects(TypeFlags::Object | TypeFlags::Intersection) {
+        return None;
+    }
+    let properties = checker.get_properties_of_type_exported(operand);
+    let spread_names: Vec<&'static str> =
+        properties.iter().copied().filter(|&p| is_spread(p)).map(|p| p.name()).collect();
+    let names = ts5_names(checker, operand, stack).into_iter().filter(|n| spread_names.contains(n)).collect();
+    Some(Some(Part::Object(names)))
+}
+
 /// `checkObjectLiteral` (5.9.3:78608): the members since the last spread form an object type in source order (a
 /// repeated name keeps its first place); each such run, and each spread operand, is spread onto what came before it
-/// (`getSpreadType`). `None` for a generic operand (TypeScript 5 makes an intersection then, not this type) and for
-/// a union of several object types.
+/// (`getSpreadType`). With a generic operand the literal's type is an intersection; `t` is then one of its object
+/// parts (the one with `t`'s names). `None` where the order cannot be rebuilt.
 fn object_literal_names(
     checker: &mut Checker,
     t: P<Type>,
@@ -200,12 +353,13 @@ fn object_literal_names(
     stack: &mut Vec<P<Type>>,
 ) -> Option<Vec<&'static str>> {
     let properties = checker.get_properties_of_type_exported(t);
-    let mut result: Option<Vec<&'static str>> = None;
+    let mut state: Vec<Part> = Vec::new();
+    let mut spreads = false;
     let mut run: Vec<&'static str> = Vec::new();
     for &member in literal.properties() {
         if member.kind() != Kind::SpreadAssignment {
             // The property of `t` this member declares, else the member's own symbol (a member a later spread
-            // overrode); a computed name nothing kept is not placed.
+            // overrode, or one of another part); a computed name nothing kept is not placed.
             let name = properties
                 .iter()
                 .find(|p| p.declarations().contains(&member))
@@ -216,46 +370,45 @@ fn object_literal_names(
             }
             continue;
         }
+        spreads = true;
         if !run.is_empty() {
-            result = Some(spread(result, std::mem::take(&mut run)));
+            spread_onto(&mut state, Part::Object(std::mem::take(&mut run)));
         }
-        let mut operand = checker.get_type_at_location(member.expression()?);
-        if operand.flags().intersects(TypeFlags::Union) {
-            // `T | undefined` spreads as `T` (the nullish parts spread nothing).
-            let mut parts =
-                operand.types().iter().filter(|p| !p.flags().intersects(TypeFlags::Nullable | TypeFlags::Void));
-            match (parts.next(), parts.next()) {
-                (Some(&only), None) => operand = only,
-                _ => return None,
-            }
+        let operand = checker.get_type_at_location(member.expression()?);
+        if let Some(part) = operand_part(checker, t, operand, stack)? {
+            spread_onto(&mut state, part);
         }
-        if operand.flags().intersects(TypeFlags::Instantiable) {
-            return None;
-        }
-        if !operand.flags().intersects(TypeFlags::Object | TypeFlags::Intersection) {
-            // A primitive spreads nothing (`getSpreadType` returns the left side).
-            continue;
-        }
-        let names = ts5_names(checker, operand, stack);
-        result = Some(spread(result, names));
     }
-    Some(match result {
-        None => run,
-        Some(left) if run.is_empty() => left,
-        Some(left) => spread(Some(left), run),
-    })
+    if !spreads {
+        return Some(run);
+    }
+    if !run.is_empty() {
+        spread_onto(&mut state, Part::Object(run));
+    }
+    // The object part that is `t`: the one with exactly `t`'s names, else the one with most of them.
+    let own: Vec<&'static str> = properties.iter().map(|p| p.name()).collect();
+    let score = |names: &Vec<&'static str>| {
+        let common = names.iter().filter(|n| own.contains(n)).count();
+        (common == own.len() && common == names.len(), common)
+    };
+    state
+        .into_iter()
+        .filter_map(|part| match part {
+            Part::Object(names) => Some(names),
+            Part::Generic => None,
+        })
+        .max_by_key(|names| score(names))
 }
 
-/// A homomorphic mapped type (`keyof T` constraint, no `as` clause) in the order of `T`'s apparent type
-/// (`resolveMappedTypeMembers`, 5.9.3:63030). `None` for the others: TypeScript 7's order.
+/// A homomorphic mapped type (`keyof T` constraint) in the order of `T`'s apparent type (`resolveMappedTypeMembers`,
+/// 5.9.3:63030, which goes through `T`'s properties in order). With an `as` clause a property goes where the
+/// property of `T` it shares a declaration with is (TypeScript 5 links them unless the clause renames); a renamed
+/// one keeps TypeScript 7's order after them. `None` for a mapped type over a key union: TypeScript 7's order.
 fn mapped_names(checker: &mut Checker, t: P<Type>, stack: &mut Vec<P<Type>>) -> Option<Vec<&'static str>> {
     // Resolving the members resolves the modifiers type.
-    checker.get_properties_of_type_exported(t);
+    let properties = checker.get_properties_of_type_exported(t);
     let mapped = t.as_mapped_type();
     let declaration = mapped.declaration.get()?.as_mapped_type_node();
-    if declaration.name_type.is_some() {
-        return None;
-    }
     let constraint = declaration.type_parameter.as_type_parameter_declaration().constraint?;
     if constraint.kind() != Kind::TypeOperator || constraint.as_type_operator_node().operator != Kind::KeyOfKeyword {
         return None;
@@ -263,7 +416,16 @@ fn mapped_names(checker: &mut Checker, t: P<Type>, stack: &mut Vec<P<Type>>) -> 
     let modifiers = mapped.modifiers_type.get()?;
     let apparent = checker.get_apparent_type_exported(modifiers);
     stack.push(t);
-    let names = ts5_names(checker, apparent, stack);
+    let source_names = ts5_names(checker, apparent, stack);
     stack.pop();
-    Some(names)
+    if declaration.name_type.is_none() {
+        return Some(source_names);
+    }
+    let source = order_by_names(checker.get_properties_of_type_exported(apparent), &source_names);
+    let rank = |p: &P<Symbol>| {
+        source.iter().position(|s| s.declarations().iter().any(|d| p.declarations().contains(d))).unwrap_or(usize::MAX)
+    };
+    let mut ranked: Vec<(usize, &'static str)> = properties.iter().map(|p| (rank(p), p.name())).collect();
+    ranked.sort_by_key(|&(index, _)| index);
+    Some(ranked.into_iter().map(|(_, name)| name).collect())
 }
