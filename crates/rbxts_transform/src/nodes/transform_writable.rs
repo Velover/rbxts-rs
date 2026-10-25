@@ -55,6 +55,9 @@ pub fn transform_writable_expression(
             // rbxts-rs: a plugin's `property_key` for a string literal key (DESIGN §11.5)
             let position = crate::plugins::dispatch::write_position(node);
             if let Some(key) = crate::plugins::dispatch::rewritten_key(state, node, position) {
+                // a computed argument is still evaluated, after the receiver
+                let statements = crate::plugins::dispatch::discarded_key_statements(index);
+                let expression = crate::plugins::dispatch::place_key_statements(prereqs, expression, statements);
                 let base = if read_after_write {
                     prereqs.push_to_var_if_non_id(expression, "exp")
                 } else {

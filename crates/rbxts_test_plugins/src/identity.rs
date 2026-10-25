@@ -6,9 +6,10 @@
 //!   `compile_expr(call.node)` or `compile_call(Callee::Original, all Original)`. Calls of the compiler-types
 //!   (roblox-ts's macros) and of `@rbxts/types` (where some of them are declared) are declined, as `compile_call`
 //!   cannot pass argument slots to a macro.
-//! - [`IdentityMode::Key`]: every property access (and string-keyed element access) through `property_key`,
-//!   answered with the written key. The markers are every property name the program's accesses use, collected in
-//!   `setup`, so every access whose receiver has the member it reads is offered.
+//! - [`IdentityMode::Key`]: every property and element access through `property_key`, answered with its key (which
+//!   leaves the access as written), computed keys (`AccessSite::key` `None`) declined. The markers are every property
+//!   name the program's accesses use, collected in `setup`, so every access whose receiver has the member it reads is
+//!   offered.
 //! - [`IdentityMode::Assign`]: every assignment, update and `delete` of a property through the `assignment` hook,
 //!   lowered with `compile_expr(site.node)`.
 //! - [`IdentityMode::Fallback`]: the expression fallback for most expression kinds, each lowered with
@@ -195,7 +196,11 @@ impl PluginInstance for IdentityInstance {
     }
 
     fn property_key(&self, _: &mut Cx<'_>, access: &AccessSite, _: Tag) -> PResult<Claim<String>> {
-        Ok(Claim::Take(access.key.to_owned()))
+        // a computed key passes through: it can only be declined
+        Ok(match access.key {
+            Some(key) => Claim::Take(key.to_owned()),
+            None => Claim::Decline,
+        })
     }
 
     fn assignment(&self, cx: &mut Cx<'_>, site: &AssignSite, _: Tag) -> PResult<Claim<LuauExpr>> {

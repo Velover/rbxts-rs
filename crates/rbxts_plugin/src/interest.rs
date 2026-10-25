@@ -74,18 +74,15 @@ impl Interest {
         self.callee_markers.push((marker, tag));
     }
 
-    /// Property accesses `obj.k` / `obj["k"]` in any position whose receiver's type carries `marker`. They reach
-    /// [`crate::PluginInstance::property_key`].
-    ///
-    /// Not dispatched yet: registering it fails the build until S2.
+    /// Property accesses `obj.k` / `obj[e]` in any position whose receiver's type carries `marker`, computed keys
+    /// included ([`crate::AccessSite::key`]). They reach [`crate::PluginInstance::property_key`].
     pub fn accesses_by_marker(&mut self, marker: &'static str, tag: Tag) {
         self.access_markers.push((marker, tag));
     }
 
     /// Assignments, compound assignments, `++` / `--` and `delete` whose target is a property access; the
-    /// property's symbol is classified with role [`crate::SymbolRole::AssignReceiver`].
-    ///
-    /// Not dispatched yet: registering it fails the build until S2.
+    /// property's symbol is classified with role [`crate::SymbolRole::AssignReceiver`]. Computed keys are offered
+    /// too ([`crate::AssignSite::key`]).
     pub fn assignments_by_receiver_symbol(&mut self) {
         self.assignments_by_receiver_symbol = true;
     }

@@ -856,10 +856,10 @@ fn access_candidates(state: &mut TransformState<'_>, host: &PluginHost, receiver
     matched.into_iter().map(|i| (host.access_markers[i].0, host.access_markers[i].2)).collect()
 }
 
-/// The key a plugin's `property_key` gave the access `access` (a PropertyAccessExpression, or an
-/// ElementAccessExpression with a string literal key), when it differs from the written one. `None` lowers the
-/// access as written. Asked once per access node; every lowering of it (a read, a write, a callee) gets the same
-/// answer.
+/// The key a plugin's `property_key` gave the access `access` (a PropertyAccessExpression or an
+/// ElementAccessExpression), when it differs from the site's key. `None` lowers the access as written. Asked once
+/// per access node; every lowering of it (a read, a write, a callee) gets the same answer. A caller that uses a
+/// rewritten key in place of a computed argument still evaluates the argument ([`replaced_key_statements`]).
 #[inline]
 pub fn rewritten_key(state: &mut TransformState<'_>, access: P<Node>, position: AccessPosition) -> Option<String> {
     let host = state.plugins?;
@@ -890,38 +890,13 @@ fn property_key_offer(
     access: P<Node>,
     position: AccessPosition,
 ) -> Option<String> {
-    let (receiver, key) = match access.kind() {
-        Kind::PropertyAccessExpression => {
-            let property = access.as_property_access_expression();
-            (property.expression, Some(property.name.text()))
-        }
-        Kind::ElementAccessExpression => {
-            let element = access.as_element_access_expression();
-            (element.expression, literal_key(element.argument_expression))
-        }
-        _ => return None,
-    };
+    let (receiver, key_node) = access_parts(access)?;
     let candidates = access_candidates(state, host, receiver);
     if candidates.is_empty() {
         return None;
     }
-    let Some(key) = key else {
-        // never silent: the plugin would see the access lowered with its written key
-        let mut named = Vec::new();
-        for (plugin, _) in candidates {
-            if !named.contains(&plugin) {
-                named.push(plugin);
-                let message = format!(
-                    "plugin `{}`: this access matches its accesses_by_marker interest, but its key is computed \
-                     (`obj[k]`), which AccessSite cannot carry, so it is not offered",
-                    host.name(plugin)
-                );
-                state.internal_error(access, &message);
-            }
-        }
-        return None;
-    };
-    let site = AccessSite { node: access, receiver, key, position };
+    let key = access_key(state, access, key_node);
+    let site = AccessSite { node: access, receiver, key, key_node, position };
     for (plugin, tag) in candidates {
         let start = state.plugin_file.effect_mark(0);
         let (result, frame) =
@@ -929,10 +904,21 @@ fn property_key_offer(
                 instance.property_key(cx, &site, tag)
             });
         match result {
-            // the written key lowers the access as written
+            Ok(Claim::Take(_)) if key.is_none() => {
+                // a computed key has no text to rewrite: the access stays as written, and the build fails
+                let message = format!(
+                    "plugin `{}` took a property key whose key is computed (AccessSite.key is None): such a site can \
+                     only be declined or failed",
+                    host.name(plugin)
+                );
+                state.internal_error(access, &message);
+                return None;
+            }
+            // the key as it is lowers the access as written
             Ok(Claim::Take(new_key)) => {
-                state.plugin_file.emitted |= new_key != key;
-                return (new_key != key).then_some(new_key);
+                let changed = Some(new_key.as_str()) != key;
+                state.plugin_file.emitted |= changed;
+                return changed.then_some(new_key);
             }
             Ok(Claim::Decline) => {
                 let now = state.plugin_file.effect_mark(0);
@@ -946,6 +932,79 @@ fn property_key_offer(
         }
     }
     None
+}
+
+/// The receiver and key node of a property access (its name) or element access (its argument).
+fn access_parts(access: P<Node>) -> Option<(P<Node>, P<Node>)> {
+    match access.kind() {
+        Kind::PropertyAccessExpression => {
+            let property = access.as_property_access_expression();
+            Some((property.expression, property.name))
+        }
+        Kind::ElementAccessExpression => {
+            let element = access.as_element_access_expression();
+            Some((element.expression, element.argument_expression))
+        }
+        _ => None,
+    }
+}
+
+/// `AccessSite.key` / `AssignSite.key`: a property access's name; an element access's argument when it is a string
+/// literal, else the value of its type when that is a single string literal (as Flamework's TS transformer reads a
+/// key from a literal type: `obj[k as "a"]`, `obj[k]` with `k: "a"`, a string enum member). Numeric keys are `None`.
+fn access_key(state: &mut TransformState<'_>, access: P<Node>, key_node: P<Node>) -> Option<&'static str> {
+    if access.kind() == Kind::PropertyAccessExpression {
+        return Some(key_node.text());
+    }
+    if let Some(text) = literal_key(key_node) {
+        return Some(text);
+    }
+    let t = state.get_type(key_node);
+    crate::util::types::string_literal_value(t)
+}
+
+/// A rewritten key replaced the computed argument of the element access `access` (not compiled yet): the argument
+/// is still evaluated for its effects, its value dropped. The statements that do it, to place after the receiver is
+/// evaluated (empty for a literal argument, a property access, or an argument without effects).
+pub(crate) fn replaced_key_statements(state: &mut TransformState<'_>, access: P<Node>) -> Vec<Stmt> {
+    if access.kind() != Kind::ElementAccessExpression {
+        return Vec::new();
+    }
+    let argument = access.as_element_access_expression().argument_expression;
+    if matches!(
+        skip_downwards(argument).kind(),
+        Kind::StringLiteral | Kind::NoSubstitutionTemplateLiteral | Kind::NumericLiteral
+    ) {
+        return Vec::new();
+    }
+    let mut prereqs = Prereqs::new();
+    let value = crate::nodes::expressions::transform_expression::transform_expression(state, &mut prereqs, argument);
+    let mut statements = prereqs.statements;
+    statements.extend(discarded_key_statements(value));
+    statements
+}
+
+/// The compiled argument of an element access whose key a plugin rewrote: evaluated as a statement for its
+/// effects, or nothing when it has none.
+pub(crate) fn discarded_key_statements(index: Expr) -> Vec<Stmt> {
+    use crate::util::evaluation::effects::{can_discard, get_effects};
+    if can_discard(&get_effects(&index)) { Vec::new() } else { wrap_expression_statement(index) }
+}
+
+/// Places the statements that evaluate a replaced key ([`replaced_key_statements`], [`discarded_key_statements`])
+/// after the receiver `base`: `base` is bound to a local first when the key's effects could change it.
+pub(crate) fn place_key_statements(prereqs: &mut Prereqs, base: Expr, statements: Vec<Stmt>) -> Expr {
+    use crate::util::evaluation::effects::{effects_commute, get_effects, get_effects_of_statements};
+    if statements.is_empty() {
+        return base;
+    }
+    let base = if effects_commute(&get_effects(&base), &get_effects_of_statements(&statements)) {
+        base
+    } else {
+        prereqs.push_to_var(base, "exp")
+    };
+    prereqs.push_list(statements);
+    base
 }
 
 /// The position of an access as roblox-ts lowers it for a write: the target of `=` (or of a destructuring or a
@@ -1053,16 +1112,7 @@ fn claim_assignment_slow(
         return None;
     }
     let (target, op, value) = assignment_parts(node)?;
-    let (receiver, key) = match target.kind() {
-        Kind::PropertyAccessExpression => {
-            let property = target.as_property_access_expression();
-            (property.expression, Some(property.name.text()))
-        }
-        _ => {
-            let element = target.as_element_access_expression();
-            (element.expression, literal_key(element.argument_expression))
-        }
-    };
+    let (receiver, key_node) = access_parts(target)?;
     let symbol = callee_symbol(state, Some(skip_downwards(receiver)))?;
     let mut candidates = Vec::new();
     for (plugin, entry) in host.plugins.iter().enumerate() {
@@ -1076,18 +1126,8 @@ fn claim_assignment_slow(
     if candidates.is_empty() {
         return None;
     }
-    let Some(key) = key else {
-        for &(plugin, _) in &candidates {
-            let message = format!(
-                "plugin `{}`: this assignment's receiver matches its assignments_by_receiver_symbol interest, but its \
-                 key is computed (`obj[k]`), which AssignSite cannot carry, so it is not offered",
-                host.name(plugin)
-            );
-            state.internal_error(node, &message);
-        }
-        return None;
-    };
-    let site = AssignSite { node, target, receiver, key, op, value, value_used: !is_used_as_statement(node) };
+    let key = access_key(state, target, key_node);
+    let site = AssignSite { node, target, receiver, key, key_node, op, value, value_used: !is_used_as_statement(node) };
     state.plugin_file.in_assign_offer.insert(node);
     let value = claim_assignment_offer(state, host, prereqs, &site, &candidates);
     state.plugin_file.in_assign_offer.remove(&node);

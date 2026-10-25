@@ -166,8 +166,18 @@ pub struct AccessSite {
     /// The PropertyAccessExpression or ElementAccessExpression.
     pub node: P<Node>,
     pub receiver: P<Node>,
-    /// The property name, or the string literal of an element access.
-    pub key: &'static str,
+    /// The key, when it is known at compile time: the property name of `obj.k`, or for `obj[e]` the value of
+    /// `e`'s type when that type is a single string literal (`obj["k"]`, `obj[k as "k"]`, `obj[k]` with
+    /// `k: "k"`, a string enum member), read from the type as Flamework's TS transformer reads literal keys.
+    ///
+    /// `None` for any other key (`obj[k]` with `k: string`, a union of literals, a template). A numeric key
+    /// (`obj[0]`, a number literal type) is `None` too: Luau tables tell `0` from `"0"`, and roblox-ts offsets
+    /// array indices, so no string key stands for it. A `None` site can only be declined or failed
+    /// ([`crate::PluginInstance::property_key`]): there is no key to rewrite.
+    pub key: Option<&'static str>,
+    /// The key's node: the name Identifier of `obj.k`, the argument expression of `obj[e]` (as written,
+    /// parentheses and casts included).
+    pub key_node: P<Node>,
     pub position: AccessPosition,
 }
 
@@ -203,7 +213,13 @@ pub struct AssignSite {
     /// The access being assigned: `receiver.key` or `receiver[key]`.
     pub target: P<Node>,
     pub receiver: P<Node>,
-    pub key: &'static str,
+    /// The key, when it is known at compile time, by the rule of [`AccessSite::key`]: the property name, or the
+    /// value of a single string literal type of the element access's argument. `None` for a computed key
+    /// (numeric keys included); the hook then reads the key from `key_node` (`cx.compile_expr(site.key_node)`), or
+    /// declines.
+    pub key: Option<&'static str>,
+    /// The key's node: the name Identifier of `receiver.key`, the argument expression of `receiver[e]`.
+    pub key_node: P<Node>,
     pub op: AssignOp,
     /// The right-hand side; `None` for `++`, `--` and `delete`.
     pub value: Option<P<Node>>,
@@ -372,6 +388,9 @@ pub struct JsDocLink {
     pub name: P<Node>,
     /// What the name resolves to on this instance's checker (aliases not skipped), if it resolves.
     pub symbol: Option<P<Symbol>>,
+    /// The display text after the name: `text` in `{@link Name text}` and in `{@link Name | text}`, trimmed (the
+    /// `|` and the spaces around it dropped). `None` when there is none (`{@link Name}`, `{@link Name |}`).
+    pub text: Option<&'static str>,
 }
 
 /// The file being transformed.

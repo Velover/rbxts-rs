@@ -59,23 +59,26 @@
 //! is offered too. Not offered: assignment targets and `delete` operands (lowered as writes), binding patterns, and
 //! object literals a hook lowers with `compile_object_literal`.
 //!
-//! **Property keys** (`accesses_by_marker`). Every property access, and element access with a string literal key,
-//! whose receiver's apparent non-nullable type has a marker, when roblox-ts lowers it: reads, `delete`, writes,
+//! **Property keys** (`accesses_by_marker`). Every property and element access whose receiver's apparent
+//! non-nullable type has a marker, when roblox-ts lowers it: reads, `delete`, writes,
 //! compound assignments, `++` / `--`, destructuring targets, `for … of` heads, callees (method calls, optional calls,
 //! `super.m()`) and every link of optional chains. The hook lowers nothing (the lowering primitives are refused, as
 //! in `begin_file`); its answer is the key: `base.key` when it is a valid Luau identifier, else
 //! `base[text_literal(key)]`, and a method callee `base:key(…)` / `base[text_literal(key)](base, …)`. A key equal to
 //! the written one leaves the access as written. The answer is kept per access node, so `AccessSite.position` is the
-//! position of the first lowering that asked. An access whose key is not a string literal (`obj[k]`, `obj[0]`,
-//! `obj[k as "x"]`) on a marked receiver is an internal error naming the plugin: `AccessSite` cannot carry it
-//! (`obj[0]` stays as written: roblox-ts offsets numeric indices). Not asked: destructuring sources
+//! position of the first lowering that asked. `AccessSite.key` is the property name, or the value of the element
+//! argument's type when that is a single string literal (`obj["k"]`, `obj[k as "k"]`, a literal-typed `k`); else
+//! `None` (numeric keys too: roblox-ts offsets numeric indices, and no string stands for them), and such a site can
+//! only be declined or failed (a `Take` is an internal error naming the plugin). A rewritten key that replaces a
+//! computed argument still evaluates the argument for its effects, after the receiver. Not asked: destructuring sources
 //! (`const { a } = obj`), object literal keys, `"a" in obj`, and callees of roblox-ts macros (no access is emitted).
 //!
 //! **Assignments** (`assignments_by_receiver_symbol`). An assignment, compound or logical assignment, `++` / `--` or
-//! `delete` whose target is `receiver.key` (or `receiver["key"]`) and whose receiver's symbol the plugin classifies
+//! `delete` whose target is `receiver.key` (or `receiver[e]`) and whose receiver's symbol the plugin classifies
 //! (`SymbolRole::AssignReceiver`), offered before roblox-ts lowers the node and after the expression hooks.
 //! Destructuring targets and `for … of` heads are not offered, and neither are targets whose receiver has no symbol
-//! (`f().x = 1`, `a[i].x = 1`). A computed key on a classified receiver is an internal error naming the plugin.
+//! (`f().x = 1`, `a[i].x = 1`). A computed key is offered with `AssignSite.key` `None` (the rule of property keys);
+//! the hook can compile `key_node` itself.
 //! `compile_binary(op, site.target, value)` reads the target, receiver included: a hook that also writes back
 //! through the receiver (`receiver:set(key, value)`) evaluates the receiver twice.
 //!

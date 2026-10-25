@@ -1207,7 +1207,11 @@ fn lower_call(
                 }
                 CallShape::Element { access, argument } if super_access => {
                     let callee = match dispatch::rewritten_key(state, access, AccessPosition::Callee) {
-                        Some(key) => keyed_access(base, &key),
+                        Some(key) => {
+                            // a computed argument is still evaluated (`super` has no effects to order it after)
+                            prereqs.push_list(dispatch::replaced_key_statements(state, access));
+                            keyed_access(base, &key)
+                        }
                         None => {
                             let index = transform_expression(state, prereqs, argument);
                             create::computed_index(convert_to_indexable_expression(base), index)
@@ -1272,7 +1276,11 @@ fn lower_call(
                     let rewritten = dispatch::rewritten_key(state, access, AccessPosition::Callee);
                     let mut key_prereqs = Prereqs::new();
                     let argument_value = match &rewritten {
-                        Some(key) => text_literal(key),
+                        Some(key) => {
+                            // a computed argument is still evaluated, after the receiver
+                            key_prereqs.push_list(dispatch::replaced_key_statements(state, access));
+                            text_literal(key)
+                        }
                         None => transform_expression(state, &mut key_prereqs, argument),
                     };
                     // as `transformElementCallExpressionInner`: a late-read base is captured before a key with effects

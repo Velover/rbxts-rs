@@ -51,6 +51,19 @@ fn name_text(node: P<Node>) -> &'static str {
     }
 }
 
+/// The display text of a `{@link}` (`part`) after its name: the source from the name's end to the closing `}`,
+/// trimmed, a leading `|` dropped (`{@link A | text}`), `None` when nothing is left. TypeScript's own `text` is the
+/// tokens of that same span (a link ends at its `}` or at the end of the line).
+fn link_text(part: P<Node>, name: P<Node>) -> Option<&'static str> {
+    let file = tsrs_ast::get_source_file_of_node(part)?;
+    let start = name.end().source_offset()? as usize;
+    let end = part.end().source_offset()? as usize;
+    let text = file.get().text().get(start..end)?;
+    let text = text.strip_suffix('}').unwrap_or(text).trim();
+    let text = text.strip_prefix('|').map_or(text, str::trim);
+    (!text.is_empty()).then_some(text)
+}
+
 /// The nodes whose JSDoc belongs to `declaration` (`getJSDocCommentsAndTags`, the common cases): the node itself,
 /// and for a variable declaration its variable statement, where TypeScript attaches the comment.
 fn jsdoc_hosts(declaration: P<Node>) -> Vec<P<Node>> {
@@ -90,7 +103,8 @@ pub(crate) fn jsdoc_tags(checker: &mut Checker, declaration: P<Node>) -> Vec<JsD
                             };
                             if let Some(name) = name {
                                 comment.push_str(name_text(name));
-                                links.push(JsDocLink { name, symbol: checker.get_symbol_at_location_exported(name) });
+                                let symbol = checker.get_symbol_at_location_exported(name);
+                                links.push(JsDocLink { name, symbol, text: link_text(part, name) });
                             }
                             comment.extend(text.iter().copied());
                         }

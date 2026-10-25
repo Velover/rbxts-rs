@@ -46,9 +46,11 @@
 //! **By callee marker**: `f(x)` where `f`'s type has `__probeCallee` → `compile_call(Original, [Original(x),
 //! Luau(1)])`.
 //! **Property keys**: accesses whose receiver has `__probeKey` get the key `k_<key>` (`key with space` for `swap`, the
-//! written key for `same`).
+//! written key for `same`); computed keys (`key` `None`) are declined, but for a key node `probeTakeComputed`, which
+//! is taken (an internal error).
 //! **Assignments**: to `this.<p>.key` where `p`'s JSDoc has `@probeattrs`: `self:setAttribute("key", value[, true])`
-//! (compound values with `compile_binary`); `@probeattrsread` compiles the target whatever the operation.
+//! (compound values with `compile_binary`); a computed key is `compile_expr(site.key_node)`; `@probeattrsread`
+//! compiles the target whatever the operation.
 //! **Class hook** (decorated classes): `Class.__probed = "<name>"`; [`Mode::ClassSelf`] compiles a class expression
 //! itself (an internal error).
 //! **By kind**: `void probeVoid` becomes `"void claimed"` (other `void`s are declined); `debugger` becomes
@@ -726,14 +728,17 @@ impl PluginInstance for ProbeInstance {
         Ok(Claim::Take(vec![create::call_statement(print)]))
     }
 
-    fn property_key(&self, _: &mut Cx<'_>, access: &AccessSite, tag: Tag) -> PResult<Claim<String>> {
+    fn property_key(&self, cx: &mut Cx<'_>, access: &AccessSite, tag: Tag) -> PResult<Claim<String>> {
         if tag != KEY {
             return Ok(Claim::Decline);
         }
         Ok(Claim::Take(match access.key {
-            "swap" => "key with space".to_owned(),
-            "same" => "same".to_owned(),
-            key => format!("k_{key}"),
+            Some("swap") => "key with space".to_owned(),
+            Some("same") => "same".to_owned(),
+            Some(key) => format!("k_{key}"),
+            // a computed key: declined, but for the misuse test
+            None if cx.source_text(access.key_node) == "probeTakeComputed" => "taken".to_owned(),
+            None => return Ok(Claim::Decline),
         }))
     }
 
@@ -745,6 +750,11 @@ impl PluginInstance for ProbeInstance {
             return Err(cx.error(site.target, "probe: an attribute assignment needs `this.attrs.key`"));
         };
         let object = cx.compile_expr(this)?;
+        // a computed key is the hook's to compile
+        let key = match site.key {
+            Some(key) => text_literal(key),
+            None => cx.compile_expr(site.key_node)?,
+        };
         let one = || create::number(1.0);
         let value = match (site.op, tag) {
             (_, ATTRSREAD) => {
@@ -762,7 +772,7 @@ impl PluginInstance for ProbeInstance {
             }
             (AssignOp::Delete, _) => create::nil(),
         };
-        let mut args = vec![text_literal(site.key), value];
+        let mut args = vec![key, value];
         if matches!(site.op, AssignOp::PostInc | AssignOp::PostDec) && site.value_used {
             args.push(create::bool(true));
         }

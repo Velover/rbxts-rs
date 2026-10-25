@@ -258,7 +258,12 @@ pub fn transform_element_call_expression_inner(
     if tsrs_ast::is_super_property(expression) {
         // rbxts-rs: a plugin's `property_key` (DESIGN §11.5)
         let callee_exp = match crate::plugins::dispatch::rewritten_key(state, expression, AccessPosition::Callee) {
-            Some(key) => keyed_access(base_expression, &key),
+            Some(key) => {
+                // a computed argument is still evaluated (`super` has no effects to order it after)
+                let statements = crate::plugins::dispatch::replaced_key_statements(state, expression);
+                prereqs.push_list(statements);
+                keyed_access(base_expression, &key)
+            }
             None => {
                 let index = transform_expression(state, prereqs, access.argument_expression);
                 create::computed_index(convert_to_indexable_expression(base_expression), index)
@@ -294,7 +299,11 @@ pub fn transform_element_call_expression_inner(
     let rewritten = crate::plugins::dispatch::rewritten_key(state, expression, AccessPosition::Callee);
     let mut key_prereqs = Prereqs::new();
     let argument_exp = match &rewritten {
-        Some(key) => text_literal(key),
+        Some(key) => {
+            // a computed argument is still evaluated, after the receiver
+            key_prereqs.push_list(crate::plugins::dispatch::replaced_key_statements(state, expression));
+            text_literal(key)
+        }
         None => transform_expression(state, &mut key_prereqs, argument_expression),
     };
     let later = join_effects(

@@ -202,6 +202,13 @@ pub trait PluginInstance: 'static {
     /// `++`, chains): `obj.key` when the key is a valid Luau identifier, else
     /// `obj[text_literal(key)]` ([`crate::text_literal`]). As a method callee, a valid identifier gives
     /// `obj:key(...)`, anything else `obj[text_literal(key)](obj, ...)`.
+    ///
+    /// **Computed keys.** Element accesses are offered whatever their key. An answer equal to `access.key` leaves
+    /// the access as written (`obj[k]` stays `obj[k]`). When a rewritten key replaces a computed argument
+    /// (`obj[k]` with `k: "a"`), the argument is still evaluated for its effects, after the receiver, and its value
+    /// is dropped. A site whose `key` is `None` ([`AccessSite::key`]) can only be declined or failed (`Err`, after
+    /// reporting why, as Flamework's "must be accessed directly"): a `Take` there is an internal error naming the
+    /// plugin, and the access is lowered as written.
     fn property_key(
         &self,
         cx: &mut Cx<'_>,
@@ -214,6 +221,10 @@ pub trait PluginInstance: 'static {
 
     /// An assignment, update or `delete` whose target's property symbol was classified with `tag`. Return the
     /// whole expression's Luau value (when `site.value_used`) or an expression to run as a statement.
+    ///
+    /// Targets with a computed key are offered too, with `site.key` `None` ([`AssignSite::key`]): unlike a
+    /// `property_key` answer, a claimed assignment can use a key it does not know, by compiling `site.key_node`
+    /// (once: `compile_binary(op, site.target, value)` reads the target, its key included).
     fn assignment(&self, cx: &mut Cx<'_>, site: &AssignSite, tag: Tag) -> PResult<Claim<LuauExpr>> {
         let _ = (cx, site, tag);
         Ok(Claim::Decline)

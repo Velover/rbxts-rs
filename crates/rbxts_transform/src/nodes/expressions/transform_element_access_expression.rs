@@ -95,6 +95,9 @@ pub fn transform_element_access_expression_inner(
     // rbxts-rs: a plugin's `property_key` for a string literal key (DESIGN §11.5)
     let position = if delete { AccessPosition::Delete } else { AccessPosition::Read };
     if let Some(key) = crate::plugins::dispatch::rewritten_key(state, node, position) {
+        // a computed argument is still evaluated, after the receiver
+        let statements = crate::plugins::dispatch::discarded_key_statements(index);
+        let expression = crate::plugins::dispatch::place_key_statements(prereqs, expression, statements);
         let target = keyed_access(expression, &key);
         if delete {
             prereqs.push(create::assignment(target, AssignmentOperator::Assign, Expr::Nil));

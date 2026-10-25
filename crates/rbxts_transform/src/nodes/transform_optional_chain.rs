@@ -298,7 +298,13 @@ fn transform_optional_chain_inner(
                 // rbxts-rs: a plugin's `property_key` for the callee
                 let rewritten = crate::plugins::dispatch::rewritten_key(state, item.access(), AccessPosition::Callee);
                 let key = match (item.kind, rewritten) {
-                    (_, Some(key)) => CalleeKey::Rewritten(key),
+                    (_, Some(key)) => {
+                        // a computed argument is still evaluated, after the receiver
+                        let statements = crate::plugins::dispatch::replaced_key_statements(state, item.access());
+                        base_expression =
+                            crate::plugins::dispatch::place_key_statements(prereqs, base_expression, statements);
+                        CalleeKey::Rewritten(key)
+                    }
                     (ChainItemKind::PropertyCall { name, .. }, None) => CalleeKey::Name(name),
                     (ChainItemKind::ElementCall { expression, argument_expression, .. }, None) => {
                         let exp_type = state.get_type(expression.as_element_access_expression().expression);
