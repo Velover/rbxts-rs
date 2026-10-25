@@ -3,7 +3,8 @@
 //! - an incremental build in a new process transforms again only the files whose `Cx::env` reads read another value
 //!   now; a plugin diagnostic shows its source in TypeScript's code slot (`TS @probe/inputs`);
 //! - the watcher: a file a finish glob matches, a listed directory's entries, a path finish tested or read, a file a
-//!   file's glob matches, a glob root removed and created again; events that change no answer start nothing.
+//!   file's glob matches, a glob root removed and created again; events that change no answer start nothing; a
+//!   listed directory that cannot be watched and builds failing before `finish` start no rebuild loop.
 
 #![cfg(windows)]
 
@@ -202,6 +203,13 @@ impl Watcher {
 
     /// The next `build-end` event, of any generation, within 60 s; it must have succeeded.
     fn next_end(&self) -> Value {
+        let end = self.next_end_any();
+        assert_eq!(end["ok"], true, "{end}");
+        end
+    }
+
+    /// The next `build-end` event, of any generation, within 60 s, failed or not.
+    fn next_end_any(&self) -> Value {
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         loop {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
@@ -210,10 +218,23 @@ impl Watcher {
                 panic!("no build-end within 60 s; output:\n{}", output.join("\n"));
             };
             if event["event"] == "build-end" {
-                assert_eq!(event["ok"], true, "{event}");
                 return event;
             }
         }
+    }
+
+    /// The `build-end` events until none comes for 2 s, for at most 8 s (a rebuild loop goes on).
+    fn ends_until_quiet(&self) -> Vec<Value> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        let mut ends = Vec::new();
+        while let Some(left) = deadline.checked_duration_since(std::time::Instant::now())
+            && let Ok(event) = self.events.recv_timeout(left.min(Duration::from_secs(2)))
+        {
+            if event["event"] == "build-end" {
+                ends.push(event);
+            }
+        }
+        ends
     }
 
     /// Takes events until none comes for 1.5 s (a rebuild for a directory this watcher's own artifacts created or
@@ -296,6 +317,78 @@ fn the_watcher_follows_the_recorded_inputs() {
     project.write("globs/finish/c.json", "{}");
     watcher.next_end();
     assert!(project.read("probe-inputs.txt").contains("finish glob [\"c.json\"]"));
+    watcher.assert_quiet(quiet);
+    drop(watcher);
+}
+
+/// Takes the deny entry `icacls` put on a folder off again when dropped (also when a test fails).
+struct Denied(PathBuf);
+
+impl Denied {
+    fn new(dir: &Path) -> Denied {
+        let user = std::env::var("USERNAME").unwrap();
+        let status = Command::new("icacls")
+            .arg(dir)
+            .args(["/deny", &format!("{user}:(OI)(CI)(RD)")])
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "icacls /deny");
+        Denied(dir.to_path_buf())
+    }
+}
+
+impl Drop for Denied {
+    fn drop(&mut self) {
+        let user = std::env::var("USERNAME").unwrap_or_default();
+        let _ = Command::new("icacls").arg(&self.0).args(["/remove:d", &user]).stdout(Stdio::null()).status();
+    }
+}
+
+/// A directory `finish` lists that cannot be listed (its watch fails at every update) while builds stop before
+/// `finish` (a type error) and a file `finish` read changes: one rebuild, not one after another. Fixing the error
+/// rebuilds once, with the changed file; once the directory can be listed again, its watch is made and its entries
+/// are seen.
+#[test]
+fn a_failed_input_watch_and_builds_failing_before_finish_start_no_rebuild_loop() {
+    if std::env::var_os("USERNAME").is_none() {
+        eprintln!("skipped: no USERNAME for icacls");
+        return;
+    }
+    let Some(project) = Project::new("deniedloop", false) else { return };
+    let denied = Denied::new(&project.0.join("finish-dir"));
+    assert!(std::fs::read_dir(project.0.join("finish-dir")).is_err(), "the folder cannot be listed");
+    let watcher = Watcher::start(&project);
+    watcher.next_end();
+    watcher.settle();
+    let quiet = Duration::from_millis(2000);
+
+    let good = project.read("src/shared/d.ts");
+    project.write("src/shared/d.ts", &format!("{good}\nexport const broken: number = \"x\";\n"));
+    let end = watcher.next_end_any();
+    assert_eq!(end["ok"], false, "{end}");
+    watcher.assert_quiet(quiet);
+    project.write("finish-file.txt", "changed while broken\n");
+    let ends = watcher.ends_until_quiet();
+    assert!(ends.len() <= 1, "{} rebuilds after one change: {:?}", ends.len(), ends.first());
+    assert!(ends.iter().all(|end| end["ok"] == false), "{ends:?}");
+
+    project.write("src/shared/d.ts", &good);
+    watcher.next_end();
+    assert!(project.read("probe-inputs.txt").contains("file Some(\"changed while broken\\n\")"));
+    watcher.assert_quiet(quiet);
+
+    // listable again: the next build lists it and its watch is made, then an entry is seen
+    drop(denied);
+    project.write("src/shared/d.ts", &format!("{good}// after the grant\n"));
+    watcher.next_end();
+    assert!(project.read("probe-inputs.txt").contains("finish dir Some([])"));
+    watcher.settle();
+    project.write("finish-dir/new.txt", "n");
+    watcher.next_end();
+    assert!(project.exists("probe-out/deep/new.txt.out"));
+    // (and one for the artifact folder it created)
+    watcher.settle();
     watcher.assert_quiet(quiet);
     drop(watcher);
 }

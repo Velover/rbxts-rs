@@ -192,6 +192,8 @@ pub struct BuildSession<'p> {
     reads: Option<Arc<rbxts_project::ReadLog>>,
     /// What the last build that ran `finish` read through `FinishCx` (globs, listings, existence, files).
     finish_reads: Vec<FinishRead>,
+    /// The last build ran `finish` (`finish_reads` are its own).
+    finish_ran: bool,
     /// Cached files to transform in the build's second run (late strings changed value, no Luau kept).
     retransform: FxHashSet<String>,
 }
@@ -229,6 +231,7 @@ impl<'p> BuildSession<'p> {
             disk_checked: false,
             reads: None,
             finish_reads: Vec::new(),
+            finish_ran: false,
             retransform: FxHashSet::default(),
         }
     }
@@ -368,6 +371,19 @@ impl<'p> BuildSession<'p> {
             || self.finish_reads.iter().any(|read| concerned(&|p| read.concerned_by(p)) && read.changed())
     }
 
+    /// Every recorded input asked again after a build (for a watcher's new watches: what changed before them raised
+    /// no event): the globs, and the reads of `finish` when that build ran it. A build that stopped before `finish`
+    /// (a type error) kept the last finish's reads, which a change made since answers differently at every build
+    /// until one runs `finish` again; the build that gets that far runs it anyway, and only a change of its own
+    /// (an event) lets a build get there.
+    pub fn recorded_inputs_changed_since_build(&self) -> bool {
+        if self.finish_ran {
+            self.recorded_inputs_changed(None)
+        } else {
+            self.recorded_globs().any(RecordedGlob::changed)
+        }
+    }
+
     /// The globs of the last committed build's files and setup that have their matcher.
     fn recorded_globs(&self) -> impl Iterator<Item = &RecordedGlob> {
         let committed = self.committed.as_ref();
@@ -433,6 +449,7 @@ impl<'p> BuildSession<'p> {
     /// One build. `touched`: the paths a watcher saw change since the last build (empty for the first build).
     pub fn build(&mut self, touched: &[String]) -> (CompileReport, BuildSummary) {
         let rebuilds = self.rebuilds;
+        self.finish_ran = false;
         let committed = self.committed.take();
         let last = self.last.take();
         let (mut report, mut summary, mut committed, mut last) = self.run(touched, committed, last);
@@ -1089,6 +1106,7 @@ impl<'p> BuildSession<'p> {
             report.fatal.extend(errors);
             finished = report.fatal.is_empty();
             self.finish_reads = std::mem::take(&mut queue.reads);
+            self.finish_ran = true;
         }
         report.timings.plugin_finish = start.elapsed();
         if let Some(run) = &run {

@@ -9,8 +9,10 @@
 //!   file's glob again, or runs setup or `finish` again); an equal one starts nothing, and the watches are brought
 //!   up to date (a root that appeared is now watched recursively). Candidates beside a rebuild that starts anyway
 //!   go with it.
-//! - **New watches:** a read made before its directory was watched raised no event, so when a build adds input
-//!   watches, every recorded input is asked once more.
+//! - **New watches:** a read made before its directory was watched raised no event, so when an update makes input
+//!   watches, every recorded input is asked once more ([`BuildSession::recorded_inputs_changed_since_build`]). Only
+//!   a watch made counts: one that fails is tried again at every update, and asking each time would start a rebuild
+//!   after every rebuild while an answer differs (a build stopping before `finish` keeps the last finish's answers).
 
 use std::time::SystemTime;
 
@@ -92,10 +94,15 @@ impl InputWatches {
             || self.trees.iter().any(|root| is_under(path_key, root))
     }
 
-    /// Some directory these inputs watch is not watched yet.
-    pub fn has_new_watches(&self, active: &FxHashSet<(String, bool)>) -> bool {
-        self.recursive.iter().any(|dir| !active.contains(&(dir.clone(), true)))
-            || self.flat.iter().any(|dir| !active.contains(&(dir.clone(), false)) && !covered(dir, active))
+    /// Some directory these inputs watch is watched in `after` (the watches after an update) and was not in
+    /// `before`: a watch the update made. A watch that failed is in neither.
+    pub fn has_new_watches(&self, before: &FxHashSet<(String, bool)>, after: &FxHashSet<(String, bool)>) -> bool {
+        let tree = |active: &FxHashSet<(String, bool)>, dir: &String| active.contains(&(dir.clone(), true));
+        let flat = |active: &FxHashSet<(String, bool)>, dir: &String| {
+            active.contains(&(dir.clone(), false)) || covered(dir, active)
+        };
+        self.recursive.iter().any(|dir| tree(after, dir) && !tree(before, dir))
+            || self.flat.iter().any(|dir| flat(after, dir) && !flat(before, dir))
     }
 }
 
@@ -140,17 +147,18 @@ pub(super) fn refresh(
         watched.failed = None;
     }
     let inputs = watched.current().inputs.clone();
-    let new_watches = inputs.has_new_watches(&subscriptions.active);
+    let before = subscriptions.active.clone();
     let mut stale = subscriptions.update(watched.current(), since, own);
+    let new_watches = inputs.has_new_watches(&before, &subscriptions.active);
     stale.extend(recheck(session, &inputs, new_watches));
     stale
 }
 
-/// When `new_watches`: every recorded input asked again (a read made before its directory was watched raised no
-/// event). When one answers differently, the inputs' paths, as the paths of a rebuild (each concerns its input, so
-/// the session matches the globs of files again too).
+/// When `new_watches` (the update made input watches): every recorded input asked again (a read made before its
+/// directory was watched raised no event). When one answers differently, the inputs' paths, as the paths of a
+/// rebuild (each concerns its input, so the session matches the globs of files again too).
 pub(super) fn recheck(session: &BuildSession<'_>, inputs: &InputWatches, new_watches: bool) -> Vec<String> {
-    if !new_watches || !session.recorded_inputs_changed(None) {
+    if !new_watches || !session.recorded_inputs_changed_since_build() {
         return Vec::new();
     }
     inputs.inputs.clone()

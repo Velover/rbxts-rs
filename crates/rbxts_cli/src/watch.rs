@@ -1168,10 +1168,12 @@ fn rebuild(
         }
     }
     let computed = start.elapsed();
-    let new_input_watches = watched.current().inputs.has_new_watches(&subscriptions.active);
+    let before = subscriptions.active.clone();
     let mut stale = subscriptions.update(watched.current(), since, own);
-    // a recorded input read before its directory was watched: asked again now that it is
+    // a recorded input read before its directory was watched: asked again now that it is (a watch made, not one
+    // failing again)
     if result.is_ok() {
+        let new_input_watches = watched.current().inputs.has_new_watches(&before, &subscriptions.active);
         stale.extend(inputs::recheck(session, &watched.current().inputs, new_input_watches));
     }
     if debug() {
