@@ -38,6 +38,44 @@ pub fn text_literal(text: &str) -> LuauExpr {
     rbxts_luau::create::string(escape_luau_string(text))
 }
 
+/// The Luau string literal roblox-ts emits for a string literal a TS transformer made with
+/// `factory.createStringLiteral(text)` (one with no source text), byte for byte. roblox-ts reprints a transformed
+/// file and parses it again, so the literal goes through two steps:
+/// - TypeScript's printer (`getLiteralText`, `escapeNonAsciiString` with `"`): `\` → `\\`, `"` → `\"`, `\t` `\v` `\f`
+///   `\b` `\r` `\n` by name, NUL as `\0` (`\x00` before a digit), other control characters, U+2028, U+2029 and U+0085
+///   as `\uXXXX`, and every non-ASCII UTF-16 unit as `\uXXXX` (upper-case hex; a character past U+FFFF as its two
+///   surrogates). DEL and the rest of ASCII stay as they are;
+/// - roblox-ts's `createStringFromLiteral` on that text, between double quotes: a surrogate pair becomes one
+///   `\u{…}` (lower-case hex: `\u{1f600}`), every other `\uXXXX` gets Luau's braces (`\u{00E9}`), the other escapes
+///   stay.
+///
+/// So `"^é.*✓$"` is `"^\u{00E9}.*\u{2713}$"`. [`text_literal`] gives a literal with the same value in a shorter
+/// spelling; use this one where the output must match what Flamework's TS transformer gave.
+pub fn synthesized_string(text: &str) -> LuauExpr {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            // a NUL before a digit would read as an octal escape in strict mode
+            '\0' if chars.peek().is_some_and(char::is_ascii_digit) => out.push_str("\\x00"),
+            '\0' => out.push_str("\\0"),
+            '\t' => out.push_str("\\t"),
+            '\u{b}' => out.push_str("\\v"),
+            '\u{c}' => out.push_str("\\f"),
+            '\u{8}' => out.push_str("\\b"),
+            '\r' => out.push_str("\\r"),
+            '\n' => out.push_str("\\n"),
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            c if c.is_ascii() && !c.is_ascii_control() || c == '\u{7f}' => out.push(c),
+            // TypeScript's two surrogates, which roblox-ts joins into one code point
+            c if c as u32 > 0xffff => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
+            c => out.push_str(&format!("\\u{{{:04X}}}", c as u32)),
+        }
+    }
+    rbxts_luau::create::string_quoted(out, rbxts_luau::Quote::Double)
+}
+
 #[cfg(test)]
 mod tests {
     use rbxts_luau::{LateStrings, create, render_expr};
@@ -70,6 +108,21 @@ mod tests {
         assert_eq!(rendered("\u{0}1\u{7f}"), "\"\\x001\\x7f\"");
         // never a long bracket, which would not interpret escapes
         assert!(!rendered("both ' and \" and \n and \\").contains("[["));
+    }
+
+    #[test]
+    fn synthesized_strings_are_spelled_as_roblox_ts_spells_a_factory_literal() {
+        let rendered = |text: &str| render_expr(&synthesized_string(text), &LateStrings::default());
+        // (each expectation is stock roblox-ts's output for `factory.createStringLiteral(text)`)
+        assert_eq!(rendered("^é.*✓$"), r#""^\u{00E9}.*\u{2713}$""#);
+        assert_eq!(rendered("plain_id"), r#""plain_id""#);
+        assert_eq!(rendered("it's \"q\" \\ /"), r#""it's \"q\" \\ /""#);
+        assert_eq!(rendered("a\nb\r\tc\u{b}\u{c}\u{8}"), r#""a\nb\r\tc\v\f\b""#);
+        assert_eq!(rendered("\u{0}x\u{0}7\u{1b}\u{7f}"), "\"\\0x\\x007\\u{001B}\u{7f}\"");
+        assert_eq!(rendered("😀\u{2028}\u{2029}\u{85}"), r#""\u{1f600}\u{2028}\u{2029}\u{0085}""#);
+        assert_eq!(rendered("tab\there\u{1}\u{1f}"), r#""tab\there\u{0001}\u{001F}""#);
+        assert_eq!(rendered("ß€𝄞\u{a0}\u{feff}"), r#""\u{00DF}\u{20AC}\u{1d11e}\u{00A0}\u{FEFF}""#);
+        assert_eq!(rendered("${x}`"), r#""${x}`""#);
     }
 
     #[test]

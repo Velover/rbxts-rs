@@ -157,6 +157,22 @@ pub trait CxBackend {
     /// `-- Compiled with` line and `local TS = require(...)`, ahead of the user's own imports. A reused user
     /// import is kept alive like a [`CxBackend::mark_import_used`] one, so it counts as left behind for declining.
     fn import_named(&mut self, specifier: &str, export: &str) -> Result<LuauExpr, Aborted>;
+    /// `TS.<object>.<member>`: a member of the roblox-ts runtime library, as roblox-ts compiles a reference to a
+    /// global it provides (`Promise.is` becomes `TS.Promise.is`). The file gets `local TS = require(...)` as for the
+    /// compiler's own runtime-library uses, and the use counts for import elision like theirs. Both names must be
+    /// valid Luau identifiers (else an internal error naming the plugin, and `nil`). In a game, a use in
+    /// ReplicatedFirst gets roblox-ts's warning.
+    ///
+    /// File-level, like `import_named`: refused in `classify_symbol` and `explain_checker_diagnostic`. It is an
+    /// effect for declining (the file would keep its `local TS`).
+    ///
+    /// **Default:** the expression `TS.<object>.<member>`, with no `local TS` made for it.
+    fn runtime_member(&mut self, object: &str, member: &str) -> LuauExpr {
+        rbxts_luau::create::property(
+            rbxts_luau::create::property(rbxts_luau::create::id("TS"), object),
+            member,
+        )
+    }
     /// Keeps an import alias declaration alive through import elision, though no remaining value use names it.
     fn mark_import_used(&mut self, alias_declaration: P<Node>);
     /// The calling plugin removed value uses of this import alias declaration (an ImportSpecifier, ImportClause,
@@ -445,6 +461,18 @@ impl<'a> Cx<'a> {
     /// An imported value ([`CxBackend::import_named`]).
     pub fn import_named(&mut self, specifier: &str, export: &str) -> PResult<LuauExpr> {
         self.backend.import_named(specifier, export).map_err(abort)
+    }
+
+    /// `TS.<object>.<member>`, a member of the roblox-ts runtime library, with the file's `local TS`
+    /// ([`CxBackend::runtime_member`]).
+    pub fn runtime_member(&mut self, object: &str, member: &str) -> LuauExpr {
+        self.backend.runtime_member(object, member)
+    }
+
+    /// The Luau string roblox-ts emits for a string literal a TS transformer made with
+    /// `factory.createStringLiteral(text)` ([`crate::synthesized_string`]). Needs no compiler state.
+    pub fn synthesized_string(&self, text: &str) -> LuauExpr {
+        crate::synthesized_string(text)
     }
 
     /// Keeps an import alive ([`CxBackend::mark_import_used`]).

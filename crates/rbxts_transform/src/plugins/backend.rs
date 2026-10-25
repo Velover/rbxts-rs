@@ -722,6 +722,24 @@ impl CxBackend for HookBackend<'_, '_> {
         }
     }
 
+    fn runtime_member(&mut self, object: &str, member: &str) -> Expr {
+        if self.refused("runtime_member", Row::FileLevel) {
+            return create::nil();
+        }
+        for name in [object, member] {
+            if !rbxts_luau::is_valid_identifier(name) {
+                self.misuse(&format!("runtime_member: `{name}` is not a valid Luau identifier"));
+                return create::nil();
+            }
+        }
+        self.note_effect("calling runtime_member");
+        self.touch();
+        self.state.plugin_file.runtime_members += 1;
+        // as roblox-ts compiles a reference to a global the runtime library provides: `TS.<object>`, counted
+        let anchor = self.anchor;
+        create::property(self.state.ts(anchor, object), member)
+    }
+
     fn mark_import_used(&mut self, alias_declaration: P<Node>) {
         if !self.refused("mark_import_used", Row::FileLevel) {
             self.note_effect("calling mark_import_used");

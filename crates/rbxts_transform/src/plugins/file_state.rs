@@ -61,6 +61,10 @@ pub struct EffectMark {
     /// Late keys used and imports kept alive (`late_string`, `mark_import_used`).
     pub late_keys: usize,
     pub forced_imports: usize,
+    /// Statements for before a TS statement (`insert_before_statement`), and runtime-library members used
+    /// (`runtime_member`): counters that only grow.
+    pub before_statement: usize,
+    pub runtime_members: usize,
 }
 
 impl EffectMark {
@@ -81,6 +85,13 @@ impl EffectMark {
             Some("using a late string (its own or a nested hook's)")
         } else if self.forced_imports > earlier.forced_imports {
             Some("keeping an import alive (mark_import_used or a reused import, its own or a nested hook's)")
+        } else if self.before_statement > earlier.before_statement {
+            Some(
+                "leaving statements before its TS statement behind (insert_before_statement, its own or a nested \
+                 hook's)",
+            )
+        } else if self.runtime_members > earlier.runtime_members {
+            Some("using the runtime library (runtime_member, its own or a nested hook's)")
         } else {
             None
         }
@@ -267,6 +278,8 @@ impl PluginFileState {
             imports: self.imports.len(),
             late_keys: self.late_keys.len(),
             forced_imports: self.forced_imports.len(),
+            before_statement: self.before_statement_count,
+            runtime_members: self.runtime_members,
         }
     }
 
