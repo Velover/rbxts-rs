@@ -175,6 +175,29 @@ fn differences(
     out
 }
 
+/// A project whose diagnostics roblox-ts reports once per compilation (`addDiagnosticWithCache`): an `any` export
+/// used in five modules, and an enum and a namespace merged in one file (roblox-ts requires `moduleDetection: force`,
+/// so merged declarations never span files). Its configs are `exprs`'s.
+fn once_fixture(configs: &Path) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("rbxts-rs-determinism-once-src-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src/shared")).unwrap();
+    for name in ["tsconfig.json", "default.project.json", "package.json"] {
+        std::fs::copy(configs.join(name), root.join(name)).unwrap();
+    }
+    let write = |name: &str, text: &str| std::fs::write(root.join("src/shared").join(name), text).unwrap();
+    write("a.ts", "export const value: any = {};\n");
+    for name in ["b", "c", "d", "e", "f"] {
+        write(&format!("{name}.ts"), "import { value } from \"./a\";\nexport const x = value.x;\n");
+    }
+    write(
+        "g.ts",
+        "export enum Merged {\n\tA = 1,\n}\nexport enum Merged {\n\tB = 2,\n}\n\
+         export namespace Spread {\n\texport const a = 1;\n}\nexport namespace Spread {\n\texport const b = 2;\n}\n",
+    );
+    root
+}
+
 #[test]
 fn outputs_and_diagnostics_do_not_depend_on_the_checkers() {
     let Some(node_modules) = node_modules() else {
@@ -198,11 +221,22 @@ fn outputs_and_diagnostics_do_not_depend_on_the_checkers() {
         manifest.join("tests/plugin_fixtures/probe"),
         &["stamp", "probe", "probe-exprcall"],
     ));
+    let once = once_fixture(&manifest.join("tests/fixtures/exprs"));
+    cases.push(("once".to_owned(), once.clone(), &[]));
 
     let mut failures = Vec::new();
     for (label, fixture, plugins) in &cases {
         let reference = build(fixture, plugins, label, &node_modules, CONFIGS[0]);
-        assert!(reference.0.keys().any(|p| p.ends_with(".luau")), "{label}: the reference build wrote no Luau");
+        if label == "once" {
+            // a failing build: nothing written, each once-per-compilation diagnostic reported once
+            let count = |text: &str| reference.1.iter().filter(|l| l.contains(text)).count();
+            assert_eq!(count("type `any` is not supported"), 1, "{:?}", reference.1);
+            assert_eq!(count("Enum merging is not supported"), 1, "{:?}", reference.1);
+            assert_eq!(count("Namespace merging is not supported"), 1, "{:?}", reference.1);
+            assert!(!reference.0.keys().any(|p| p.ends_with(".luau")), "{:?}", reference.0.keys());
+        } else {
+            assert!(reference.0.keys().any(|p| p.ends_with(".luau")), "{label}: the reference build wrote no Luau");
+        }
         for &config in &CONFIGS[1..] {
             let other = build(fixture, plugins, label, &node_modules, config);
             let diffs = differences(&reference, &other);
@@ -213,5 +247,6 @@ fn outputs_and_diagnostics_do_not_depend_on_the_checkers() {
     }
     // SAFETY: as in `build`
     unsafe { std::env::remove_var("TSRS_CHECKER_ASSIGNMENT") };
+    let _ = std::fs::remove_dir_all(&once);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
