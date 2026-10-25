@@ -2,7 +2,8 @@
 //!
 //! - [`session`]: [`BuildSession`], the lifecycle over one project across builds.
 //! - [`graph`]: file versions, references and the invalidation rules (which files a build transforms).
-//! - [`outputs`]: assets, the keep set and the clean of stale outputs (roblox-ts's `getProjectOutputs`).
+//! - [`outputs`]: assets, the keep set and the clean of stale outputs (roblox-ts's `getProjectOutputs`), and the
+//!   parallel write of the Luau outputs.
 //! - [`state`]: the incremental state on disk.
 //! - [`plugin_inputs`]: what plugins record besides setup's file reads (environment, globs, finish reads), and the
 //!   directory rules of `remove_empty_dir`.
@@ -10,6 +11,7 @@
 
 pub mod graph;
 pub mod outputs;
+pub(crate) mod parallel;
 pub mod parity;
 pub mod plugin_inputs;
 pub mod session;

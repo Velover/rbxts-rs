@@ -39,7 +39,6 @@
 use std::cell::OnceCell;
 use std::collections::BTreeSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -70,7 +69,7 @@ use crate::compile::{
 use crate::plugins::host::{HookTime, resolve_module_from};
 use crate::plugins::lifecycle::{
     ActivePlugin, BuildInput, CommitQueue, Finish, PluginOptions, Setup, activate, commit_artifacts, commit_removals,
-    commit_state_files, output_key, plain_late_key, run_finish, run_setup, write_if_changed,
+    commit_state_files, output_key, plain_late_key, run_finish, run_setup,
 };
 use crate::plugins::spill::LoadCheck;
 use crate::plugins::{HookKind, PluginHost};
@@ -1337,29 +1336,37 @@ impl<'p> BuildSession<'p> {
             prepared => prepared.and_then(Result::ok).flatten(),
         };
         if !self.options.no_write {
-            for outcome in &mut report.files {
-                let Some(source) = &outcome.luau else { continue };
-                // rbxts-rs: a case-only rename renames the output too (roblox-ts keeps the old name: its bug)
-                if let Err(e) = outputs::match_case(services, &outcome.out_path, &listing) {
-                    report.fatal.push(format!("could not rename to {}: {e}", outcome.out_path));
-                    continue;
-                }
-                match write_if_changed(Path::new(&outcome.out_path), source.as_bytes()) {
+            // rbxts-rs: in parallel, in program order for what is reported; a case-only rename renames the output too
+            // (roblox-ts keeps the old name: its bug)
+            let luau: Vec<(usize, &str, &[u8])> = report
+                .files
+                .iter()
+                .enumerate()
+                .filter_map(|(i, o)| o.luau.as_ref().map(|luau| (i, o.out_path.as_str(), luau.as_bytes())))
+                .collect();
+            let to_write: Vec<(&str, &[u8])> = luau.iter().map(|&(_, path, bytes)| (path, bytes)).collect();
+            let results = outputs::write_outputs(services, Some(&listing), &to_write);
+            let indices: Vec<usize> = luau.iter().map(|&(i, _, _)| i).collect();
+            for (i, result) in indices.into_iter().zip(results) {
+                let outcome = &mut report.files[i];
+                match result {
                     Ok(written) => {
                         outcome.written = written;
                         if written {
                             summary.written.push(outcome.out_path.clone());
                         }
                     }
-                    Err(e) => report.fatal.push(format!("could not write {}: {e}", outcome.out_path)),
+                    Err(message) => report.fatal.push(message),
                 }
             }
             if success && report.fatal.is_empty() {
-                for (path, source) in &rerendered {
-                    match write_if_changed(Path::new(path), source.as_bytes()) {
+                let to_write: Vec<(&str, &[u8])> =
+                    rerendered.iter().map(|(p, s)| (p.as_str(), s.as_bytes())).collect();
+                for ((path, _), result) in rerendered.iter().zip(outputs::write_outputs(services, None, &to_write)) {
+                    match result {
                         Ok(true) => summary.written.push(path.clone()),
                         Ok(false) => {}
-                        Err(e) => report.fatal.push(format!("could not write {path}: {e}")),
+                        Err(message) => report.fatal.push(message),
                     }
                 }
                 summary.rerendered = rerendered.iter().map(|(p, _)| p.clone()).collect();

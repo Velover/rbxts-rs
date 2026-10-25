@@ -252,6 +252,41 @@ pub fn sync_assets(
     Ok(written)
 }
 
+/// Commit step 1 for the Luau outputs: `(path, bytes)` per file. With `listing`, each output's case is matched first
+/// ([`match_case`]), one file at a time, since a case-only rename can rename a directory other outputs share; then
+/// the files are written in parallel ([`super::parallel::map`]), each only if it is missing or its bytes differ.
+/// Every file is attempted. Per file, in `files` order: whether it was written, or the error.
+pub fn write_outputs(
+    services: &ProjectServices,
+    listing: Option<&Listing>,
+    files: &[(&str, &[u8])],
+) -> Vec<Result<bool, String>> {
+    let cased: Vec<Result<(), String>> = files
+        .iter()
+        .map(|&(path, _)| match listing {
+            Some(listing) => {
+                match_case(services, path, listing).map_err(|e| format!("could not rename to {path}: {e}"))
+            }
+            None => Ok(()),
+        })
+        .collect();
+    let jobs: Vec<(usize, &str, &[u8])> = files
+        .iter()
+        .zip(&cased)
+        .enumerate()
+        .filter(|(_, (_, cased))| cased.is_ok())
+        .map(|(i, (&(path, bytes), _))| (i, path, bytes))
+        .collect();
+    let written = super::parallel::map(&jobs, |&(_, path, bytes)| {
+        write_if_changed(Path::new(path), bytes).map_err(|e| format!("could not write {path}: {e}"))
+    });
+    let mut results: Vec<Result<bool, String>> = cased.into_iter().map(|r| r.map(|()| false)).collect();
+    for ((i, _, _), result) in jobs.into_iter().zip(written) {
+        results[i] = result;
+    }
+    results
+}
+
 /// The files under the output roots before a build writes anything, taken once per build: for the missing-output
 /// check, the case check and the clean. The include folder and `.git` are not entered, nor links.
 #[derive(Debug, Default)]
