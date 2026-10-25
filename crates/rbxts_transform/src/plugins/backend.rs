@@ -309,6 +309,28 @@ pub(crate) fn to_diagnostic(diagnostic: &PluginDiagnostic, plugin_source: Option
     d
 }
 
+/// What makes two plugin diagnostics the same: the file and range of the node and of each related node, the
+/// category, the texts and the source.
+fn diagnostic_key(diagnostic: &PluginDiagnostic, source: Option<&str>) -> String {
+    use std::fmt::Write;
+    let at = |node: P<Node>| {
+        let (file, range) = node_range(node);
+        (file.map(|f| f.get().file_name()), range.pos(), range.end())
+    };
+    let mut key = format!(
+        "{:?} {:?} {:?} {:?} {:?}",
+        at(diagnostic.node),
+        diagnostic.category,
+        diagnostic.message,
+        diagnostic.hint,
+        source
+    );
+    for (node, message) in &diagnostic.related {
+        let _ = write!(key, " {:?} {message:?}", at(*node));
+    }
+    key
+}
+
 impl HookBackend<'_, '_> {
     fn name(&self) -> &'static str {
         self.host.name(self.plugin)
@@ -820,6 +842,11 @@ impl CxBackend for HookBackend<'_, '_> {
             return;
         }
         self.touch();
+        // one of each, as TypeScript's DiagnosticCollection keeps them
+        let source = diagnostic.source.or(self.host.sources[self.plugin]);
+        if !self.state.plugin_file.reported.insert(diagnostic_key(&diagnostic, source)) {
+            return;
+        }
         self.state.add_diagnostic(to_diagnostic(&diagnostic, self.host.sources[self.plugin]));
     }
 

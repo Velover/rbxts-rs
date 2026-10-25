@@ -229,6 +229,10 @@ pub trait CxBackend {
     // --- diagnostics ---
 
     /// Records a diagnostic for this file. Any error fails the build: nothing is written.
+    ///
+    /// A diagnostic identical to one already recorded for this file (same node range, category, message, hint,
+    /// related information and source, the plugin's [`crate::Plugin::diagnostic_source`] standing in for a `None`
+    /// source) is dropped, as TypeScript's `DiagnosticCollection` keeps one of each.
     fn report(&mut self, diagnostic: PluginDiagnostic);
 
     // --- build inputs (DESIGN §14) ---
