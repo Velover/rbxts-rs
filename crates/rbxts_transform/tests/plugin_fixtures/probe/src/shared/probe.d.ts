@@ -270,3 +270,43 @@ declare function probeMultiPrereq(): void;
 declare function probeFnPrereq(): void;
 declare function mk(): object;
 declare const nx: number | undefined;
+
+// --- seam additions ---
+
+/** Computed keys on a `__probeKey` receiver. */
+declare function keyName(): string;
+declare const anyKey: string;
+interface KeyedList {
+	readonly __probeKey: true;
+	[index: number]: number;
+}
+declare const keyedList: KeyedList;
+/** Link texts: `{@link Name text}` and `{@link Name | text}`. */
+/** @probe links {@link marked} {@link marked the marked one} {@link maybeMarked | piped text } {@link keyed |} */
+declare function probeLinks(): string;
+declare const probeTakeComputed: number;
+
+/** `runtime_member("Promise", "is")`. */
+/** @probe runtime */
+declare function probeRuntime(): unknown;
+/** `synthesized_string` of tricky texts. */
+/** @probe synth */
+declare function probeSynth(): Array<string>;
+/** The same warning twice: one is kept. */
+/** @probe diagtwice */
+declare function probeDiagTwice(): void;
+/** `insert_before_statement([comment, print])`, then the argument. */
+/** @probe before */
+declare function probeBefore<T>(a: T): T;
+/** `hoist_spillable_named(a, "constant_22")`. */
+/** @probe named */
+declare function probeNamed<T>(a: T): T;
+/** The file's identifier texts starting with `jd` or `lit`. */
+/** @probe idents */
+declare function probeIdents(): string;
+/** The argument type's properties in TypeScript 5's order. */
+/** @probe props */
+declare function probeProps(a: unknown): string;
+/** The argument, then `import_named("./runtime", "other")`. */
+/** @probe importafter */
+declare function probeImportAfter<T>(a: T): [T, number];

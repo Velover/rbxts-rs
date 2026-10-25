@@ -13,7 +13,12 @@
 //! `compile_receiver` binding a non-method optional call's receiver); `property_key` in every position; the
 //! `assignment` hook with `compile_binary`; `compile_object_literal` (edits and a permuted order); `locals()`;
 //! `hoist_spillable` and the main chunk's local limit; expression hooks on chain links and statement assignments,
-//! asked once; and the misuse the compiler refuses.
+//! asked once; and the misuse the compiler refuses. From the seam additions: computed keys (`AccessSite.key`
+//! `None`), `JsDocLink.text`, `runtime_member`, `synthesized_string`, identical diagnostics kept once,
+//! `insert_before_statement` in every statement position, `hoist_spillable_named` (spilled too), the `import_named`
+//! `name_1` fallback and import order, `file_identifier_texts`, TS5 numeric literal text, the header comment above
+//! plugin imports, a leading plugin comment above its statement's comments, and `ts5_properties_of_type`
+//! (`seam*.ts`).
 //!
 //! Like `tests/fixtures.rs`, the fixture is copied to a temporary directory with a `node_modules` junction
 //! (`RBXTS_RS_FIXTURE_NODE_MODULES`, else the roblox-ts tests project's); without one the tests are skipped.
@@ -187,9 +192,19 @@ fn assert_expected_except(report: &CompileReport, except: &[&str]) {
             failures.push(format!("{relative}: no output"));
             continue;
         };
-        let expected = std::fs::read_to_string(expected_dir.join(&relative))
-            .unwrap_or_else(|e| panic!("{relative}: {e}"))
-            .replace("\r\n", "\n");
+        // for reviewing new expectations: the build's Luau, written where this names
+        if let Some(dump) = std::env::var_os("RBXTS_RS_PLUGIN_FIXTURE_DUMP") {
+            let path = Path::new(&dump).join(&relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, luau).unwrap();
+        }
+        let expected = match std::fs::read_to_string(expected_dir.join(&relative)) {
+            Ok(text) => text.replace("\r\n", "\n"),
+            Err(e) => {
+                failures.push(format!("{relative}: {e}"));
+                continue;
+            }
+        };
         if *luau != expected {
             failures.push(format!("{relative}: differs from expected\n--- ours\n{luau}"));
         }
@@ -212,6 +227,8 @@ fn probe_and_stamp_match_the_expected_luau() {
             "warning calls.ts: `mystery` has an unknown @stamp mode; the call is left as it is",
             // asked once: the call hook compiling the call itself does not ask the expression hook again
             "warning s2chains.ts: probe-exprcall: asked about probeAskOnce",
+            // reported twice at the same node: kept once
+            "warning seamnames.ts: probe: reported twice, kept once",
         ]
     );
     assert_expected(&report);
@@ -231,7 +248,9 @@ fn probe_and_stamp_match_the_expected_luau() {
          {\"file\":\"src/shared/reuse.ts\",\"claims\":1},{\"file\":\"src/shared/s2assign.ts\",\"claims\":13},\
          {\"file\":\"src/shared/s2calls.ts\",\"claims\":11},{\"file\":\"src/shared/s2chains.ts\",\"claims\":1},\
          {\"file\":\"src/shared/s2locals.ts\",\"claims\":4},{\"file\":\"src/shared/s2objects.ts\",\"claims\":4},\
-         {\"file\":\"src/shared/s2spill.ts\",\"claims\":6},{\"file\":\"src/shared/selfcalls.ts\",\"claims\":5},\
+         {\"file\":\"src/shared/s2spill.ts\",\"claims\":7},{\"file\":\"src/shared/seambefore.ts\",\"claims\":9},\
+         {\"file\":\"src/shared/seamkeys.ts\",\"claims\":3},{\"file\":\"src/shared/seamnames.ts\",\"claims\":7},\
+         {\"file\":\"src/shared/seamorder.ts\",\"claims\":2},{\"file\":\"src/shared/selfcalls.ts\",\"claims\":5},\
          {\"file\":\"src/shared/shadow.ts\",\"claims\":3}]\n"
     );
     assert_eq!(
@@ -464,8 +483,7 @@ fn seam_misuse_is_refused_naming_the_plugin() {
          \t\treturn super.r(v);\n\
          \t}\n\
          }\n\
-         const k = \"a\";\n\
-         export const e = keyed[k];\n\
+         export const e = keyedList[probeTakeComputed];\n\
          interface Reads {\n\
          \tcount: number;\n\
          \topt?: number;\n\
@@ -501,18 +519,16 @@ fn seam_misuse_is_refused_naming_the_plugin() {
                 "{prefix}: compile_receiver: `super` is not a value (roblox-ts calls `super.m(self, …)`); lower the \
                  call with compile_expr or compile_call, or pass `self` yourself"
             ),
-            format!(
-                "{prefix}: this access matches its accesses_by_marker interest, but its key is computed (`obj[k]`), \
-                 which AccessSite cannot carry, so it is not offered"
-            ),
+            // a computed key has no text to rewrite
+            "error misuse.ts: rbxts-rs internal error: plugin `probe` took a property key whose key is computed \
+             (AccessSite.key is None): such a site can only be declined or failed"
+                .to_owned(),
             format!(
                 "{prefix}: compiled the operand of `delete`, which roblox-ts lowers as the deletion (it would delete \
                  it, not read it)"
             ),
-            format!(
-                "{prefix}: this assignment's receiver matches its assignments_by_receiver_symbol interest, but its key \
-                 is computed (`obj[k]`), which AssignSite cannot carry, so it is not offered"
-            ),
+            // a computed key is offered to the assignment hook (`AssignSite.key` `None`); the probe refuses this target
+            "error misuse.ts: probe: an attribute assignment needs `this.attrs.key`".to_owned(),
             // after `?.` the receiver is compiled already (`plainRe.re(2)`, offered before it is compiled, is fine)
             format!(
                 "{prefix}: compiled the receiver or callee of its node, which is compiled already (it would be \

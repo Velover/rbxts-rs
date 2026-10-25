@@ -1,6 +1,7 @@
 //! The default implementations of the backend methods added for watch and incremental builds (`env`,
-//! `record_glob`, `remove_empty_dir`) and of `Plugin::encode_file_part` / `decode_file_part`: a compiler that does
-//! not override them builds as before, and these are what it gets.
+//! `record_glob`, `remove_empty_dir`), of the seam additions (`insert_before_statement`, `hoist_spillable_named`,
+//! `runtime_member`, `file_identifier_texts`) and of `Plugin::encode_file_part` / `decode_file_part`: a compiler that
+//! does not override them builds as before, and these are what it gets.
 
 mod support;
 
@@ -286,4 +287,29 @@ fn diagnostics_have_no_source_unless_given() {
     assert_eq!(PluginDiagnostic::warning(node, "w").source, None);
     let named = PluginDiagnostic::error(node, "e").with_source("@scope/transformer");
     assert_eq!(named.source, Some("@scope/transformer"));
+}
+
+#[test]
+fn seam_additions_fall_back_to_the_older_primitives() {
+    use rbxts_luau::{LateStrings, create, render_expr};
+    let program = fixture();
+    let (index, file) = source(program, "main.ts");
+    let mut backend = MockCx::new(program, index, file);
+    let mut cx = Cx::new(&mut backend);
+    // insert_before_statement: a root insertion
+    cx.insert_before_statement([create::comment(" before")]);
+    // hoist_spillable_named: a hoist_spillable with the name as its hint
+    let hoisted = cx.hoist_spillable_named(create::number(1.0), "constant_22");
+    assert!(matches!(hoisted, rbxts_luau::Expr::TemporaryIdentifier(_)), "{hoisted:?}");
+    // runtime_member: the expression alone
+    let member = cx.runtime_member("Promise", "is");
+    assert_eq!(render_expr(&member, &LateStrings::default()), "TS.Promise.is");
+    // synthesized_string needs no backend
+    assert_eq!(render_expr(&cx.synthesized_string("é"), &LateStrings::default()), r#""\u{00E9}""#);
+    // file_identifier_texts: TypeScript 5's identifier set of the file, sorted
+    let texts = cx.file_identifier_texts();
+    assert!(texts.contains(&"buildId") && texts.contains(&"here"), "{texts:?}");
+    assert!(texts.windows(2).all(|w| w[0] < w[1]), "sorted, no duplicates");
+    assert_eq!(backend.hoisted.len(), 2, "the insertion and the hoist");
+    assert!(backend.diagnostics.is_empty());
 }

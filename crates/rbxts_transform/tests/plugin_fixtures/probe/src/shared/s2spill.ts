@@ -199,3 +199,4 @@ export const s5 = probeSpill(v5);
 export function useLater() {
 	return probeSpill(v6);
 }
+export const s6 = probeNamed(v7);

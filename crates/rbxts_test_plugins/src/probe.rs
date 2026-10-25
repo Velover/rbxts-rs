@@ -38,6 +38,15 @@
 //! - `facts`: a string of source facts: the call's UTF-16 line and character, its width, the callee's declaring
 //!   package, where `./runtime` resolves, the `{@link}` in the tag and what it resolves to, the file's checker
 //!   diagnostics;
+//! - `links`: every `{@link}` of the tag as `name=target:text` (`JsDocLink::text`, `-` for none);
+//! - `runtime`: `runtime_member("Promise", "is")`; `synth`: an array of `synthesized_string`s of tricky texts;
+//! - `diagtwice`: the same warning reported twice (one is kept), value `nil`;
+//! - `before`: `insert_before_statement([comment, print("before <arg text>")])`, then `compile_expr(arg)`;
+//! - `named`: `hoist_spillable_named(compile_expr(a), "constant_22")`;
+//! - `idents`: the `file_identifier_texts` that start with `jd` or `lit`, joined;
+//! - `props`: the names of `ts5_properties_of_type` of the argument's type, joined;
+//! - `importafter`: `compile_expr(a)`, then `import_named("./runtime", "other")` (plugin imports are ordered by
+//!   where they were asked for, not when);
 //! - `boom`: panics in [`Mode::Panic`]; `fail`: an error in [`Mode::Fail`]; `err`: `Err` with no new error in
 //!   [`Mode::ErrWithoutError`]; declined otherwise.
 //!
@@ -162,6 +171,15 @@ const OPS: &[&str] = &[
     "doprereq",
     "multiprereq",
     "fnprereq",
+    "links",
+    "runtime",
+    "synth",
+    "diagtwice",
+    "before",
+    "named",
+    "idents",
+    "props",
+    "importafter",
 ];
 const RECEIVER: Tag = Tag(100);
 const CALLEE: Tag = Tag(101);
@@ -543,6 +561,72 @@ impl ProbeInstance {
                 let name = cx.temp_id("bigfn");
                 cx.prereq(create::function_declaration(true, name.clone().into(), Vec::new(), false, body));
                 self.claimed(create::call(name.into(), Vec::new()))
+            }
+            "runtime" => self.claimed(cx.runtime_member("Promise", "is")),
+            "synth" => {
+                let texts = [
+                    "^é.*✓$",
+                    "it's \"q\" \\ /",
+                    "a\nb\r\tc\u{b}\u{c}\u{8}",
+                    "\u{0}x\u{0}7\u{1b}\u{7f}",
+                    "😀\u{2028}\u{2029}\u{85}",
+                ];
+                self.claimed(create::array(texts.iter().map(|t| cx.synthesized_string(t)).collect()))
+            }
+            "diagtwice" => {
+                cx.warning(call.node, "probe: reported twice, kept once");
+                cx.warning(call.node, "probe: reported twice, kept once");
+                self.claimed(create::nil())
+            }
+            "before" => {
+                let a = arg(0).expect("an argument");
+                let text = cx.source_text(a).to_owned();
+                cx.insert_before_statement([
+                    create::comment(" probe: before the statement"),
+                    create::call_statement(create::call(
+                        create::id("print"),
+                        vec![text_literal(&format!("before {text}"))],
+                    )),
+                ]);
+                let value = cx.compile_expr(a)?;
+                self.claimed(value)
+            }
+            "named" => {
+                let value = cx.compile_expr(arg(0).expect("an argument"))?;
+                let hoisted = cx.hoist_spillable_named(value, "constant_22");
+                self.claimed(hoisted)
+            }
+            "idents" => {
+                let texts = cx.file_identifier_texts();
+                let picked: Vec<&str> =
+                    texts.iter().copied().filter(|t| t.starts_with("jd") || t.starts_with("lit")).collect();
+                self.claimed(text_literal(&picked.join(",")))
+            }
+            "props" => {
+                let a = arg(0).expect("an argument");
+                let t = cx.checker().get_type_at_location(a);
+                let names: Vec<&str> = cx.ts5_properties_of_type(t).iter().map(|p| p.name()).collect();
+                self.claimed(text_literal(&names.join(",")))
+            }
+            "importafter" => {
+                let value = cx.compile_expr(arg(0).expect("an argument"))?;
+                let other = cx.import_named("./runtime", "other")?;
+                self.claimed(create::array(vec![value, other]))
+            }
+            "links" => {
+                // every `{@link}` of the `@probe` tag: `name=target:text` (`-` for no text)
+                let symbol = call.symbol.expect("a callee symbol");
+                let tags = cx.symbol_jsdoc_tags(symbol);
+                let links: Vec<String> = tags
+                    .iter()
+                    .filter(|t| t.name == "probe")
+                    .flat_map(|t| t.links.iter())
+                    .map(|link| {
+                        let target = link.symbol.map_or("?", |s| s.name());
+                        format!("{}={target}:{}", cx.source_text(link.name), link.text.unwrap_or("-"))
+                    })
+                    .collect();
+                self.claimed(text_literal(&links.join(";")))
             }
             "boom" if self.mode == Mode::Panic => panic!("probe: boom"),
             "fail" if self.mode == Mode::Fail => Err(cx.error(call.node, "probe: fail was called")),
