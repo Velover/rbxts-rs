@@ -486,7 +486,7 @@ fn a_lost_state_file_starts_its_plugin_fresh_in_watch() {
 
         // deleted: fresh (nothing to reload), every file
         std::fs::remove_file(&state_path).unwrap();
-        let (report, summary) = session.build(&[key.clone()]);
+        let (report, summary) = session.build(std::slice::from_ref(&key));
         assert!(!report.has_errors());
         assert!(summary.all);
         assert_eq!(summary.lost_state_files.len(), 1);
@@ -496,7 +496,7 @@ fn a_lost_state_file_starts_its_plugin_fresh_in_watch() {
 
         // edited: fresh, reloading the edited value
         write(KEEPER_STATE, "41");
-        let (report, summary) = session.build(&[key.clone()]);
+        let (report, summary) = session.build(std::slice::from_ref(&key));
         assert!(!report.has_errors());
         assert!(summary.all);
         assert_eq!((setups(), fresh()), (3, 2));
@@ -504,7 +504,7 @@ fn a_lost_state_file_starts_its_plugin_fresh_in_watch() {
 
         // the same bytes again: nothing transformed, the Shared kept
         write(KEEPER_STATE, "42");
-        let (report, summary) = session.build(&[key.clone()]);
+        let (report, summary) = session.build(std::slice::from_ref(&key));
         assert!(!report.has_errors());
         assert!(!summary.all);
         assert!(summary.lost_state_files.is_empty());
@@ -514,7 +514,7 @@ fn a_lost_state_file_starts_its_plugin_fresh_in_watch() {
 
         // back to the bytes before the last commit
         write(KEEPER_STATE, "42");
-        let (report, summary) = session.build(&[key.clone()]);
+        let (report, summary) = session.build(std::slice::from_ref(&key));
         assert!(!report.has_errors());
         assert!(summary.all);
         assert_eq!((setups(), fresh()), (4, 3));
