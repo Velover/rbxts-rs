@@ -291,11 +291,7 @@ pub(crate) fn to_diagnostic(diagnostic: &PluginDiagnostic, plugin_source: Option
         }
         d
     };
-    let message = match &diagnostic.hint {
-        Some(hint) => format!("{}\n{hint}", diagnostic.message),
-        None => diagnostic.message.clone(),
-    };
-    let d = at(diagnostic.node, message, diagnostic.category);
+    let d = at(diagnostic.node, message_text(diagnostic), diagnostic.category);
     if let Some(source) = diagnostic.source.or(plugin_source)
         && let Some(address) = message_address(d)
     {
@@ -309,26 +305,27 @@ pub(crate) fn to_diagnostic(diagnostic: &PluginDiagnostic, plugin_source: Option
     d
 }
 
-/// What makes two plugin diagnostics the same: the file and range of the node and of each related node, the
-/// category, the texts and the source.
-fn diagnostic_key(diagnostic: &PluginDiagnostic, source: Option<&str>) -> String {
-    use std::fmt::Write;
-    let at = |node: P<Node>| {
-        let (file, range) = node_range(node);
-        (file.map(|f| f.get().file_name()), range.pos(), range.end())
-    };
-    let mut key = format!(
-        "{:?} {:?} {:?} {:?} {:?}",
-        at(diagnostic.node),
-        diagnostic.category,
-        diagnostic.message,
-        diagnostic.hint,
-        source
-    );
-    for (node, message) in &diagnostic.related {
-        let _ = write!(key, " {:?} {message:?}", at(*node));
+/// A plugin diagnostic's message text: the message, and the hint on a line of its own.
+fn message_text(diagnostic: &PluginDiagnostic) -> String {
+    match &diagnostic.hint {
+        Some(hint) => format!("{}\n{hint}", diagnostic.message),
+        None => diagnostic.message.clone(),
     }
-    key
+}
+
+/// What makes two plugin diagnostics the same, as TypeScript's `DiagnosticCollection` compares them
+/// (`compareDiagnosticsSkipRelatedInformation`): the file, the start and the length, the code (the source, which
+/// renders in the code slot) and the message text (the hint included). The category and the related information
+/// are not part of it.
+fn diagnostic_key(diagnostic: &PluginDiagnostic, source: Option<&str>) -> String {
+    let (file, range) = node_range(diagnostic.node);
+    format!(
+        "{:?} {} {} {source:?} {:?}",
+        file.map(|f| f.get().file_name()),
+        range.pos(),
+        range.end(),
+        message_text(diagnostic)
+    )
 }
 
 impl HookBackend<'_, '_> {

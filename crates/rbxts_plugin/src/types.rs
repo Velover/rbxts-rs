@@ -166,9 +166,14 @@ pub struct AccessSite {
     /// The PropertyAccessExpression or ElementAccessExpression.
     pub node: P<Node>,
     pub receiver: P<Node>,
-    /// The key, when it is known at compile time: the property name of `obj.k`, or for `obj[e]` the value of
-    /// `e`'s type when that type is a single string literal (`obj["k"]`, `obj[k as "k"]`, `obj[k]` with
-    /// `k: "k"`, a string enum member), read from the type as Flamework's TS transformer reads literal keys.
+    /// The key, when it is known at compile time: the property name of `obj.k`, or for `obj[e]` the text of a
+    /// string literal `e`, else the value of `e`'s type when that type is a single string literal. The type is
+    /// read through casts and identifiers: `obj[k as "k"]`, `obj[k]` with `k: "k"`, a string enum member, a
+    /// call returning `"k"` all have the key `"k"`.
+    ///
+    /// This is wider than Flamework's TS transformer, which knows a key only for `obj.k` and a string-literal
+    /// argument `obj["k"]`: it leaves `obj[x as "k"]` untouched and reports an error for `obj[k]` with `k: "k"`.
+    /// A plugin that needs that stricter rule inspects [`AccessSite::key_node`] itself.
     ///
     /// `None` for any other key (`obj[k]` with `k: string`, a union of literals, a template). A numeric key
     /// (`obj[0]`, a number literal type) is `None` too: Luau tables tell `0` from `"0"`, and roblox-ts offsets

@@ -227,7 +227,11 @@ fn probe_and_stamp_match_the_expected_luau() {
             "warning calls.ts: `mystery` has an unknown @stamp mode; the call is left as it is",
             // asked once: the call hook compiling the call itself does not ask the expression hook again
             "warning s2chains.ts: probe-exprcall: asked about probeAskOnce",
-            // reported twice at the same node: kept once
+            // reported twice at the same node, then as a message and with related information: kept once
+            "warning seamnames.ts: probe: reported twice, kept once",
+            // with a hint, and the same text without one: kept once
+            "warning seamnames.ts: probe: with a hint\nthe hint",
+            // with another source: kept
             "warning seamnames.ts: probe: reported twice, kept once",
         ]
     );

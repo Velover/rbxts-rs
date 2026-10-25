@@ -950,8 +950,9 @@ fn access_parts(access: P<Node>) -> Option<(P<Node>, P<Node>)> {
 }
 
 /// `AccessSite.key` / `AssignSite.key`: a property access's name; an element access's argument when it is a string
-/// literal, else the value of its type when that is a single string literal (as Flamework's TS transformer reads a
-/// key from a literal type: `obj[k as "a"]`, `obj[k]` with `k: "a"`, a string enum member). Numeric keys are `None`.
+/// literal, else the value of its type when that is a single string literal, through casts and identifiers
+/// (`obj[k as "a"]`, `obj[k]` with `k: "a"`, a string enum member; wider than Flamework's TS transformer, which
+/// knows only `obj.k` and `obj["k"]`). Numeric keys are `None`.
 fn access_key(state: &mut TransformState<'_>, access: P<Node>, key_node: P<Node>) -> Option<&'static str> {
     if access.kind() == Kind::PropertyAccessExpression {
         return Some(key_node.text());

@@ -156,6 +156,15 @@ pub trait CxBackend {
     /// - the condition of an `else if`: before that inner `if`, which then becomes `else <statements> if … end end`
     ///   (as roblox-ts lowers the `else { …; if … }` block Flamework's transform makes there).
     ///
+    /// **Order.** Insertions before one statement keep the order they were made in, and that is roblox-ts's lowering
+    /// order, which can differ from TypeScript's visit order: a `for (init; condition; incrementor)` head inserts
+    /// for init, incrementor, condition (TypeScript visits init, condition, incrementor), and in a class a method's
+    /// parameter initializer inserts before a static field initializer.
+    ///
+    /// **Unplaced.** When the chosen statement is not lowered in a statement list (no such case is known in
+    /// roblox-ts's lowerings, but one would drop the statements), the file gets an internal error naming that
+    /// statement at the end of the file, and the build fails: the insertion is never lost silently.
+    ///
     /// It is an effect: a claim hook cannot decline its node after it (see "Declining" in the crate docs). Locals it
     /// declares before a top-level statement count toward the main chunk's ([`CxBackend::locals`]).
     ///
@@ -300,9 +309,11 @@ pub trait CxBackend {
 
     /// Records a diagnostic for this file. Any error fails the build: nothing is written.
     ///
-    /// A diagnostic identical to one already recorded for this file (same node range, category, message, hint,
-    /// related information and source, the plugin's [`crate::Plugin::diagnostic_source`] standing in for a `None`
-    /// source) is dropped, as TypeScript's `DiagnosticCollection` keeps one of each.
+    /// A diagnostic equal to one already recorded for this file is dropped, as TypeScript's `DiagnosticCollection`
+    /// keeps one of each (`compareDiagnosticsSkipRelatedInformation`). Equal means the same node range, the same
+    /// source (the plugin's [`crate::Plugin::diagnostic_source`] standing in for a `None` source; it renders as the
+    /// code) and the same message text, the hint included as the line under the message. The category and the
+    /// related information are not compared: the first one recorded is kept.
     fn report(&mut self, diagnostic: PluginDiagnostic);
 
     // --- build inputs (DESIGN §14) ---

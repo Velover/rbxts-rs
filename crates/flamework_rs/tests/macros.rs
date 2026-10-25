@@ -6,7 +6,7 @@
 //! sources. It equals TS5's output but for:
 //! - the export tables of `caller`, `emit`, `generic`, `intrinsics`, `markers` and `unicode` (TS7 sorts them);
 //! - `emit.luau`: `Caller.Constant` hoists are spillable compiler temporaries (`_constant_22`, where TS named them
-//!   `constant_22`), and the "hoisted" comment of a root statement follows that statement's own comment;
+//!   `constant_22`);
 //! - `hashes.luau`: `Modding.Hash` is a fresh hash every clean build (TS5: a random uuid; here: derived from a
 //!   per-build seed), and `flamework.build` has no `stringHashes` table (DESIGN §10.3).
 

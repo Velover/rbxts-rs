@@ -40,7 +40,8 @@
 //!   diagnostics;
 //! - `links`: every `{@link}` of the tag as `name=target:text` (`JsDocLink::text`, `-` for none);
 //! - `runtime`: `runtime_member("Promise", "is")`; `synth`: an array of `synthesized_string`s of tricky texts;
-//! - `diagtwice`: the same warning reported twice (one is kept), value `nil`;
+//! - `diagtwice`: the same warning reported twice, then as a message and with related information (one is kept),
+//!   with a hint and as the same text without one (one is kept), and with another source (kept), value `nil`;
 //! - `before`: `insert_before_statement([comment, print("before <arg text>")])`, then `compile_expr(arg)`;
 //! - `named`: `hoist_spillable_named(compile_expr(a), "constant_22")`;
 //! - `idents`: the `file_identifier_texts` that start with `jd` or `lit`, joined;
@@ -576,6 +577,18 @@ impl ProbeInstance {
             "diagtwice" => {
                 cx.warning(call.node, "probe: reported twice, kept once");
                 cx.warning(call.node, "probe: reported twice, kept once");
+                // neither the category nor the related information makes a diagnostic distinct
+                let message = rbxts_plugin::ts::Category::Message;
+                cx.report(PluginDiagnostic::new(call.node, message, "probe: reported twice, kept once"));
+                cx.report(
+                    PluginDiagnostic::warning(call.node, "probe: reported twice, kept once")
+                        .with_related(call.node, "related"),
+                );
+                // the hint is the message text's second line
+                cx.report(PluginDiagnostic::warning(call.node, "probe: with a hint").with_hint("the hint"));
+                cx.warning(call.node, "probe: with a hint\nthe hint");
+                // the source renders as the code: another source is another diagnostic
+                cx.report(PluginDiagnostic::warning(call.node, "probe: reported twice, kept once").with_source("other"));
                 self.claimed(create::nil())
             }
             "before" => {
