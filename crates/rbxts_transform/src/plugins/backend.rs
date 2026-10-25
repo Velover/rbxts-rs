@@ -22,7 +22,7 @@ use tsrs_diagnostics::{Category, new_ad_hoc_message};
 use super::HookKind;
 use super::dispatch;
 use super::facts;
-use super::file_state::{EffectMark, HookFrame, SpillableHoist, declared_locals};
+use super::file_state::{EffectMark, HookFrame, SpillableHoist, SpillableLocal, declared_locals};
 use super::host::PluginHost;
 use crate::classes::prereqs::{Prereqs, temp_id};
 use crate::classes::transform_state::TransformState;
@@ -702,9 +702,29 @@ impl CxBackend for HookBackend<'_, '_> {
         // spilled into one table local at the end of the file if the main chunk is past Luau's limit (`spill`)
         let hoisted = self.hoist_unchecked(value, hint);
         if let Expr::TemporaryIdentifier(id) = &hoisted {
-            self.state.plugin_file.spillable.push(SpillableHoist { id: id.id, hint: hint.to_owned() });
+            let hoist = SpillableHoist { local: SpillableLocal::Temporary(id.id), hint: hint.to_owned() };
+            self.state.plugin_file.spillable.push(hoist);
         }
         hoisted
+    }
+
+    fn hoist_spillable_named(&mut self, value: Expr, name: &str) -> Expr {
+        if self.refused("hoist_spillable_named", Row::Lowering) {
+            return create::nil();
+        }
+        if !rbxts_luau::is_valid_identifier(name) {
+            self.misuse(&format!("hoist_spillable_named: `{name}` is not a valid Luau identifier"));
+            return create::nil();
+        }
+        self.note_effect("calling hoist");
+        self.touch();
+        // TypeScript's optimistic unique name: `name`, else `name_1`, … (capture-safe: nothing in the file has it)
+        let name = self.state.plugin_file.unique_plain_name(self.state.source_file, name);
+        self.state.plugin_file.main_chunk_locals += 1;
+        self.state.plugin_file.root_inserts.push(create::local(create::any_id(name.clone()), Some(value)));
+        let hoist = SpillableHoist { local: SpillableLocal::Named(name.clone()), hint: name.clone() };
+        self.state.plugin_file.spillable.push(hoist);
+        create::id(name)
     }
 
     fn import_named(&mut self, specifier: &str, export: &str) -> Result<Expr, Aborted> {

@@ -28,6 +28,7 @@ use tsrs_ast::{Diagnostic, Node, SourceFile, new_diagnostic};
 use tsrs_core::{P, TextRange};
 use tsrs_diagnostics::{Category, new_ad_hoc_message};
 
+use super::file_state::SpillableLocal;
 use crate::classes::prereqs::temp_id;
 use crate::classes::transform_state::TransformState;
 use crate::shared::diagnostics::{internal_error, node_range};
@@ -465,23 +466,45 @@ fn statement_ends(state: &TransformState<'_>, spilled_at: Option<usize>) -> Vec<
 /// The spilled hoists' table and fields.
 struct Spill {
     table: Expr,
-    fields: FxHashMap<u32, String>,
+    fields: FxHashMap<SpillableLocal, String>,
+}
+
+impl Spill {
+    /// The field of a spilled local, if `id` is one.
+    fn field(&self, id: &AnyIdentifier) -> Option<&String> {
+        match id {
+            AnyIdentifier::Temporary(t) => self.fields.get(&SpillableLocal::Temporary(t.id)),
+            AnyIdentifier::Identifier(i) => self.named_field(&i.name),
+        }
+    }
+
+    fn named_field(&self, name: &str) -> Option<&String> {
+        // (named hoists are rare: skip the String allocation when there are none)
+        if !self.fields.keys().any(|k| matches!(k, SpillableLocal::Named(_))) {
+            return None;
+        }
+        self.fields.get(&SpillableLocal::Named(name.to_owned()))
+    }
 }
 
 /// Moves every `hoist_spillable` local whose declaration is a statement of the main chunk into one table local:
 /// `local _spill = {}` where the first was declared, `_spill.<hint> = value` for each, and every use of one
 /// becomes `_spill.<hint>`. Returns where the table's declaration went.
 fn spill(state: &mut TransformState<'_>, statements: &mut Vec<Stmt>) -> Option<usize> {
-    let spillable: FxHashMap<u32, String> =
-        state.plugin_file.spillable.iter().map(|hoist| (hoist.id, hoist.hint.clone())).collect();
+    let spillable: FxHashMap<SpillableLocal, String> =
+        state.plugin_file.spillable.iter().map(|hoist| (hoist.local.clone(), hoist.hint.clone())).collect();
     // the declarations, in file order
-    let declarations: Vec<(usize, u32)> = statements
+    let declarations: Vec<(usize, SpillableLocal)> = statements
         .iter()
         .enumerate()
         .filter_map(|(i, statement)| match statement {
             Stmt::VariableDeclaration(declaration) => match declaration.left.as_slice() {
-                [AnyIdentifier::Temporary(id)] if spillable.contains_key(&id.id) && declaration.right.len() == 1 => {
-                    Some((i, id.id))
+                [id] if declaration.right.len() == 1 => {
+                    let local = match id {
+                        AnyIdentifier::Temporary(t) => SpillableLocal::Temporary(t.id),
+                        AnyIdentifier::Identifier(i) => SpillableLocal::Named(i.name.clone()),
+                    };
+                    spillable.contains_key(&local).then_some((i, local))
                 }
                 _ => None,
             },
@@ -493,22 +516,23 @@ fn spill(state: &mut TransformState<'_>, statements: &mut Vec<Stmt>) -> Option<u
     let table = Expr::TemporaryIdentifier(table_id.clone());
     let mut fields = FxHashMap::default();
     let mut taken = FxHashSet::default();
-    for &(_, id) in &declarations {
-        let hint = &spillable[&id];
+    for (_, id) in &declarations {
+        let hint = &spillable[id];
         let base = if rbxts_luau::is_valid_identifier(hint) { hint.clone() } else { "field".to_owned() };
         let field = (1..)
             .map(|n| if n == 1 { base.clone() } else { format!("{base}_{n}") })
             .find(|name| !taken.contains(name))
             .expect("a free field name");
         taken.insert(field.clone());
-        fields.insert(id, field);
+        fields.insert(id.clone(), field);
     }
     let spill = Spill { table, fields };
-    for &(i, id) in &declarations {
+    for (i, id) in &declarations {
+        let i = *i;
         let Stmt::VariableDeclaration(declaration) = &mut statements[i] else { unreachable!("found above") };
         let value = declaration.right.pop().expect("one value");
         statements[i] = create::assignment(
-            create::property(spill.table.clone(), spill.fields[&id].clone()),
+            create::property(spill.table.clone(), spill.fields[id].clone()),
             rbxts_luau::AssignmentOperator::Assign,
             value,
         );
@@ -536,9 +560,7 @@ fn rewrite_statements(statements: &mut [Stmt], spill: &Spill, misplaced: &mut bo
 
 fn check_declared(ids: &[AnyIdentifier], spill: &Spill, misplaced: &mut bool) {
     for id in ids {
-        if let AnyIdentifier::Temporary(t) = id
-            && spill.fields.contains_key(&t.id)
-        {
+        if spill.field(id).is_some() {
             *misplaced = true;
         }
     }
@@ -579,8 +601,11 @@ fn rewrite_statement(statement: &mut Stmt, spill: &Spill, misplaced: &mut bool) 
         }
         Stmt::FunctionDeclaration(f) => {
             if f.localize
-                && let Expr::TemporaryIdentifier(t) = &f.name
-                && spill.fields.contains_key(&t.id)
+                && match &f.name {
+                    Expr::TemporaryIdentifier(t) => spill.fields.contains_key(&SpillableLocal::Temporary(t.id)),
+                    Expr::Identifier(i) => spill.named_field(&i.name).is_some(),
+                    _ => false,
+                }
             {
                 *misplaced = true;
             }
@@ -619,12 +644,16 @@ fn rewrite_if(statement: &mut IfStatement, spill: &Spill, misplaced: &mut bool) 
 fn rewrite_expr(expr: &mut Expr, spill: &Spill, misplaced: &mut bool) {
     match expr {
         Expr::TemporaryIdentifier(t) => {
-            if let Some(field) = spill.fields.get(&t.id) {
+            if let Some(field) = spill.fields.get(&SpillableLocal::Temporary(t.id)) {
                 *expr = create::property(spill.table.clone(), field.clone());
             }
         }
-        Expr::Identifier(_)
-        | Expr::None
+        Expr::Identifier(i) => {
+            if let Some(field) = spill.named_field(&i.name) {
+                *expr = create::property(spill.table.clone(), field.clone());
+            }
+        }
+        Expr::None
         | Expr::Nil
         | Expr::False
         | Expr::True

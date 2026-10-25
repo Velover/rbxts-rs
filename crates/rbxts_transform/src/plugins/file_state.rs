@@ -43,11 +43,20 @@ pub struct PluginImport {
     pub statement: Option<Stmt>,
 }
 
-/// One `hoist_spillable` local: its temporary's id and the hint it was given.
+/// One `hoist_spillable` local: the local and the hint (or name) it was given.
 #[derive(Clone, Debug)]
 pub struct SpillableHoist {
-    pub id: u32,
+    pub local: SpillableLocal,
     pub hint: String,
+}
+
+/// The local of a `hoist_spillable` hoist.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum SpillableLocal {
+    /// A temporary (`hoist_spillable`), by id.
+    Temporary(u32),
+    /// A plain name (`hoist_spillable_named`), capture-safe: nothing else in the file has it.
+    Named(String),
 }
 
 /// The lengths of what a hook, or a hook nested in it, can leave behind besides its value: the prereq scope it
@@ -310,6 +319,7 @@ impl PluginFileState {
                 names.iter().any(|n| matches(n))
                     || approved.iter().any(|n| matches(n))
                     || self.import_names.iter().any(|n| matches(n))
+                    || self.plain_names.iter().any(|n| matches(n))
             };
             if taken(hint) {
                 (2..).map(|i| format!("{hint}{i}")).find(|candidate| !taken(candidate)).expect("a free name")
@@ -343,6 +353,7 @@ impl PluginFileState {
     pub fn name_taken(&self, file: P<SourceFile>, name: &str) -> bool {
         self.identifier_names(file).contains(name)
             || self.import_names.contains(name)
+            || self.plain_names.contains(name)
             || self.approved_names.borrow().contains(name)
             || self.is_seam_name(name)
     }

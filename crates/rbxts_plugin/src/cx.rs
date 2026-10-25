@@ -152,10 +152,36 @@ pub trait CxBackend {
     /// As `hoist`, but the compiler may turn the local into a field of one spill table when the main chunk would
     /// pass Luau's 200-local limit; returns the expression to use either way.
     fn hoist_spillable(&mut self, value: LuauExpr, hint: &str) -> LuauExpr;
+    /// As [`CxBackend::hoist_spillable`], with a plain local name (`constant_22`) instead of a temporary's hint:
+    /// the local is `name` itself when the name is free, else the first free `name_1`, `name_2`, … (`name1`, … when
+    /// `name` ends in `_`): TypeScript's printer rule for an optimistic unique name (`createUniqueName(name,
+    /// Optimistic)`), which Flamework's TS transformer uses. Free means what
+    /// [`CxBackend::is_usable_local_name`] checks (no identifier text of the file, JSDoc included, no plugin import,
+    /// no seam temporary, no approved name, no `luau.globals` name), so the local stays capture-safe; the name
+    /// chosen is recorded as taken. A spill makes it the field `_spill.<chosen name>`.
+    ///
+    /// A `name` that is not a valid Luau identifier is an internal error naming the plugin, and the value is `nil`.
+    ///
+    /// **Default:** [`CxBackend::hoist_spillable`] with `name` as the hint.
+    fn hoist_spillable_named(&mut self, value: LuauExpr, name: &str) -> LuauExpr {
+        self.hoist_spillable(value, name)
+    }
     /// The value of `export` from module `specifier`, imported once per file and placed with roblox-ts's imports
-    /// (reusing a user import of the same export). Plugin imports go after the `--!` directives, the
-    /// `-- Compiled with` line and `local TS = require(...)`, ahead of the user's own imports. A reused user
-    /// import is kept alive like a [`CxBackend::mark_import_used`] one, so it counts as left behind for declining.
+    /// (reusing a user import of the same export).
+    ///
+    /// **Placement.** Plugin imports go after the `--!` directives, the `-- Compiled with` line and
+    /// `local TS = require(...)`, and after a header comment the file starts with (a run of comments with a blank
+    /// line after it, which TypeScript's printer keeps at the top of the file), ahead of the user's own imports.
+    /// They are ordered by the source position of the node whose hook first asked for each (the file for
+    /// `begin_file` / `end_file`), then by request order, as the TS transformer adds them while it walks the file.
+    ///
+    /// **Name.** The local is named after the export; when that name is taken (see
+    /// [`CxBackend::hoist_spillable_named`]), the first free `export_1`, `export_2`, …, as TypeScript's printer
+    /// names the TS transformer's unique import name. An export name that is not a valid Luau identifier gets a
+    /// temporary instead.
+    ///
+    /// A reused user import is kept alive like a [`CxBackend::mark_import_used`] one, so it counts as left behind
+    /// for declining.
     fn import_named(&mut self, specifier: &str, export: &str) -> Result<LuauExpr, Aborted>;
     /// `TS.<object>.<member>`: a member of the roblox-ts runtime library, as roblox-ts compiles a reference to a
     /// global it provides (`Promise.is` becomes `TS.Promise.is`). The file gets `local TS = require(...)` as for the
@@ -456,6 +482,12 @@ impl<'a> Cx<'a> {
     /// A hoisted local that may spill into a table ([`CxBackend::hoist_spillable`]).
     pub fn hoist_spillable(&mut self, value: LuauExpr, hint: &str) -> LuauExpr {
         self.backend.hoist_spillable(value, hint)
+    }
+
+    /// A hoisted local with a plain name (`name`, else `name_1`, …) that may spill into a table
+    /// ([`CxBackend::hoist_spillable_named`]).
+    pub fn hoist_spillable_named(&mut self, value: LuauExpr, name: &str) -> LuauExpr {
+        self.backend.hoist_spillable_named(value, name)
     }
 
     /// An imported value ([`CxBackend::import_named`]).

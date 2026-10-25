@@ -1606,11 +1606,14 @@ pub(crate) fn import_named(
         state.plugin_file.forced_imports.insert(alias);
         value
     } else {
-        let usable = rbxts_luau::is_valid_identifier(export)
-            && !rbxts_luau::is_reserved_identifier(export)
-            && !state.plugin_file.name_taken(file, export);
-        let id: AnyIdentifier =
-            if usable { create::any_id(export) } else { temp_id(state.plugin_file.seam_hint(file, export)).into() };
+        // TypeScript's optimistic unique name for the TS transformer's import: `export`, else `export_1`, …
+        let id: AnyIdentifier = if rbxts_luau::is_valid_identifier(export) {
+            let name = state.plugin_file.unique_plain_name(file, export);
+            state.plugin_file.import_names.insert(name.clone());
+            create::any_id(name)
+        } else {
+            temp_id(state.plugin_file.seam_hint(file, export)).into()
+        };
         state.plugin_file.import_names.insert(export.to_owned());
         let import = create_import_expression_of_file(state, file, module_file, anchor);
         let statement = create::local(id.clone(), Some(create::computed_index(import, create::string(export))));
