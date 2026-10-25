@@ -63,6 +63,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use rbxts_project::{IncludeMatcher, ReadLog, Seen, nodepath, rojo, text_hash};
 use rbxts_transform::build::graph::Version;
+use rbxts_transform::build::state::StateFile;
 use rbxts_transform::{BuildSession, BuildSummary, CompileOptions, CompileReport, PluginOptions};
 use tsrs_diagnostics::Category;
 
@@ -245,6 +246,10 @@ struct Watched {
     stamps: Vec<(String, Option<SystemTime>, i64)>,
     /// The plugins' recorded inputs.
     inputs: inputs::InputWatches,
+    /// Path keys of the plugin state files the last committed build left: an event counts when the file no longer
+    /// holds what that build left (deleted or edited; this watcher's own write never counts), wherever it is (an
+    /// output root included), before every other rule.
+    state_files: FxHashMap<String, StateFile>,
 }
 
 /// The package root of a path under `node_modules`: `…/node_modules/name` or `…/node_modules/@scope/name`.
@@ -586,6 +591,11 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
         watched.config_inputs.insert(key(&input));
         watched.cover(&input, &mut dirs);
     }
+    // the plugins' state files: deleted or edited by hand, the next build starts their plugins fresh
+    for file in session.state_files() {
+        watched.state_files.insert(key(&file.path), file.clone());
+        watched.cover(&file.path, &mut dirs);
+    }
     for root in root_dirs.iter().map(|r| nodepath::resolve(&[r])).chain(session.plugin_watch_dirs()) {
         watched.root_keys.push(key(&root));
         watched.recursive.insert(root);
@@ -687,6 +697,12 @@ fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &Own) -> bo
     let k = key(path);
     let parent = nodepath::dirname(&k);
     let name = nodepath::basename(&k);
+    // a plugin state file counts only when it no longer holds what the last commit left (deleted, edited): this
+    // watcher's own write, or a tool rewriting the same bytes, starts nothing (also when a plugin's setup read it as
+    // a build input: Flamework's candidate scan reads its own `flamework.build`)
+    if let Some(file) = watched.state_files.get(&k) {
+        return !folder_modify && !file.intact();
+    }
     let output = watched.ignored_roots.iter().any(|root| is_under(&k, root));
     // in the output roots, this watcher's own writes and deletions as it made them come first (an asset-copied
     // Rojo project file is a config input the next load reads, yet the build's own)
