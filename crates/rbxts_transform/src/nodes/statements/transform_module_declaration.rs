@@ -6,6 +6,7 @@ use tsrs_ast::{Kind, Node, Symbol};
 use tsrs_core::P;
 
 use crate::classes::prereqs::{as_any_identifier, temp_id};
+use crate::classes::diagnostic_service::{OnceCache, ReportOnce};
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_identifier::transform_identifier_defined;
 use crate::nodes::transform_statement_list::{ExportInfo, transform_statement_list_with_exports};
@@ -125,8 +126,9 @@ pub fn transform_module_declaration(state: &mut TransformState<'_>, node: P<Node
         && has_multiple_definitions(symbol, is_declaration_of_namespace)
     {
         // `DiagnosticService.addDiagnosticWithCache`
-        if state.multi_transform_state.is_reported_by_multiple_definitions_cache.insert(symbol) {
-            state.add_diagnostic(errors::no_namespace_merging(node));
+        let key = ReportOnce::new(OnceCache::MultipleDefinitions, symbol, state.source_file);
+        if state.multi_transform_state.reported_once.insert(key) {
+            state.diagnostics.add_diagnostic_once(key, errors::no_namespace_merging(node));
         }
         return Vec::new();
     }

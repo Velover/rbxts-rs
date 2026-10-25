@@ -64,6 +64,7 @@ fn main() -> std::process::ExitCode {
                     out_dir_override: None,
                     write_partial: partial,
                     no_write: false,
+                    checkers: None,
                 },
                 &PluginOptions { plugins: &plugins, ..PluginOptions::default() },
             )

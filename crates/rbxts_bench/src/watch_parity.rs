@@ -98,6 +98,7 @@ pub fn main(args: Vec<String>) -> i32 {
         keep_clean_copies: keep,
         check_clean: !no_clean,
         memory: Some(|| crate::memory().map(|(_, working_set, _)| working_set)),
+        checkers: None,
     };
     let results = match run(&options, &script_value) {
         Ok(results) => results,

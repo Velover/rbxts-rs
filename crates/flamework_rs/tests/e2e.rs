@@ -139,6 +139,7 @@ impl Project {
                             out_dir_override: None,
                             write_partial: false,
                             no_write: false,
+                            checkers: None,
                         },
                         &PluginOptions { plugins: &plugins, ..PluginOptions::default() },
                     )

@@ -6,6 +6,7 @@ use tsrs_checker::LiteralValue;
 use tsrs_core::P;
 
 use crate::classes::prereqs::{Prereqs, as_any_identifier, temp_id};
+use crate::classes::diagnostic_service::{OnceCache, ReportOnce};
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::expressions::transform_identifier::transform_identifier_defined;
@@ -42,8 +43,9 @@ pub fn transform_enum_declaration(state: &mut TransformState<'_>, node: P<Node>)
         })
     {
         // `DiagnosticService.addDiagnosticWithCache`
-        if state.multi_transform_state.is_reported_by_multiple_definitions_cache.insert(symbol) {
-            state.add_diagnostic(errors::no_enum_merging(node));
+        let key = ReportOnce::new(OnceCache::MultipleDefinitions, symbol, state.source_file);
+        if state.multi_transform_state.reported_once.insert(key) {
+            state.diagnostics.add_diagnostic_once(key, errors::no_enum_merging(node));
         }
         return Vec::new();
     }

@@ -109,6 +109,16 @@ impl Project {
 
     /// Builds the copy with the named test plugins (in registration order).
     fn build(&self, plugins: &[&str], configure: impl FnOnce(&mut PluginOptions<'_>)) -> CompileReport {
+        self.build_with(plugins, None, configure)
+    }
+
+    /// [`Project::build`] with a checker count (`None`: the default).
+    fn build_with(
+        &self,
+        plugins: &[&str],
+        checkers: Option<usize>,
+        configure: impl FnOnce(&mut PluginOptions<'_>),
+    ) -> CompileReport {
         let plugins: Vec<Box<dyn DynPlugin>> =
             plugins.iter().map(|name| rbxts_test_plugins::by_name(name).expect("a test plugin")).collect();
         let cwd = self.root.to_string_lossy().into_owned();
@@ -130,6 +140,7 @@ impl Project {
                             out_dir_override: None,
                             write_partial: false,
                             no_write: false,
+                            checkers,
                         },
                         &options,
                     )
@@ -336,13 +347,20 @@ fn hook_failures_fail_the_build_and_write_nothing() {
         assert!(!project.out_exists(), "{plugin}: nothing is written");
         assert!(!project.root.join("probe-report.json").exists(), "{plugin}: no artifact");
         if *plugin == "probe-panic" {
-            // the checker may be inconsistent after a panic: no later file is transformed
-            assert_eq!(report.files.last().unwrap().file_name.rsplit('/').next(), Some("failures.ts"));
+            // the checker may be inconsistent after a panic: no later file of that checker is transformed (with one
+            // checker, no later file at all); the other checkers' files are
+            assert!(report.files.iter().any(|f| f.file_name.ends_with("/failures.ts")));
             assert!(
-                report.fatal[0].starts_with("the transform stopped after an internal error in"),
+                report.fatal[0].starts_with("the transform stopped after an internal error in")
+                    && report.fatal[0].contains("failures.ts; later files"),
                 "{:?}",
                 report.fatal
             );
+            let one = project.build_with(&["stamp", plugin], Some(1), |_| {});
+            assert_eq!(errors(&one), *expected, "{plugin}, one checker");
+            assert_eq!(one.files.last().unwrap().file_name.rsplit('/').next(), Some("failures.ts"));
+            assert!(one.fatal[0].ends_with("failures.ts; later files were not transformed"), "{:?}", one.fatal);
+            assert!(!project.out_exists(), "{plugin}, one checker: nothing is written");
         }
     }
 }

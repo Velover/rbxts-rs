@@ -10,6 +10,7 @@ use tsrs_ast::{Node, SourceFile, Symbol};
 use tsrs_checker::Type;
 use tsrs_core::P;
 
+use crate::classes::diagnostic_service::ReportOnce;
 use crate::util::evaluation::bindings::BindingUsage;
 use crate::util::symlink_cache::SymlinkedDirectories;
 
@@ -18,6 +19,9 @@ use crate::util::symlink_cache::SymlinkedDirectories;
 pub struct MultiTransformState {
     pub is_primitive_type_cache: FxHashMap<P<Type>, bool>,
     pub is_roblox_type_cache: FxHashMap<P<Type>, bool>,
+    /// rbxts-rs: per file (cleared at each file's start, like `binding_keys`): a symbol another file can name
+    /// without an import alias (a script file's global) would otherwise get what the files transformed before it, on
+    /// its checker, left here, so a file's Luau would depend on the checker count and on what a rebuild transforms.
     pub function_effects: FxHashMap<P<Symbol>, Arc<Effects>>,
     pub binding_keys: FxHashMap<P<Symbol>, BindingKey>,
     pub binding_usage_by_source_file: FxHashMap<P<SourceFile>, Rc<BindingUsage>>,
@@ -25,8 +29,9 @@ pub struct MultiTransformState {
     pub is_reported_by_no_unstable_this_type: FxHashSet<P<Node>>,
     pub is_defined_as_let_cache: FxHashMap<P<Symbol>, bool>,
     pub is_any_or_any_array_cache: FxHashMap<P<Type>, bool>,
-    pub is_reported_by_no_any_cache: FxHashSet<P<Symbol>>,
-    pub is_reported_by_multiple_definitions_cache: FxHashSet<P<Symbol>>,
+    /// `isReportedByNoAnyCache` and `isReportedByMultipleDefinitionsCache`, by a key every checker computes alike
+    /// ([`ReportOnce`]).
+    pub reported_once: FxHashSet<ReportOnce>,
     pub get_module_exports_cache: FxHashMap<P<Symbol>, Rc<[P<Symbol>]>>,
     pub get_module_exports_alias_map_cache: FxHashMap<P<Symbol>, Rc<FxHashMap<P<Symbol>, Expr>>>,
     /// rbxts-rs: whether a declaration file is under `node_modules/@rbxts/types` (`isRobloxType`, `isBuiltinDeclaration`).

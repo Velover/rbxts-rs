@@ -302,6 +302,7 @@ fn override_keeps_include_across_builds() {
                     out_dir_override: Some(out_dir),
                     write_partial: false,
                     no_write: false,
+                    checkers: None,
                 })
             })
             .unwrap()

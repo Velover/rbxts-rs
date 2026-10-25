@@ -3,6 +3,7 @@
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
+use crate::classes::diagnostic_service::{OnceCache, ReportOnce};
 use crate::classes::transform_state::TransformState;
 use crate::shared::diagnostics::errors;
 use crate::util::symbols::get_original_symbol_of_node;
@@ -37,8 +38,9 @@ pub fn validate_not_any_type(state: &mut TransformState<'_>, mut node: P<Node>) 
         // given a type like `a: { [index: string]: any }`, `a["b"]` will not have a symbol
         match get_original_symbol_of_node(state.checker, node) {
             Some(symbol) => {
-                if state.multi_transform_state.is_reported_by_no_any_cache.insert(symbol) {
-                    state.add_diagnostic(errors::no_any(node));
+                let key = ReportOnce::new(OnceCache::NoAny, symbol, state.source_file);
+                if state.multi_transform_state.reported_once.insert(key) {
+                    state.diagnostics.add_diagnostic_once(key, errors::no_any(node));
                 }
             }
             None => state.add_diagnostic(errors::no_any(node)),

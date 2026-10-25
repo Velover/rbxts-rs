@@ -236,6 +236,7 @@ impl Cli {
             out_dir_override: None,
             write_partial: false,
             no_write: false,
+            checkers: None,
         };
         if build.watch {
             return watch::run(&self.plugins, &build, options, &cwd);

@@ -126,6 +126,7 @@ fn build(fixture: &str) -> Option<Built> {
                     out_dir_override: None,
                     write_partial: false,
                     no_write: true,
+                    checkers: None,
                 },
                 &PluginOptions { plugins: &plugins, ..PluginOptions::default() },
             );

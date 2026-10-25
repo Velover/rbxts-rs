@@ -322,6 +322,7 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
         out_dir_override: args.out_dir.clone(),
         write_partial: args.write_partial || args.parity.is_some(),
         no_write: args.no_write,
+        checkers: None,
     };
     let report = compile_project_with(&options, &plugin_options);
     let total = start.elapsed();

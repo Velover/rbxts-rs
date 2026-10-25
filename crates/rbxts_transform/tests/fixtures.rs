@@ -238,6 +238,7 @@ fn build(root: &Path) -> CompileReport {
                 out_dir_override: None,
                 write_partial: false,
                 no_write: true,
+                checkers: None,
             })
         })
         .unwrap()

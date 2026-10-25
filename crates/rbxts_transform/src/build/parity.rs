@@ -146,6 +146,8 @@ pub struct ParityOptions<'a> {
     pub check_clean: bool,
     /// The process's working set in bytes, read after each step (the harness has no system calls of its own).
     pub memory: Option<fn() -> Option<usize>>,
+    /// The checker count of the watcher's and the clean builds (`None`: the default).
+    pub checkers: Option<usize>,
 }
 
 /// How a copy gets its `node_modules`.
@@ -391,6 +393,7 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
         out_dir_override: out_dir.map(|d| d.to_string_lossy().replace('\\', "/")),
         write_partial: false,
         no_write: false,
+        checkers: options.checkers,
     };
     let in_copy = !options.plugins.is_empty();
     let mut session = BuildSession::new(compile_options(&work, None), &plugin_options, !options.incremental);

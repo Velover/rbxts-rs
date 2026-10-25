@@ -28,6 +28,7 @@ use tsrs_compiler::Context;
 use tsrs_core::P;
 use tsrs_diagnostics::Category;
 
+use crate::classes::diagnostic_service::ReportOnce;
 use crate::classes::macro_manager::MacroManager;
 use crate::classes::multi_transform_state::MultiTransformState;
 use crate::classes::prereqs::reset_temp_ids;
@@ -41,7 +42,7 @@ use crate::plugins::{HookKind, PluginHost};
 use crate::shared::diagnostics::internal_error;
 
 /// What to build and how.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CompileOptions {
     /// The tsconfig, absolute or relative to `cwd`.
     pub tsconfig: String,
@@ -57,6 +58,31 @@ pub struct CompileOptions {
     pub write_partial: bool,
     /// Transform and render, but write nothing.
     pub no_write: bool,
+    /// Type checkers, each checking and transforming its share of the files on a thread of its own (`--checkers`).
+    /// `None`: [`default_checkers`]. The output is the same for any count.
+    pub checkers: Option<usize>,
+}
+
+/// The checker count when none is given: `RBXTS_CHECKERS` when set (tests and harnesses run a whole suite at
+/// another count with it), else [`DEFAULT_CHECKERS`], at most the machine's parallelism.
+pub fn default_checkers() -> usize {
+    if let Some(n) = std::env::var("RBXTS_CHECKERS").ok().and_then(|v| v.trim().parse::<usize>().ok()) {
+        return n.clamp(1, MAX_CHECKERS);
+    }
+    DEFAULT_CHECKERS.min(std::thread::available_parallelism().map_or(1, usize::from)).max(1)
+}
+
+/// The default checker count (S3-par measurements: past it, more checkers add memory for little time).
+pub const DEFAULT_CHECKERS: usize = 4;
+
+/// tsrs's limit.
+pub const MAX_CHECKERS: usize = 256;
+
+impl CompileOptions {
+    /// The checker count this build asks for.
+    pub fn checker_count(&self) -> usize {
+        self.checkers.map_or_else(default_checkers, |n| n.clamp(1, MAX_CHECKERS))
+    }
 }
 
 /// Wall time per phase.
@@ -242,6 +268,8 @@ pub(crate) struct FileTransform {
     pub load_check: Option<crate::plugins::spill::LoadCheck>,
     /// What its hooks read through `Cx::env` and `Cx::record_glob`.
     pub inputs: crate::build::plugin_inputs::FileInputs,
+    /// Its once-per-compilation diagnostics, with their keys (`DiagnosticService::once`).
+    pub once: Vec<(ReportOnce, P<Diagnostic>)>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -255,6 +283,10 @@ pub(crate) fn transform_file(
     file: P<SourceFile>,
 ) -> FileTransform {
     reset_temp_ids();
+    // rbxts-rs: these two are filled by whichever file reaches a symbol first; per file, a file's output depends only on
+    // the program (not on the files its checker transformed before it), for any checker count and in rebuilds
+    multi.function_effects.clear();
+    multi.binding_keys.clear();
     let mut state = TransformState::new(project.program, checker, services, macro_manager, multi, file);
     if let Some(host) = host {
         state.plugins = Some(host);
@@ -286,7 +318,19 @@ pub(crate) fn transform_file(
     let late_keys = std::mem::take(&mut state.plugin_file.late_keys);
     let load_check = state.plugin_file.load_check.take();
     let inputs = std::mem::take(&mut state.plugin_file.inputs);
-    FileTransform { ast, diagnostics, unsupported, internal_errors, panicked, parts, late_keys, load_check, inputs }
+    let once = std::mem::take(&mut state.diagnostics.once);
+    FileTransform {
+        ast,
+        diagnostics,
+        unsupported,
+        internal_errors,
+        panicked,
+        parts,
+        late_keys,
+        load_check,
+        inputs,
+        once,
+    }
 }
 
 /// The check failed: each plugin may explain the checker diagnostics of the failing files
@@ -315,61 +359,75 @@ pub(crate) fn explain_failures(
     if failing.is_empty() {
         return;
     }
-    let mut checker = project.program.get_type_checker(ctx);
-    let Ok(macro_manager) = MacroManager::new(&mut checker) else { return };
-    let mut multi = MultiTransformState::new();
-    let mut host = PluginHost::new(
-        project.program,
-        active,
-        shared,
-        CheckerInfo { index: 0, count: 1 },
-        FxHashMap::default(),
-        false,
-    );
-    host.env = std::sync::Arc::clone(env);
+    // each file on the checker that checked it, one checker at a time on this thread (a failing build is not timed);
+    // what each file adds is kept in the failing files' order, so the report does not depend on the checker count
+    let program = project.program;
+    let count = program.checker_count().max(1);
+    let mut by_owner: std::collections::BTreeMap<usize, Vec<(usize, P<SourceFile>)>> = Default::default();
+    for (i, &file) in failing.iter().enumerate() {
+        let owner = if count == 1 { 0 } else { program.checker_index_of_file(file).unwrap_or(0) };
+        by_owner.entry(owner).or_default().push((i, file));
+    }
     let mut replacements: FxHashMap<P<Diagnostic>, P<Diagnostic>> = FxHashMap::default();
-    let mut extra = Vec::new();
-    for file in failing {
-        let diagnostics: Vec<P<Diagnostic>> =
-            report.diagnostics.iter().copied().filter(|d| d.file() == Some(file)).collect();
-        let mut state = TransformState::new(project.program, &mut checker, services, &macro_manager, &mut multi, file);
-        state.plugins = Some(&host);
-        state.plugin_file = PluginFileState::new(file_info(services, &host, file), host.len());
-        let root = file.as_node();
-        for diagnostic in diagnostics {
-            for plugin in 0..host.len() {
-                let explained = catch_unwind(AssertUnwindSafe(|| {
-                    run_hook(&mut state, None, None, plugin, HookKind::Explain, root, |instance, cx| {
-                        Ok(instance.explain_checker_diagnostic(cx, diagnostic))
-                    })
-                }));
-                let explained = match explained {
-                    Ok(explained) => explained,
-                    Err(panic) => {
-                        host.take_panic_frame();
-                        report.fatal.push(format!(
-                            "plugin `{}` panicked in explain_checker_diagnostic: {}",
-                            host.name(plugin),
-                            panic_message(&*panic)
-                        ));
-                        continue;
+    let mut extra: Vec<Vec<P<Diagnostic>>> = vec![Vec::new(); failing.len()];
+    let mut panics: Vec<Vec<String>> = vec![Vec::new(); failing.len()];
+    let mut hook_times: Vec<[HookTime; HookKind::ALL.len()]> =
+        vec![[HookTime::default(); HookKind::ALL.len()]; active.len()];
+    for (owner, files) in by_owner {
+        let mut checker = program.get_type_checker_for_file_exclusive(ctx, files[0].1);
+        let Ok(macro_manager) = MacroManager::new(&mut checker) else { continue };
+        let mut multi = MultiTransformState::new();
+        let mut host =
+            PluginHost::new(program, active, shared, CheckerInfo { index: owner, count }, FxHashMap::default(), false);
+        host.env = std::sync::Arc::clone(env);
+        for (i, file) in files {
+            let diagnostics: Vec<P<Diagnostic>> =
+                report.diagnostics.iter().copied().filter(|d| d.file() == Some(file)).collect();
+            let mut state = TransformState::new(program, &mut checker, services, &macro_manager, &mut multi, file);
+            state.plugins = Some(&host);
+            state.plugin_file = PluginFileState::new(file_info(services, &host, file), host.len());
+            let root = file.as_node();
+            for diagnostic in diagnostics {
+                for plugin in 0..host.len() {
+                    let explained = catch_unwind(AssertUnwindSafe(|| {
+                        run_hook(&mut state, None, None, plugin, HookKind::Explain, root, |instance, cx| {
+                            Ok(instance.explain_checker_diagnostic(cx, diagnostic))
+                        })
+                    }));
+                    let explained = match explained {
+                        Ok(explained) => explained,
+                        Err(panic) => {
+                            host.take_panic_frame();
+                            panics[i].push(format!(
+                                "plugin `{}` panicked in explain_checker_diagnostic: {}",
+                                host.name(plugin),
+                                panic_message(&*panic)
+                            ));
+                            continue;
+                        }
+                    };
+                    if let Ok(Some(explanation)) = explained {
+                        replacements.insert(diagnostic, to_diagnostic(&explanation, host.sources[plugin]));
+                        break;
                     }
-                };
-                if let Ok(Some(explanation)) = explained {
-                    replacements.insert(diagnostic, to_diagnostic(&explanation, host.sources[plugin]));
-                    break;
                 }
             }
+            extra[i] = std::mem::take(&mut state.diagnostics.diagnostics);
         }
-        extra.extend(std::mem::take(&mut state.diagnostics.diagnostics));
+        for (sum, times) in hook_times.iter_mut().zip(host.times.borrow().iter()) {
+            for (sum, time) in sum.iter_mut().zip(times) {
+                sum.calls += time.calls;
+                sum.time += time.time;
+            }
+        }
     }
+    report.fatal.extend(panics.into_iter().flatten());
     for diagnostic in &mut report.diagnostics {
         if let Some(&replacement) = replacements.get(diagnostic) {
             *diagnostic = replacement;
         }
     }
-    report.diagnostics.extend(extra);
-    let hook_times = host.times.borrow();
+    report.diagnostics.extend(extra.into_iter().flatten());
     record_timings(report, active, times, Some(&hook_times));
 }
 

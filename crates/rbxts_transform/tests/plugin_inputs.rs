@@ -102,6 +102,7 @@ impl Project {
                 out_dir_override: None,
                 write_partial: false,
                 no_write: false,
+                checkers: None,
             },
             options,
             watch,
@@ -352,6 +353,7 @@ fn the_harness_with_recorded_inputs_equals_clean_builds() {
                 keep_clean_copies: false,
                 check_clean: true,
                 memory: None,
+                checkers: None,
             };
             parity::run(&options, &script)
         })

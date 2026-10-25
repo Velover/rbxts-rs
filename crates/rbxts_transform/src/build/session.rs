@@ -46,13 +46,14 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use rbxts_luau::{LateStrings, Stmt};
 use rbxts_plugin::erased::{ErasedPart, ErasedShared, ErasedState};
-use rbxts_plugin::{BuildKind, ChangeSet, CheckerInfo, FileIndex, RebuildPlan, StateOrigin};
+use rbxts_plugin::{BuildKind, ChangeSet, FileIndex, RebuildPlan, StateOrigin};
 use rbxts_project::{LoadOptions, Project, ProjectDiagnostic, ProjectServices, SourceFileCache, nodepath};
 use tsrs_ast::{Diagnostic, SourceFile};
 use tsrs_compiler::Context;
 use tsrs_core::P;
 use tsrs_diagnostics::Category;
 
+use super::checker_groups::{self, GroupPlugins};
 use super::graph::{self, FileFacts, Version};
 use super::outputs::{self, OutputInputs};
 use super::plugin_inputs::{
@@ -60,11 +61,10 @@ use super::plugin_inputs::{
     remove_queued_dirs,
 };
 use super::state::{self, DiskState, FileRecord, StateFile};
-use crate::classes::macro_manager::MacroManager;
-use crate::classes::multi_transform_state::MultiTransformState;
+use crate::classes::diagnostic_service::drop_reported_earlier;
 use crate::compile::{
     CompileOptions, CompileReport, FileOutcome, comment_directive_diagnostics, explain_failures, output_path,
-    panic_message, quietly, record_timings, transform_file,
+    panic_message, quietly, record_timings,
 };
 use crate::plugins::host::{HookTime, resolve_module_from};
 use crate::plugins::lifecycle::{
@@ -502,7 +502,7 @@ impl<'p> BuildSession<'p> {
             &LoadOptions {
                 tsconfig: self.options.tsconfig.clone(),
                 cwd: self.options.cwd.clone(),
-                checkers: 1,
+                checkers: self.options.checker_count(),
                 lazy_dts: false,
             },
             Some(&self.cache),
@@ -978,52 +978,47 @@ impl<'p> BuildSession<'p> {
         let mut file_late_keys: Vec<Vec<(usize, String)>> = Vec::with_capacity(to_transform.len());
         let mut load_checks = Vec::with_capacity(to_transform.len());
         let mut file_inputs: Vec<FileInputs> = Vec::with_capacity(to_transform.len());
-        let mut hook_times = None;
-        {
-            let mut checker = project.program.get_type_checker(&ctx);
-            let macro_manager = match MacroManager::new(&mut checker) {
-                Ok(manager) => manager,
-                Err(error) => {
-                    report.fatal = error.messages;
-                    return (report, summary, committed, Some(loaded));
-                }
-            };
-            let host = run.as_ref().map(|run| {
-                let mut file_diagnostics: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>> = FxHashMap::default();
-                for &d in &report.diagnostics {
-                    if let Some(file) = d.file() {
-                        file_diagnostics.entry(file).or_default().push(d);
+        let hook_times = {
+            // every file on the checker that checked it, one thread per checker (`checker_groups`)
+            let file_diagnostics: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>> = match &run {
+                Some(_) => {
+                    let mut by_file: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>> = FxHashMap::default();
+                    for &d in &report.diagnostics {
+                        if let Some(file) = d.file() {
+                            by_file.entry(file).or_default().push(d);
+                        }
                     }
+                    by_file
                 }
-                let mut host = PluginHost::new(
-                    project.program,
-                    &run.active,
-                    &run.shared,
-                    CheckerInfo { index: 0, count: 1 },
-                    file_diagnostics,
-                    claims_all,
-                );
-                host.env = Arc::clone(&env);
-                host
+                None => FxHashMap::default(),
+            };
+            let plugins = run.as_ref().map(|run| GroupPlugins {
+                active: &run.active,
+                shared: &run.shared,
+                env: &env,
+                file_diagnostics: &file_diagnostics,
+                claims_all,
             });
-            if let Some(host) = &host
-                && !host.unsupported_interests.is_empty()
-            {
-                report.fatal.extend(host.unsupported_interests.iter().cloned());
+            let transformed = checker_groups::transform_files(project, services, &ctx, plugins.as_ref(), &to_transform);
+            if let Some(fatal) = transformed.setup_fatal {
+                report.fatal.extend(fatal);
                 return (report, summary, committed, Some(loaded));
             }
-            let mut multi = MultiTransformState::new();
-            for &file in &to_transform {
-                let transformed =
-                    transform_file(project, &mut checker, services, &macro_manager, &mut multi, host.as_ref(), file);
+            // the files transformed, in program order (a group stopped by an internal error leaves the rest of its files
+            // out; the build then fails)
+            let mut done = Vec::with_capacity(to_transform.len());
+            let mut once = Vec::with_capacity(to_transform.len());
+            for (&file, transformed) in to_transform.iter().zip(transformed.files) {
+                let Some(transformed) = transformed else { continue };
                 let file_name = file.get().file_name().to_owned();
                 let out_path = output_path(services, &file_name, self.options.out_dir_override.as_deref());
                 new_parts.push(transformed.parts);
                 file_late_keys.push(transformed.late_keys);
                 load_checks.push(transformed.load_check);
                 file_inputs.push(transformed.inputs);
+                once.push(transformed.once);
                 report.files.push(FileOutcome {
-                    file_name: file_name.clone(),
+                    file_name,
                     out_path,
                     diagnostics: transformed.diagnostics,
                     unsupported: transformed.unsupported,
@@ -1032,18 +1027,13 @@ impl<'p> BuildSession<'p> {
                     written: false,
                 });
                 asts.push(transformed.ast);
-                if transformed.panicked {
-                    // rbxts-rs: after a panic the single checker may be inconsistent (FOLLOWUPS T1): stop here
-                    report.fatal.push(format!(
-                        "the transform stopped after an internal error in {file_name}; later files were not transformed"
-                    ));
-                    break;
-                }
+                done.push(file);
             }
-            if let Some(host) = &host {
-                hook_times = Some(host.times.borrow().clone());
-            }
-        }
+            drop_reported_earlier(report.files.iter_mut().map(|f| &mut f.diagnostics).zip(once.iter().map(Vec::as_slice)));
+            report.fatal.extend(transformed.stopped);
+            to_transform = done;
+            transformed.hook_times
+        };
         report.timings.transform = start.elapsed();
 
         let any_errors = report.has_errors();
