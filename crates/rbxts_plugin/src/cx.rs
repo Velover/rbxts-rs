@@ -39,9 +39,9 @@ pub struct Aborted;
 ///
 /// | primitives | claim hooks, `class` | `begin_file`, `end_file` | `classify_symbol` | `explain_checker_diagnostic` |
 /// | --- | --- | --- | --- | --- |
-/// | program, file, checker, project, module and package queries, source facts | yes | yes | yes | yes |
-/// | lowering: `compile_*`, `compile_receiver`, `prereq`, `push_to_var`, capture, `insert_before_root_statement`, `hoist`, `hoist_spillable`, `comment` | yes | refused | refused | refused |
-/// | file-level: `header`, `import_named`, `mark_import_used`, `request_import_elision`, `temp_id`, `late_string` | yes | yes | refused | refused |
+/// | program, file, checker, project, module and package queries, source facts (`file_identifier_texts` included) | yes | yes | yes | yes |
+/// | lowering: `compile_*`, `compile_receiver`, `prereq`, `push_to_var`, capture, `insert_before_root_statement`, `insert_before_statement`, `hoist`, `hoist_spillable`, `hoist_spillable_named`, `comment` | yes | refused | refused | refused |
+/// | file-level: `header`, `import_named`, `mark_import_used`, `request_import_elision`, `runtime_member`, `temp_id`, `late_string` | yes | yes | refused | refused |
 /// | `report` (and `Cx::error` / `warning`) | yes | yes | refused | yes |
 /// | `is_usable_local_name`, `locals` | yes | yes | yes | yes |
 /// | build inputs: `env`, `record_glob` | yes | yes | refused | yes |
@@ -140,6 +140,29 @@ pub trait CxBackend {
     fn end_capture(&mut self) -> Vec<LuauStmt>;
     /// Statements placed before the top-level statement that contains the current node.
     fn insert_before_root_statement(&mut self, stmts: Vec<LuauStmt>);
+    /// Statements placed before the Luau of the nearest TS statement that contains the current node, as Flamework's
+    /// TS transformer places `prereqList` statements: ahead of that statement's leading comments and of everything
+    /// roblox-ts emits for it (its own prerequisites included), after the file's root insertions when it is a
+    /// top-level statement.
+    ///
+    /// **Which statement.** The node itself when it is a statement (a statement hook), else its nearest ancestor that
+    /// is a statement (TypeScript's `isStatement`; a block counts only through the statements in it). So:
+    /// - a class field initializer, a parameter initializer, a decorator: the class statement (or the statement a
+    ///   class expression is in);
+    /// - an arrow function's expression body, a `for` head, a loop or `if` condition, a `switch` expression: the
+    ///   statement around it (the statements run once, before it, not per call or per iteration);
+    /// - a statement in a block, a loop body, an `if` branch (a block or a single statement), a `case` clause, a
+    ///   function body: that statement, in its own statement list;
+    /// - the condition of an `else if`: before that inner `if`, which then becomes `else <statements> if … end end`
+    ///   (as roblox-ts lowers the `else { …; if … }` block Flamework's transform makes there).
+    ///
+    /// It is an effect: a claim hook cannot decline its node after it (see "Declining" in the crate docs). Locals it
+    /// declares before a top-level statement count toward the main chunk's ([`CxBackend::locals`]).
+    ///
+    /// **Default:** [`CxBackend::insert_before_root_statement`].
+    fn insert_before_statement(&mut self, stmts: Vec<LuauStmt>) {
+        self.insert_before_root_statement(stmts);
+    }
     /// Statements placed once per file, after the file's leading run of imports (plugin imports, then the
     /// user's), in call order.
     fn header(&mut self, stmts: Vec<LuauStmt>);
@@ -238,6 +261,11 @@ pub trait CxBackend {
     /// persistent table), so this rarely fires.
     fn late_string(&mut self, key: &str) -> LuauExpr;
     /// A Luau comment before the next statement emitted.
+    ///
+    /// When it is the first thing the nearest TS statement around the node emits (a statement, see
+    /// [`CxBackend::insert_before_statement`]), it goes above that statement's leading comments, where TypeScript's
+    /// printer puts a TS transformer's prereq comment. Elsewhere (after other prerequisites of the statement, or
+    /// in a scope the plugin captured) it stays where it is.
     fn comment(&mut self, text: &str);
 
     // --- source facts ---
@@ -467,6 +495,13 @@ impl<'a> Cx<'a> {
     pub fn insert_before_root_statement(&mut self, stmts: impl IntoIterator<Item = LuauStmt>) {
         self.backend
             .insert_before_root_statement(stmts.into_iter().collect());
+    }
+
+    /// Statements before the nearest TS statement around the current node, as Flamework's `prereqList` places them
+    /// ([`CxBackend::insert_before_statement`]).
+    pub fn insert_before_statement(&mut self, stmts: impl IntoIterator<Item = LuauStmt>) {
+        self.backend
+            .insert_before_statement(stmts.into_iter().collect());
     }
 
     /// Statements after the file's imports ([`CxBackend::header`]).

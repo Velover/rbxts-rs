@@ -40,8 +40,8 @@ local unlabelled = labelsOf({ "", "" })
 local _constant_22 = {
 	shared = true,
 }
--- Constant: hoisted to the file root inside a function, inline at the root.
 -- Flamework hoisted this macro's metadata (constant_22) to the file root.
+-- Constant: hoisted to the file root inside a function, inline at the root.
 local atRoot = constant(_constant_22)
 -- Flamework user macro metadata (line 25)
 local _constant_25 = {

@@ -41,6 +41,9 @@ pub struct PluginImport {
     pub export: String,
     pub value: Expr,
     pub statement: Option<Stmt>,
+    /// Where it goes among the plugin imports: the source position of the node whose hook first asked for it (the
+    /// file's start for `begin_file` / `end_file`), then the request order.
+    pub order: (u32, usize),
 }
 
 /// One `hoist_spillable` local: the local and the hint (or name) it was given.

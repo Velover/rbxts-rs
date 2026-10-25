@@ -60,7 +60,8 @@
 //! - it lowered the node (`compile_expr` / `compile_in_order` of the node, `compile_call`);
 //! - it compiled the receiver inside a `capture`;
 //! - it left anything behind in the scope it writes into or the file, whether its own or a nested hook's:
-//!   prereqs, a hoist, a root insertion, a header statement, a plugin import, a late string, or an import kept
+//!   prereqs, a hoist, a root insertion, statements before its TS statement (`insert_before_statement`), a header
+//!   statement, a plugin import, a late string, a runtime-library member (`runtime_member`), or an import kept
 //!   alive (`mark_import_used`, or a user import `import_named` reused). `request_import_elision` is harmless and
 //!   allowed;
 //! - any plugin hook ran inside it, through its `compile_*` calls: a nested node offered (claimed or declined), or

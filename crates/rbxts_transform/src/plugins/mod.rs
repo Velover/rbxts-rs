@@ -86,7 +86,8 @@
 //! so a hook nested in another (through its `compile_*` calls) never resets the outer one's. A claim hook cannot
 //! decline its node after it lowered it (`compile_expr` of the node, `compile_call`), compiled the receiver inside
 //! a capture, or left anything behind in the scope it writes into or the file: prereqs, a hoist, a root insertion,
-//! a header statement, a plugin import, a late string, or an import kept alive (`mark_import_used`), its own or a
+//! statements before its TS statement, a header statement, a plugin import, a late string, a runtime-library member,
+//! or an import kept alive (`mark_import_used`), its own or a
 //! nested hook's (`request_import_elision` is harmless and allowed). Nor after any hook ran inside it (a nested node
 //! offered or claimed, a class hook): that hook would run again. The one exception is a `compile_receiver` into
 //! the offer's own scope that is the first thing to grow it (or the binding of an optional call's receiver): what
@@ -105,11 +106,20 @@
 //! kinds), in a scratch scope. A build with it either writes the same output as without it or fails: one where such
 //! a plugin changed compiler state before declining (an approval by `is_usable_local_name` included) fails.
 //!
-//! **Names.** Temporary identifiers plugins ask for (`temp_id`, `hoist`, `hoist_spillable`, `push_to_var`, the
-//! `import_named` fallback) are named so that no identifier of the file, no name `is_usable_local_name` approved,
-//! and no plugin import can capture them (a hoist or import is declared at the top of the file and may be used in
-//! any nested function); approved names and import names avoid the seam temporaries made before them in turn.
-//! roblox-ts's own temporaries keep its naming.
+//! **Names.** Temporary identifiers plugins ask for (`temp_id`, `hoist`, `hoist_spillable`, `push_to_var`) are
+//! named so that no identifier of the file, no name `is_usable_local_name` approved, and no plugin import can capture
+//! them (a hoist or import is declared at the top of the file and may be used in any nested function); approved
+//! names and import names avoid the seam temporaries made before them in turn. Plain names (`hoist_spillable_named`,
+//! an `import_named` local) follow TypeScript's printer for an optimistic unique name: the name, else `name_1`, …
+//! "The file's identifiers" are TypeScript 5's `sourceFile.identifiers` (`rbxts_plugin::ts5_file_identifiers`:
+//! JSDoc identifiers and the literals its parser interns included). roblox-ts's own temporaries keep its naming.
+//!
+//! **Placement, as TypeScript prints a TS transformer's output.** Before a statement of a statement list
+//! (`dispatch::before_statement`): the file's header comment (detached comments) for the first statement, then the
+//! root insertions of a top-level statement, the `insert_before_statement` statements, a plugin comment that leads
+//! the statement's Luau, then the statement's own leading comments. Plugin imports go after the header comment,
+//! ordered by the position of the node that asked for them. In a build with plugins a numeric literal with
+//! separators is its value's text, as the reprint of stock roblox-ts gives (`transform_numeric_literal`).
 //!
 //! **Luau's limits** (`spill`). Every file a plugin emitted into is compiled by Luau 0.740 (`rbxts_luau_check`,
 //! pinned, built from source) once rendered, files in parallel, its `--!optimize` directive honoured: refused at

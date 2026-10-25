@@ -29,6 +29,8 @@ pub fn transform_if_statement_inner(
         Some(else_statement) if else_statement.kind() == Kind::IfStatement => {
             let mut else_if_prereqs = Prereqs::new();
             let else_if = transform_if_statement_inner(state, &mut else_if_prereqs, else_statement);
+            // rbxts-rs: a plugin's `insert_before_statement` for the `else if` (DESIGN §11)
+            crate::plugins::dispatch::else_if_before_statement(state, else_statement, &mut else_if_prereqs.statements);
             if else_if_prereqs.statements.is_empty() {
                 ElseBody::If(Box::new(else_if))
             } else {

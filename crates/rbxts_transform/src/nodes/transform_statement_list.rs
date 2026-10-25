@@ -76,16 +76,21 @@ pub fn transform_statement_list_with_exports(
     for &statement in statements {
         let plugin_mark = crate::plugins::dispatch::root_statement_start(state, parent);
         let before = result.len();
-        let transformed_statements = transform_statement(state, statement);
-        // rbxts-rs: plugin statements for before the top-level statement (`hoist`, `insert_before_root_statement`)
-        if plugin_mark.is_some() {
-            crate::plugins::dispatch::root_statement_inserts(state, &mut result);
-        }
+        let mut transformed_statements = transform_statement(state, statement);
+        let mut leading_comments = if remove_comments { Vec::new() } else { state.get_leading_comments(statement) };
+        // rbxts-rs: plugin statements for before the statement (root insertions, `insert_before_statement`, a leading
+        // plugin comment), and the file's header comment above them
+        crate::plugins::dispatch::before_statement(
+            state,
+            plugin_mark.is_some(),
+            statement,
+            &mut result,
+            &mut leading_comments,
+            &mut transformed_statements,
+        );
 
         // the statement's leading comments
-        if !remove_comments {
-            result.extend(state.get_leading_comments(statement));
-        }
+        result.extend(leading_comments);
 
         // hoisting is the use of a variable before it was declared
         if let Some(hoist_declaration) = create_hoist_declaration(state, statement) {

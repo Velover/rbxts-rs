@@ -1290,6 +1290,16 @@ fn end_file_slow(state: &mut TransformState<'_>, statements: &mut Vec<Stmt>) {
     if !state.plugin_file.root_inserts.is_empty() {
         statements.append(&mut state.plugin_file.root_inserts);
     }
+    // a statement roblox-ts lowered outside a statement list would lose its insertions: never silent
+    let mut unplaced: Vec<P<Node>> = state.plugin_file.before_statement.drain().map(|(node, _)| node).collect();
+    unplaced.sort_by_key(|node| node.pos().source_offset());
+    for node in unplaced {
+        state.internal_error(
+            node,
+            "insert_before_statement: this statement was not lowered in a statement list, so the statements a plugin \
+             placed before it were dropped",
+        );
+    }
     apply_import_decisions(state, statements);
     place_imports_and_header(state, statements);
 }
@@ -1328,9 +1338,122 @@ pub fn root_statement_start(state: &TransformState<'_>, parent: Option<P<Node>>)
     Some(RootMark { diagnostics_start: state.diagnostics.diagnostics.len(), runtime_lib_uses: state.runtime_lib_uses })
 }
 
-/// The statements plugins placed before the current top-level statement.
-pub fn root_statement_inserts(state: &mut TransformState<'_>, result: &mut Vec<Stmt>) {
-    result.append(&mut state.plugin_file.root_inserts);
+/// What plugins put before a statement of a statement list (`transformStatementList`), into `result`, in this
+/// order (as TypeScript prints a TS transformer's output):
+/// - for the file's first top-level statement, the file's header comment (TypeScript's detached comments, which its
+///   printer keeps at the top of the file), taken from the front of `leading`;
+/// - for a top-level statement (`root`), the root insertions (`hoist`, `insert_before_root_statement`);
+/// - the `insert_before_statement` statements for this statement;
+/// - the plugin comments (`comment`) leading the statement's own Luau, taken from the front of `transformed`.
+///
+/// The statement's leading comments (what is left of `leading`) follow.
+#[inline]
+pub fn before_statement(
+    state: &mut TransformState<'_>,
+    root: bool,
+    statement: P<Node>,
+    result: &mut Vec<Stmt>,
+    leading: &mut Vec<Stmt>,
+    transformed: &mut Vec<Stmt>,
+) {
+    if state.plugins.is_some() {
+        before_statement_slow(state, root, statement, result, leading, transformed);
+    }
+}
+
+#[inline(never)]
+fn before_statement_slow(
+    state: &mut TransformState<'_>,
+    root: bool,
+    statement: P<Node>,
+    result: &mut Vec<Stmt>,
+    leading: &mut Vec<Stmt>,
+    transformed: &mut Vec<Stmt>,
+) {
+    if root {
+        if state.plugin_file.root_ranges.is_empty() && !leading.is_empty() {
+            let detached = detached_comment_count(state, statement).min(leading.len());
+            state.plugin_file.detached_comments = detached;
+            result.extend(leading.drain(..detached));
+        }
+        result.append(&mut state.plugin_file.root_inserts);
+    }
+    let file = &mut state.plugin_file;
+    if let Some(statements) = file.before_statement.remove(&statement) {
+        result.extend(statements);
+    }
+    if let Some(texts) = file.statement_comments.remove(&statement) {
+        let mut texts = texts.iter();
+        let mut next = texts.next();
+        let mut moved = 0;
+        while let (Some(Stmt::Comment(text)), Some(expected)) = (transformed.get(moved), next) {
+            if text != expected {
+                break;
+            }
+            moved += 1;
+            next = texts.next();
+        }
+        result.extend(transformed.drain(..moved));
+    }
+}
+
+/// The `insert_before_statement` statements for an `else if` (`statement`), which roblox-ts lowers outside any
+/// statement list: they go first in `prereqs`, which then makes the `else` a block (`else <statements> if … end
+/// end`), as roblox-ts lowers the `else { …; if … }` Flamework's TS transform makes of it.
+#[inline]
+pub fn else_if_before_statement(state: &mut TransformState<'_>, statement: P<Node>, prereqs: &mut Vec<Stmt>) {
+    if state.plugins.is_some()
+        && let Some(mut statements) = state.plugin_file.before_statement.remove(&statement)
+    {
+        statements.append(prereqs);
+        *prereqs = statements;
+    }
+}
+
+/// The TS statement `insert_before_statement` and `comment` place before: `node` itself when it is a statement,
+/// else its nearest ancestor that is one (TypeScript's `isStatement`, as Flamework's transform finds the statement a
+/// `prereq` goes before). A block counts only through its statements.
+pub(crate) fn enclosing_statement(node: P<Node>) -> Option<P<Node>> {
+    let mut current = Some(node);
+    while let Some(n) = current {
+        if n.kind() == Kind::SourceFile {
+            return None;
+        }
+        if n.kind() != Kind::Block && tsrs_ast::is_statement(n) {
+            return Some(n);
+        }
+        current = n.parent();
+    }
+    None
+}
+
+/// How many leading comments of the file's first statement TypeScript's printer treats as the file's header
+/// (`emitDetachedComments`): the first comments up to a blank line between two of them, when a blank line follows
+/// the last one before the statement.
+fn detached_comment_count(state: &TransformState<'_>, statement: P<Node>) -> usize {
+    let file = state.source_file;
+    let Some(pos) = statement.pos().source_offset() else { return 0 };
+    let line_starts = tsrs_scanner::get_ecma_line_starts(&*file);
+    let line = |offset: u32| tsrs_scanner::compute_line_of_position(line_starts, offset);
+    let mut count = 0;
+    let mut last_end = None;
+    for range in tsrs_scanner::get_leading_comment_ranges(file.get().text(), pos) {
+        let (Some(start), Some(end)) = (range.text_range.pos().source_offset(), range.text_range.end().source_offset())
+        else {
+            return 0;
+        };
+        if let Some(last) = last_end
+            && line(start) >= line(last) + 2
+        {
+            break;
+        }
+        count += 1;
+        last_end = Some(end);
+    }
+    match last_end {
+        Some(last) if line(crate::util::traversal::get_start(statement)) >= line(last) + 2 => count,
+        _ => 0,
+    }
 }
 
 /// Ends a top-level statement whose own Luau is `result[start..]`.
@@ -1491,10 +1614,14 @@ fn apply_import_decisions(state: &mut TransformState<'_>, statements: &mut Vec<S
     }
 }
 
-/// Plugin imports go first, after any `--!` directives (as Flamework's added imports did ahead of the user's);
-/// header statements after the imports: after the last import of the file's leading run of imports.
+/// Plugin imports go first, after any `--!` directives and the file's header comment (as Flamework's added imports
+/// did ahead of the user's), ordered by where they were asked for; header statements after the imports: after the
+/// last import of the file's leading run of imports.
 fn place_imports_and_header(state: &mut TransformState<'_>, statements: &mut Vec<Stmt>) {
-    let imports: Vec<Stmt> = state.plugin_file.imports.iter_mut().filter_map(|i| i.statement.take()).collect();
+    // in the order the TS transform adds them as it walks the file: by the asking node's position
+    let mut order: Vec<usize> = (0..state.plugin_file.imports.len()).collect();
+    order.sort_by_key(|&i| state.plugin_file.imports[i].order);
+    let imports: Vec<Stmt> = order.into_iter().filter_map(|i| state.plugin_file.imports[i].statement.take()).collect();
     let header = std::mem::take(&mut state.plugin_file.header);
     if imports.is_empty() && header.is_empty() {
         return;
@@ -1509,10 +1636,12 @@ fn place_imports_and_header(state: &mut TransformState<'_>, statements: &mut Vec
             _ => break,
         }
     }
-    let header_at = after_imports.max(directives) + imports.len();
-    state.plugin_file.front_inserts.push((directives, imports.len()));
+    // after the file's header comment, which TypeScript's printer keeps above every statement
+    let imports_at = directives.max(state.plugin_file.detached_comments);
+    let header_at = after_imports.max(imports_at) + imports.len();
+    state.plugin_file.front_inserts.push((imports_at, imports.len()));
     state.plugin_file.front_inserts.push((header_at, header.len()));
-    statements.splice(directives..directives, imports);
+    statements.splice(imports_at..imports_at, imports);
     statements.splice(header_at..header_at, header);
 }
 
@@ -1619,11 +1748,14 @@ pub(crate) fn import_named(
         let statement = create::local(id.clone(), Some(create::computed_index(import, create::string(export))));
         state.plugin_file.main_chunk_locals += 1;
         let value: Expr = id.into();
+        let position = if anchor.kind() == Kind::SourceFile { 0 } else { crate::util::traversal::get_start(anchor) };
+        let order = (position, state.plugin_file.imports.len());
         state.plugin_file.imports.push(PluginImport {
             specifier: specifier.to_owned(),
             export: export.to_owned(),
             value: value.clone(),
             statement: Some(statement),
+            order,
         });
         value
     };

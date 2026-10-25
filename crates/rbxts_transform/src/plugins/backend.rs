@@ -679,6 +679,25 @@ impl CxBackend for HookBackend<'_, '_> {
         }
     }
 
+    fn insert_before_statement(&mut self, stmts: Vec<Stmt>) {
+        if self.refused("insert_before_statement", Row::Lowering) {
+            return;
+        }
+        let Some(statement) = dispatch::enclosing_statement(self.anchor) else {
+            self.misuse("insert_before_statement: its node is in no statement");
+            return;
+        };
+        self.note_effect("calling insert_before_statement");
+        self.touch();
+        // locals before a top-level statement are the main chunk's (a function body counts its statements' own)
+        if statement.parent().is_some_and(|p| p.kind() == Kind::SourceFile) {
+            self.state.plugin_file.main_chunk_locals += stmts.iter().map(declared_locals).sum::<u32>();
+        }
+        let file = &mut self.state.plugin_file;
+        file.before_statement_count += stmts.len();
+        file.before_statement.entry(statement).or_default().extend(stmts);
+    }
+
     fn header(&mut self, stmts: Vec<Stmt>) {
         if !self.refused("header", Row::FileLevel) {
             self.note_effect("calling header");
@@ -834,6 +853,12 @@ impl CxBackend for HookBackend<'_, '_> {
         if !self.refused("comment", Row::Lowering) {
             self.touch();
             self.scope().push(create::comment(text));
+            // leading its statement's Luau, it goes above the statement's leading comments (`before_statement`)
+            if self.captures.is_empty()
+                && let Some(statement) = dispatch::enclosing_statement(self.anchor)
+            {
+                self.state.plugin_file.statement_comments.entry(statement).or_default().push(text.to_owned());
+            }
         }
     }
 
