@@ -509,6 +509,10 @@ impl CxBackend for HookBackend<'_, '_> {
         self.state.services
     }
 
+    fn ts5_properties_of_type(&mut self, t: P<tsrs_checker::Type>) -> Vec<P<Symbol>> {
+        crate::util::ts5_property_order::ts5_property_order(&mut *self.state.checker, t)
+    }
+
     fn resolve_module(&self, specifier: &str, from: P<SourceFile>) -> Option<ResolvedModuleInfo> {
         self.host.resolve_module(specifier, from.get().file_name())
     }

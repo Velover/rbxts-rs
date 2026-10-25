@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use rbxts_project::{PackageInfo, ProjectServices, ResolvedModuleInfo};
 use tsrs_ast::{Diagnostic, Node, SourceFile, Symbol};
-use tsrs_checker::Checker;
+use tsrs_checker::{Checker, Type};
 use tsrs_compiler::Program;
 use tsrs_core::{CompilerOptions, P};
 
@@ -69,6 +69,17 @@ pub trait CxBackend {
     fn checker(&mut self) -> &mut Checker;
     /// The project services: directories, project type, Rojo resolver, path translator, package.json cache.
     fn project(&self) -> &ProjectServices;
+    /// `checker.getPropertiesOfType(t)` in TypeScript 5's order: the same symbols as the checker's
+    /// `get_properties_of_type`, in the order TypeScript 5 lists them (TypeScript 7 sorts some types' members by
+    /// declaration instead: inherited members, late-bound names, spreads, homomorphic mapped types). Where TypeScript
+    /// 5's order follows nothing a declaration gives (a mapped type over a union of keys, a union's own property
+    /// list, tuples), it is TypeScript 7's. Flamework's guards and serializer lay out fields in this order, so it is
+    /// part of their wire format.
+    ///
+    /// **Default:** the checker's `get_properties_of_type`, in TypeScript 7's order.
+    fn ts5_properties_of_type(&mut self, t: P<Type>) -> Vec<P<Symbol>> {
+        self.checker().get_properties_of_type_exported(t).to_vec()
+    }
     /// Where `specifier` resolves when imported from `from` (the program's resolution, else a resolver with the
     /// program's options).
     fn resolve_module(&self, specifier: &str, from: P<SourceFile>) -> Option<ResolvedModuleInfo>;
@@ -294,6 +305,11 @@ impl<'a> Cx<'a> {
     /// The project services ([`CxBackend::project`]).
     pub fn project(&self) -> &ProjectServices {
         self.backend.project()
+    }
+
+    /// A type's properties in TypeScript 5's order ([`CxBackend::ts5_properties_of_type`]).
+    pub fn ts5_properties_of_type(&mut self, t: P<Type>) -> Vec<P<Symbol>> {
+        self.backend.ts5_properties_of_type(t)
     }
 
     /// Module resolution from a file ([`CxBackend::resolve_module`]).
