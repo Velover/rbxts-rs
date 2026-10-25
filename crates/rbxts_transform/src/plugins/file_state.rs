@@ -8,7 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rbxts_luau::{Expr, Stmt};
 use rbxts_plugin::FileInfo;
 use rbxts_plugin::erased::ErasedPart;
-use tsrs_ast::{Kind, Node, SourceFile};
+use tsrs_ast::{Node, SourceFile};
 use tsrs_core::P;
 
 /// A top-level statement of the file and where its output sits in the file's statement list.
@@ -130,7 +130,26 @@ pub struct PluginFileState {
     /// `import_named` imports, in request order.
     pub imports: Vec<PluginImport>,
     pub(crate) import_names: FxHashSet<String>,
+    /// Plain names `hoist_spillable_named` and the `import_named` fallback chose (`name_1`, …): taken for the file.
+    pub(crate) plain_names: FxHashSet<String>,
     identifier_names: OnceCell<FxHashSet<&'static str>>,
+    /// The file's identifier texts, sorted (`file_identifier_texts`).
+    identifier_texts: OnceCell<std::rc::Rc<[&'static str]>>,
+    /// `insert_before_statement` statements, by the TS statement they go before; taken when that statement's list
+    /// is lowered.
+    pub before_statement: FxHashMap<P<Node>, Vec<Stmt>>,
+    /// How many statements `insert_before_statement` was given in all (for the decline rule).
+    pub before_statement_count: usize,
+    /// `comment` texts by the TS statement around the hook's node: one leading the statement's Luau goes above its
+    /// leading comments.
+    pub statement_comments: FxHashMap<P<Node>, Vec<String>>,
+    /// `runtime_member` uses.
+    pub runtime_members: usize,
+    /// Diagnostics plugins reported for the file, for dropping identical ones.
+    pub reported: FxHashSet<String>,
+    /// The number of Luau comments of the file's header comment (TypeScript's detached comments), which the first
+    /// top-level statement emitted ahead of its root insertions; plugin imports go after them.
+    pub detached_comments: usize,
     pub(crate) import_cache: FxHashMap<(String, String), Expr>,
     /// Statements for before the current top-level statement (`insert_before_root_statement`, `hoist`).
     pub root_inserts: Vec<Stmt>,
@@ -210,23 +229,33 @@ impl PluginFileState {
         }
     }
 
-    /// Every identifier text in the file (made on first use): a name none of them has cannot shadow, or be
-    /// shadowed by, anything the file declares or refers to.
+    /// Every identifier text in the file (made on first use), as TypeScript 5's printer counts them
+    /// (`rbxts_plugin::ts5_file_identifiers`: JSDoc identifiers and the literals its parser interns included): a name
+    /// none of them has cannot shadow, or be shadowed by, anything the file declares or refers to, and is the name
+    /// TypeScript's printer would give a TS transformer's unique name.
     pub fn identifier_names(&self, file: P<SourceFile>) -> &FxHashSet<&'static str> {
-        self.identifier_names.get_or_init(|| {
-            fn walk(node: P<Node>, out: &mut FxHashSet<&'static str>) {
-                if node.kind() == Kind::Identifier {
-                    out.insert(node.text());
-                }
-                node.for_each_child(&mut |child| {
-                    walk(child, out);
-                    false
-                });
-            }
-            let mut out = FxHashSet::default();
-            walk(file.as_node(), &mut out);
-            out
-        })
+        self.identifier_names.get_or_init(|| self.identifier_texts(file).iter().copied().collect())
+    }
+
+    /// [`PluginFileState::identifier_names`], sorted (`file_identifier_texts`).
+    pub fn identifier_texts(&self, file: P<SourceFile>) -> std::rc::Rc<[&'static str]> {
+        self.identifier_texts.get_or_init(|| rbxts_plugin::ts5_file_identifiers(file).into()).clone()
+    }
+
+    /// TypeScript's optimistic unique name (`makeUniqueName` with `Optimistic`) for a plain local: `base` when it is
+    /// not taken ([`PluginFileState::name_taken`]) and not a `luau.globals` name, else the first free `base_1`,
+    /// `base_2`, … (`base1`, … when `base` ends in `_`). The name is recorded as taken. `base` is a valid identifier.
+    pub fn unique_plain_name(&mut self, file: P<SourceFile>, base: &str) -> String {
+        let free =
+            |state: &Self, name: &str| !rbxts_luau::is_reserved_identifier(name) && !state.name_taken(file, name);
+        let name = if free(self, base) {
+            base.to_owned()
+        } else {
+            let stem = if base.ends_with('_') { base.to_owned() } else { format!("{base}_") };
+            (1u32..).map(|i| format!("{stem}{i}")).find(|name| free(self, name)).expect("a free name")
+        };
+        self.plain_names.insert(name.clone());
+        name
     }
 
     /// The effect lengths now, with the prereq scope at `prereqs` statements.

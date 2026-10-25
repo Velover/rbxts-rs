@@ -213,6 +213,18 @@ pub trait CxBackend {
     /// only non-error diagnostics: a file with checker errors is not transformed (it reaches
     /// [`crate::PluginInstance::explain_checker_diagnostic`] instead).
     fn file_diagnostics(&self) -> &[P<Diagnostic>];
+    /// Every identifier text of the file, sorted and without duplicates: TypeScript 5's `sourceFile.identifiers`,
+    /// which its printer checks a unique name against ([`crate::ts5_file_identifiers`]). That is every identifier
+    /// and private identifier, those in JSDoc included (tag names, `@param` names, `{@link}` names, names in JSDoc
+    /// types), and the string and numeric literals TypeScript's parser interns: property names (`{ "a": 1 }`,
+    /// `"a": T` in a type, enum members, `{ "a": x }` in a binding), element access arguments (`o["a"]`, `o[0]`),
+    /// module specifiers and ambient module names. The compiler's own capture-safe naming
+    /// ([`CxBackend::is_usable_local_name`], seam temporaries, `import_named`) counts the same set.
+    ///
+    /// **Default:** [`crate::ts5_file_identifiers`] of [`CxBackend::file`]'s source, computed on every call.
+    fn file_identifier_texts(&self) -> Rc<[&'static str]> {
+        crate::identifiers::ts5_file_identifiers(self.file().source).into()
+    }
 
     // --- diagnostics ---
 
@@ -503,6 +515,11 @@ impl<'a> Cx<'a> {
     /// The file's checker diagnostics ([`CxBackend::file_diagnostics`]).
     pub fn file_diagnostics(&self) -> &[P<Diagnostic>] {
         self.backend.file_diagnostics()
+    }
+
+    /// The file's identifier texts as TypeScript 5's printer sees them, sorted ([`CxBackend::file_identifier_texts`]).
+    pub fn file_identifier_texts(&self) -> Rc<[&'static str]> {
+        self.backend.file_identifier_texts()
     }
 
     // --- diagnostics ---

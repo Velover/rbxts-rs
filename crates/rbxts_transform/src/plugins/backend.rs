@@ -806,6 +806,10 @@ impl CxBackend for HookBackend<'_, '_> {
         self.host.file_diagnostics.get(&file).map_or(&[], Vec::as_slice)
     }
 
+    fn file_identifier_texts(&self) -> Rc<[&'static str]> {
+        self.state.plugin_file.identifier_texts(self.state.source_file)
+    }
+
     // --- diagnostics ---
 
     fn report(&mut self, diagnostic: PluginDiagnostic) {
