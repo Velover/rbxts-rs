@@ -10,7 +10,7 @@
 //! With plugins it also holds, per project file, what the next process needs to skip it ([`FileRecord`]): each
 //! plugin's file part as the plugin encoded it (`Plugin::encode_file_part`, base64), the late strings its Luau
 //! uses with their values, and what its hooks read (`Cx::env` values, `Cx::record_glob` answers); and what the
-//! plugins' `setup` read ([`DiskInput`]). A file whose parts are all there and decode, whose environment reads
+//! plugins' `setup` read ([`DiskInput`]), and the plugin state files the build left ([`StateFile`]). A file whose parts are all there and decode, whose environment reads
 //! the same and which recorded no glob brings its parts to `finish` untransformed (with the plugins' states
 //! starting fresh, as the API says).
 
@@ -54,6 +54,40 @@ pub struct DiskState {
     pub records: FxHashMap<String, FileRecord>,
     /// What the plugins' `setup` read (sorted, each once).
     pub setup_inputs: Vec<DiskInput>,
+    /// The plugin state files the build left, with their bytes' versions (written before this state).
+    pub state_files: Vec<StateFile>,
+}
+
+/// A plugin state file a committed build left on disk (written, or already holding those bytes). Before the next
+/// build, one that is missing or changed makes its plugin start from a fresh state, and every file is transformed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StateFile {
+    /// The plugin's name.
+    pub plugin: String,
+    /// The absolute path.
+    pub path: String,
+    /// The version of its bytes ([`Version::of_bytes`]).
+    pub version: Version,
+}
+
+impl StateFile {
+    /// Whether the file still holds what the commit left: not missing, not changed (an unreadable file counts as
+    /// changed).
+    pub fn intact(&self) -> bool {
+        std::fs::read(&self.path).is_ok_and(|bytes| Version::of_bytes(&bytes) == self.version)
+    }
+
+    fn to_json(&self) -> Value {
+        json!([self.plugin, self.path, self.version.to_hex()])
+    }
+
+    fn from_json(value: &Value) -> Option<StateFile> {
+        Some(StateFile {
+            plugin: value.get(0)?.as_str()?.to_owned(),
+            path: value.get(1)?.as_str()?.to_owned(),
+            version: Version::from_hex(value.get(2)?.as_str()?)?,
+        })
+    }
 }
 
 /// The compiler's identity: the running executable's path, size and modification time, plus the roblox-ts version
@@ -239,6 +273,11 @@ impl DiskState {
                 Some(inputs) => inputs.as_array()?.iter().map(DiskInput::from_json).collect::<Option<_>>()?,
                 None => Vec::new(),
             },
+            // optional: a state written before it was recorded checks no state file
+            state_files: match value.get("stateFiles") {
+                Some(files) => files.as_array()?.iter().map(StateFile::from_json).collect::<Option<_>>()?,
+                None => Vec::new(),
+            },
         })
     }
 
@@ -273,6 +312,11 @@ impl DiskState {
             && let Some(object) = value.as_object_mut()
         {
             object.insert("setup".into(), Value::Array(self.setup_inputs.iter().map(DiskInput::to_json).collect()));
+        }
+        if !self.state_files.is_empty()
+            && let Some(object) = value.as_object_mut()
+        {
+            object.insert("stateFiles".into(), Value::Array(self.state_files.iter().map(StateFile::to_json).collect()));
         }
         let mut bytes = serde_json::to_vec(&value).unwrap_or_default();
         bytes.push(b'\n');
@@ -320,6 +364,11 @@ mod tests {
             artifacts: vec!["E:/p/out/x.json".into()],
             records,
             setup_inputs: vec![DiskInput::Env { plugin: "stamp".into(), name: "STAMP_PREFIX".into(), value: None }],
+            state_files: vec![StateFile {
+                plugin: "stamp".into(),
+                path: "E:/p/.stamp-state".into(),
+                version: Version::of_bytes(&[0xff, b'1']),
+            }],
         };
         let dir = std::env::temp_dir().join(format!("rbxts-rs-state-{}", std::process::id()));
         let path = dir.join("tsconfig.rbxts-rs.buildinfo");

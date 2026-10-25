@@ -9,7 +9,8 @@
 //!    module resolution: an import that failed to resolve stays unresolved after its package is installed.)
 //! 2. **Decide the files to transform** ([`super::graph`]): every project file in a clean build, after a change of
 //!    the salt (compiler, options, configs, Rojo files, plugin list), after a plugin's `setup` re-ran or read a
-//!    changed build input; otherwise roblox-ts's closure with TypeScript's global rule and the augmentation edges,
+//!    changed build input, after a plugin state file the last commit left went missing or changed (its plugin
+//!    starts from a fresh state, without a kept `Shared`: as in a new process); otherwise roblox-ts's closure with TypeScript's global rule and the augmentation edges,
 //!    plus the project files whose output is missing, the files without a cached part for every plugin (an
 //!    incremental build brings the parts the plugins encoded, [`super::state`]), the files whose recorded
 //!    `Cx::env` reads differ (a new process) or whose recorded `Cx::record_glob` answers differ (watch; a new
@@ -22,8 +23,9 @@
 //!    not transformed); 7. **render**, and re-render kept files whose late strings changed value;
 //! 8. **commit** (no errors only): Luau and assets, artifacts, deletions (stale outputs, artifacts of the last build
 //!    not written by this one, removals, the directories those stale artifacts emptied, `remove_empty_dir`s),
-//!    plugin state files, then the incremental state (with each file's encoded parts); 9. the working states and
-//!    `Shared`s become the committed ones, with every file's facts, parts, late values and recorded inputs.
+//!    plugin state files, then the incremental state (with each file's encoded parts and the state files' versions);
+//!    9. the working states and `Shared`s become the committed ones, with every file's facts, parts, late values and
+//!    recorded inputs, and the versions of the state files the commit left.
 //!
 //! A cached file whose late strings change value is rendered again from its kept Luau; one with no Luau kept (its
 //! parts came from the incremental state) makes the build start over once, transforming it.
@@ -55,7 +57,7 @@ use super::plugin_inputs::{
     DirRules, DiskInput, EnvSnapshot, FileInputs, FinishRead, InputWatch, RecordedGlob, plain, remove_emptied_dirs,
     remove_queued_dirs,
 };
-use super::state::{self, DiskState, FileRecord};
+use super::state::{self, DiskState, FileRecord, StateFile};
 use crate::classes::macro_manager::MacroManager;
 use crate::classes::multi_transform_state::MultiTransformState;
 use crate::compile::{
@@ -169,6 +171,8 @@ struct Committed {
     from_disk: bool,
     /// Read from the incremental state: what the plugins' `setup` read.
     setup_inputs: Option<Vec<DiskInput>>,
+    /// The plugin state files the build committed, with the version of the bytes it left on disk.
+    state_files: Vec<StateFile>,
 }
 
 /// One project's builds: the committed state, the parsed files and the last program, across builds.
@@ -213,6 +217,9 @@ pub struct BuildSummary {
     pub deleted: Vec<String>,
     /// The changes since the last committed build.
     pub changes: ChangeSet,
+    /// State files the last committed build left that were missing or changed before this one: their plugins
+    /// started from a fresh state (no kept `Shared`), and every file was transformed.
+    pub lost_state_files: Vec<String>,
 }
 
 impl<'p> BuildSession<'p> {
@@ -433,6 +440,13 @@ impl<'p> BuildSession<'p> {
         self.committed.as_ref().map_or_else(Vec::new, |c| c.watch_dirs.clone())
     }
 
+    /// The plugin state files the last committed build left, with their bytes' versions: a watcher counts an event
+    /// on one only when the file no longer holds them (its own write never does), and the next build checks them
+    /// ([`BuildSummary::lost_state_files`]).
+    pub fn state_files(&self) -> &[StateFile] {
+        self.committed.as_ref().map_or(&[], |c| c.state_files.as_slice())
+    }
+
     /// The last loaded project's services, program file names and root directories (for a watcher's directory
     /// set).
     pub fn watch_roots(&self) -> Option<(&ProjectServices, Vec<String>, Vec<String>)> {
@@ -643,6 +657,7 @@ impl<'p> BuildSession<'p> {
                     watch_dirs: Vec::new(),
                     from_disk: true,
                     setup_inputs: Some(disk.setup_inputs),
+                    state_files: disk.state_files,
                 });
             }
         }
@@ -671,6 +686,24 @@ impl<'p> BuildSession<'p> {
             None => true,
             Some(c) => c.salt != salt || c.plugin_ids != plugin_ids,
         };
+        // a state file the last commit left that is missing or changed now (deleted or edited by hand or a tool):
+        // its plugin starts over as in a new process (no kept `Shared`, a fresh state), and every file is
+        // transformed, as the cached parts were made with the state it held
+        let lost: Vec<StateFile> = committed
+            .as_ref()
+            .map_or_else(Vec::new, |c| c.state_files.iter().filter(|f| !f.intact()).cloned().collect());
+        let fresh: FxHashSet<String> = lost.iter().map(|f| f.plugin.clone()).collect();
+        if !lost.is_empty() {
+            all = true;
+            summary.lost_state_files = lost.iter().map(|f| f.path.clone()).collect();
+            for file in &lost {
+                report.plugin_messages.push(format!(
+                    "{}: its state file {} is missing or changed since the last build: the plugin starts from a \
+                     fresh state, and every file is transformed",
+                    file.plugin, file.path
+                ));
+            }
+        }
         let mut changes = ChangeSet::default();
         let mut affected = FxHashSet::default();
         if let Some(c) = &committed {
@@ -737,7 +770,9 @@ impl<'p> BuildSession<'p> {
             // a changed salt (options, configs, Rojo files, the plugin's tsconfig entry) is a changed build input
             let salt_changed = committed.as_ref().is_none_or(|c| c.salt != salt);
             let kept = match (kind, record) {
-                (BuildKind::WatchRebuild { .. }, Some(record)) if !salt_changed => {
+                (BuildKind::WatchRebuild { .. }, Some(record))
+                    if !salt_changed && !fresh.contains(plugin.info.name) =>
+                {
                     record.shared.as_ref().and_then(|shared| {
                         let changed = record.inputs.iter().any(|i| input_changed(i, project.program, &resolver));
                         if changed {
@@ -832,8 +867,6 @@ impl<'p> BuildSession<'p> {
         let start = Instant::now();
         let mut run = None;
         if !active.is_empty() {
-            let origin =
-                if matches!(kind, BuildKind::WatchRebuild { .. }) { StateOrigin::Memory } else { StateOrigin::Fresh };
             let mut shared = Vec::with_capacity(active.len());
             let mut states = Vec::with_capacity(active.len());
             let mut inputs = Vec::with_capacity(active.len());
@@ -846,7 +879,18 @@ impl<'p> BuildSession<'p> {
                     inputs.push(kept_inputs);
                     continue;
                 }
-                let state = self.initial_state(plugin, kind, committed.as_ref());
+                // a plugin whose state file was lost starts fresh, as in a new process
+                let lost_state = fresh.contains(plugin.info.name);
+                let origin = if matches!(kind, BuildKind::WatchRebuild { .. }) && !lost_state {
+                    StateOrigin::Memory
+                } else {
+                    StateOrigin::Fresh
+                };
+                let state = if lost_state {
+                    plugin.plugin.default_state()
+                } else {
+                    self.initial_state(plugin, kind, committed.as_ref())
+                };
                 let mut backend = Setup {
                     program: project.program,
                     services,
@@ -1246,6 +1290,21 @@ impl<'p> BuildSession<'p> {
         let start = Instant::now();
         let success = !report.has_errors() && finished;
         let mut records: FxHashMap<String, FileRecord> = FxHashMap::default();
+        // the state files the commit leaves (each is written unless it holds these bytes already): checked before
+        // the next build
+        let state_files: Vec<StateFile> = if self.options.no_write {
+            Vec::new()
+        } else {
+            queue
+                .state_files
+                .iter()
+                .map(|(plugin, path, bytes)| StateFile {
+                    plugin: (*plugin).to_owned(),
+                    path: path.clone(),
+                    version: Version::of_bytes(bytes),
+                })
+                .collect()
+        };
         // the assets' bytes are read before the first write, so a vanished asset fails the build with nothing written
         let asset_bytes = if success && !self.options.no_write {
             match outputs::read_assets(&project_outputs) {
@@ -1325,6 +1384,7 @@ impl<'p> BuildSession<'p> {
                         artifacts: artifacts.clone(),
                         records,
                         setup_inputs,
+                        state_files: state_files.clone(),
                     };
                     (path.as_str(), state)
                 });
@@ -1405,14 +1465,35 @@ impl<'p> BuildSession<'p> {
             };
             new_files.insert(key, entry);
         }
+        // a state file setup read as a build input (Flamework's candidate scan reads its own `flamework.build`) is
+        // recorded with what this commit left in it, so the next watch rebuild does not take the plugin's own write
+        // for a changed input; a change by anyone else is a lost state file (above). The incremental state keeps
+        // what setup read: a new process runs setup anyway, and Flamework relies on the change there (its salt)
+        let committed_texts: FxHashMap<String, Option<Version>> = queue
+            .state_files
+            .iter()
+            .map(|(_, path, bytes)| (path_key_of(services, path), std::str::from_utf8(bytes).ok().map(Version::of)))
+            .collect();
         let plugins = match run_parts {
-            Some((names, shared, states, inputs)) => names
-                .into_iter()
-                .zip(shared)
-                .zip(states)
-                .zip(inputs)
-                .map(|(((name, shared), state), inputs)| PluginRecord { name, state, shared: Some(shared), inputs })
-                .collect(),
+            Some((names, shared, states, mut inputs)) => {
+                if !self.options.no_write {
+                    for input in inputs.iter_mut().flatten() {
+                        if let BuildInput::File { path, exists, version, .. } = input
+                            && let Some(text) = committed_texts.get(&path_key_of(services, path))
+                        {
+                            *exists = text.is_some();
+                            *version = *text;
+                        }
+                    }
+                }
+                names
+                    .into_iter()
+                    .zip(shared)
+                    .zip(states)
+                    .zip(inputs)
+                    .map(|(((name, shared), state), inputs)| PluginRecord { name, state, shared: Some(shared), inputs })
+                    .collect()
+            }
             None => Vec::new(),
         };
         let committed = Committed {
@@ -1424,6 +1505,7 @@ impl<'p> BuildSession<'p> {
             watch_dirs: queue.watch_dirs.iter().map(|(_, p)| p.clone()).collect(),
             from_disk: false,
             setup_inputs: None,
+            state_files,
         };
         summary.changes = changes;
         self.pending.clear();

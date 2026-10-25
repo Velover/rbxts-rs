@@ -322,6 +322,269 @@ fn a_kept_shared_survives_failures_and_input_changes_rerun_setup() {
     drop(copy);
 }
 
+// --- state-file integrity ---
+
+const KEEPER_STATE: &str = "keeper-state.txt";
+
+#[derive(Default)]
+struct KeeperCounts {
+    setups: AtomicUsize,
+    fresh_watch_setups: AtomicUsize,
+}
+
+/// Counts finished builds in its state, persisted to `keeper-state.txt` and reloaded by a setup that starts fresh
+/// outside a clean build (an incremental build, or a watch rebuild after its state file was lost). Its parts persist,
+/// so an incremental build transforms only what changed. With `reads_own`, setup also reads its own state file as a
+/// build input, as Flamework's candidate scan reads its own `flamework.build`.
+struct Keeper {
+    counts: Arc<KeeperCounts>,
+    reads_own: bool,
+}
+
+struct KeeperInstance;
+
+impl Plugin for Keeper {
+    type Shared = ();
+    type State = u32;
+    type FilePart = ();
+    type Instance = KeeperInstance;
+
+    fn info(&self) -> PluginInfo {
+        PluginInfo { name: "keeper", version: "0.1.0", tsconfig_transform: None }
+    }
+
+    fn setup(&self, cx: &mut SetupCx<'_>, state: &mut u32) -> Result<Arc<()>, Fatal> {
+        self.counts.setups.fetch_add(1, Ordering::SeqCst);
+        if self.reads_own {
+            cx.read_input(KEEPER_STATE).map_err(|e| Fatal::new(e.to_string()))?;
+        }
+        if cx.state_origin() == StateOrigin::Fresh && cx.build_kind() != BuildKind::Clean {
+            if matches!(cx.build_kind(), BuildKind::WatchRebuild { .. }) {
+                self.counts.fresh_watch_setups.fetch_add(1, Ordering::SeqCst);
+            }
+            let bytes = cx.read_persisted(KEEPER_STATE).map_err(|e| Fatal::new(e.to_string()))?;
+            *state = bytes.map_or(0, |b| String::from_utf8_lossy(&b).trim().parse().unwrap_or(0));
+        }
+        Ok(Arc::new(()))
+    }
+
+    fn instance(&self, _shared: Arc<()>, _checker: CheckerInfo) -> KeeperInstance {
+        KeeperInstance
+    }
+
+    fn finish(
+        &self,
+        _shared: &(),
+        state: &mut u32,
+        _parts: &[(FileIndex, &())],
+        cx: &mut FinishCx<'_>,
+    ) -> Result<(), Fatal> {
+        *state += 1;
+        cx.write_state_file(KEEPER_STATE, state.to_string().into_bytes());
+        Ok(())
+    }
+
+    fn encode_file_part(&self, _part: &()) -> Option<Vec<u8>> {
+        Some(Vec::new())
+    }
+
+    fn decode_file_part(&self, _bytes: &[u8]) -> Option<()> {
+        Some(())
+    }
+}
+
+impl PluginInstance for KeeperInstance {
+    type FilePart = ();
+
+    fn interest(&self, _interest: &mut Interest) {}
+
+    fn end_file(&self, _cx: &mut Cx<'_>) -> PResult<()> {
+        Ok(())
+    }
+}
+
+/// A copy of the basic fixture for the keeper tests, with `"incremental": true` when asked.
+fn keeper_copy(label: &str, incremental: bool) -> Option<(Copy, PathBuf)> {
+    let Some(node_modules) = node_modules() else {
+        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        return None;
+    };
+    let root = std::env::temp_dir().join(format!("rbxts-rs-watch-{label}-{}", std::process::id()));
+    parity::remove_tree(&root);
+    let copy = Copy(root.clone());
+    parity::copy_tree(&fixtures().join("basic"), &root).unwrap();
+    parity::junction(&root.join("node_modules"), &node_modules).unwrap();
+    if incremental {
+        let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
+        let tsconfig =
+            tsconfig.replacen("\"compilerOptions\": {", "\"compilerOptions\": {\n\t\t\"incremental\": true,", 1);
+        std::fs::write(root.join("tsconfig.json"), tsconfig).unwrap();
+    }
+    Some((copy, root))
+}
+
+fn keeper_session<'p>(root: &Path, options: &'p PluginOptions<'p>, watch: bool) -> BuildSession<'p> {
+    BuildSession::new(
+        CompileOptions {
+            tsconfig: "tsconfig.json".into(),
+            cwd: root.to_string_lossy().into_owned(),
+            project_options: ProjectOptionLayer::default(),
+            out_dir_override: None,
+            write_partial: false,
+            no_write: false,
+        },
+        options,
+        watch,
+    )
+}
+
+const D_TS: &str =
+    "import { A } from \"./b\";\n\nexport function sizeOf(value: A) {\n\treturn value.x.a.size() + 1;\n}\n";
+const D_TS_BROKEN: &str =
+    "import { A } from \"./b\";\n\nexport function sizeOf(value: A) {\n\treturn value.x.a.sizee();\n}\n";
+
+/// Watch: a state file the last commit left that is deleted, edited or put back to older bytes makes its plugin
+/// start fresh (it reloads what is on disk, as a new process would) and every file be transformed; the plugin's own
+/// write, and the same bytes written again, change nothing. A plugin that reads its own state file as a build input
+/// (Flamework) does not take its own write for a changed input. A failing build writes nothing, and the next one
+/// still finds the file lost.
+#[test]
+fn a_lost_state_file_starts_its_plugin_fresh_in_watch() {
+    let Some((copy, root)) = keeper_copy("sfile", false) else { return };
+    let counts = Arc::new(KeeperCounts::default());
+    let plugins = vec![erase(Keeper { counts: Arc::clone(&counts), reads_own: true })];
+    let state_path = root.join(KEEPER_STATE);
+    let key = state_path.to_string_lossy().replace('\\', "/");
+    let path = |p: &str| root.join(p).to_string_lossy().replace('\\', "/");
+    let write = |p: &str, text: &str| std::fs::write(root.join(p), text).unwrap();
+    let state = || std::fs::read_to_string(&state_path).ok();
+    let setups = || counts.setups.load(Ordering::SeqCst);
+    let fresh = || counts.fresh_watch_setups.load(Ordering::SeqCst);
+    big_stack(|| {
+        let options =
+            PluginOptions { plugins: &plugins, ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
+        let mut session = keeper_session(&root, &options, true);
+        let (report, summary) = session.build(&[]);
+        assert!(!report.has_errors(), "{:?}", report.fatal);
+        assert!(summary.all);
+        assert_eq!(state().as_deref(), Some("1"));
+        assert_eq!(session.state_files().len(), 1);
+        assert!(
+            session.state_files()[0].path.replace('\\', "/").eq_ignore_ascii_case(&key),
+            "{:?}",
+            session.state_files()
+        );
+
+        // the plugin's own write (setup read the file before the commit wrote it): an edit is the closure only
+        write("src/shared/d.ts", D_TS);
+        let (report, summary) = session.build(&[path("src/shared/d.ts")]);
+        assert!(!report.has_errors());
+        assert!(!summary.all, "the plugin's own write is not a changed input");
+        assert!(summary.lost_state_files.is_empty());
+        assert_eq!(setups(), 1, "the Shared is kept");
+        assert_eq!(state().as_deref(), Some("2"));
+
+        // deleted: fresh (nothing to reload), every file
+        std::fs::remove_file(&state_path).unwrap();
+        let (report, summary) = session.build(&[key.clone()]);
+        assert!(!report.has_errors());
+        assert!(summary.all);
+        assert_eq!(summary.lost_state_files.len(), 1);
+        assert_eq!(report.files.len(), report.project_files);
+        assert_eq!((setups(), fresh()), (2, 1));
+        assert_eq!(state().as_deref(), Some("1"));
+
+        // edited: fresh, reloading the edited value
+        write(KEEPER_STATE, "41");
+        let (report, summary) = session.build(&[key.clone()]);
+        assert!(!report.has_errors());
+        assert!(summary.all);
+        assert_eq!((setups(), fresh()), (3, 2));
+        assert_eq!(state().as_deref(), Some("42"));
+
+        // the same bytes again: nothing transformed, the Shared kept
+        write(KEEPER_STATE, "42");
+        let (report, summary) = session.build(&[key.clone()]);
+        assert!(!report.has_errors());
+        assert!(!summary.all);
+        assert!(summary.lost_state_files.is_empty());
+        assert_eq!(report.files.len(), 0);
+        assert_eq!(setups(), 3);
+        assert_eq!(state().as_deref(), Some("43"));
+
+        // back to the bytes before the last commit
+        write(KEEPER_STATE, "42");
+        let (report, summary) = session.build(&[key.clone()]);
+        assert!(!report.has_errors());
+        assert!(summary.all);
+        assert_eq!((setups(), fresh()), (4, 3));
+        assert_eq!(state().as_deref(), Some("43"));
+
+        // deleted while a build fails: nothing written, and the next build still finds it lost
+        std::fs::remove_file(&state_path).unwrap();
+        write("src/shared/d.ts", D_TS_BROKEN);
+        let (report, summary) = session.build(&[key.clone(), path("src/shared/d.ts")]);
+        assert!(report.has_errors());
+        assert_eq!(summary.lost_state_files.len(), 1);
+        assert_eq!(state(), None);
+        write("src/shared/d.ts", D_TS);
+        let (report, summary) = session.build(&[path("src/shared/d.ts")]);
+        assert!(!report.has_errors());
+        assert!(summary.all);
+        assert_eq!(summary.lost_state_files.len(), 1);
+        assert_eq!(state().as_deref(), Some("1"));
+    });
+    drop(copy);
+}
+
+/// Incremental builds (a new session per build): the state files are in the incremental state; one deleted or
+/// edited since makes every file be transformed (the parts on disk were made with the state it held); the same
+/// bytes transform nothing.
+#[test]
+fn a_lost_state_file_transforms_everything_in_an_incremental_build() {
+    let Some((copy, root)) = keeper_copy("sfile-inc", true) else { return };
+    let counts = Arc::new(KeeperCounts::default());
+    let plugins = vec![erase(Keeper { counts: Arc::clone(&counts), reads_own: false })];
+    let state_path = root.join(KEEPER_STATE);
+    let state = || std::fs::read_to_string(&state_path).ok();
+    big_stack(|| {
+        let options =
+            PluginOptions { plugins: &plugins, ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
+        let build = || {
+            let mut session = keeper_session(&root, &options, false);
+            let (report, summary) = session.build(&[]);
+            assert!(!report.has_errors(), "{:?}", report.fatal);
+            (report.files.len(), summary)
+        };
+        let (_, summary) = build();
+        assert_eq!(summary.kind, Some(BuildKind::Clean));
+        assert_eq!(state().as_deref(), Some("1"));
+
+        let (transformed, summary) = build();
+        assert_eq!(summary.kind, Some(BuildKind::Incremental));
+        assert_eq!((transformed, summary.all), (0, false));
+        assert_eq!(state().as_deref(), Some("2"));
+
+        std::fs::remove_file(&state_path).unwrap();
+        let (transformed, summary) = build();
+        assert!(summary.all && transformed > 0);
+        assert_eq!(summary.lost_state_files.len(), 1);
+        assert_eq!(state().as_deref(), Some("1"));
+
+        std::fs::write(&state_path, "41").unwrap();
+        let (_, summary) = build();
+        assert!(summary.all);
+        assert_eq!(state().as_deref(), Some("42"));
+
+        std::fs::write(&state_path, "42").unwrap();
+        let (transformed, summary) = build();
+        assert_eq!((transformed, summary.all), (0, false));
+        assert!(summary.lost_state_files.is_empty());
+        assert_eq!(state().as_deref(), Some("43"));
+    });
+    drop(copy);
+}
+
 // --- the clean keeps what roblox-ts keeps ---
 
 /// A declaration build (`declaration`, `declarationMap`, `declarationDir`, an explicit `tsBuildInfoFile` under

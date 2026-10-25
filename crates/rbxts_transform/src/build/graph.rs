@@ -35,7 +35,11 @@ pub struct Version(pub u64, pub u64, pub u64);
 impl Version {
     /// The version of `text`.
     pub fn of(text: &str) -> Version {
-        let bytes = text.as_bytes();
+        Version::of_bytes(text.as_bytes())
+    }
+
+    /// The version of a file's bytes (a plugin state file need not be UTF-8).
+    pub fn of_bytes(bytes: &[u8]) -> Version {
         // FNV-1a, 64-bit
         let mut fnv: u64 = 0xcbf2_9ce4_8422_2325;
         for &b in bytes {
