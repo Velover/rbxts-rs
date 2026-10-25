@@ -14,6 +14,23 @@ export const c8 = keyedList[0];
 delete keyed[keyName() as "opt"];
 export const c9 = probeLinks();
 
+// optional chains with a rewritten computed key: the key is evaluated after its receiver, and not at all when an
+// optional receiver is nil
+let kv = 0;
+export const o1 = getMaybeKeyed()?.[keyName() as "m"]?.(val());
+export const o2 = getMaybeKeyed()?.[keyName() as "f"]?.(val());
+export const o3 = getMaybeKeyed()?.[keyName() as "a"];
+export const o4 = getMaybeKeyed()?.[keyName() as "m"](val());
+export const o5 = getKeyed()[keyName() as "m"]?.(val());
+export const o6 = getMaybeKeyed()?.inner[keyName() as "m"]?.(val());
+export const o7 = getMaybeKeyed()?.[keyName() as "h"]?.(val())?.[keyName() as "g"]?.(val());
+export const o8 = getMaybeKeyed()?.[keyName() as "g"](val())?.[keyName() as "h"]?.(val())[keyName() as "a"];
+export const o9 = getMaybeKeyed()?.[(kv = 1, "m")]?.(val());
+export const o10 = maybeKeyed?.[keyName() as "f"]?.(val());
+export const o11 = getMaybeKeyed()?.["m"]?.(val());
+getMaybeKeyed()?.[keyName() as "m"]?.(val());
+delete getMaybeKeyed()?.[keyName() as "opt"];
+
 interface CompAttrs {
 	count: number;
 	label: string;

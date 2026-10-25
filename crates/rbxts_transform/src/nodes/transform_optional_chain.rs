@@ -277,6 +277,10 @@ fn transform_optional_chain_inner(
         // rbxts-rs: an optional call's callee is read from its receiver into the temporary after the call was
         // offered to plugins, so that a receiver `compile_receiver` binds is declared before that read
         let mut callee_read: Option<(Expr, CalleeKey)> = None;
+        // rbxts-rs: the statements that still evaluate a computed key a plugin rewrote, when the receiver is optional:
+        // placed inside the receiver's nil check, before the callee read (`a?.[k()]?.()` does not run `k()` for a nil
+        // `a`)
+        let mut key_statements: Vec<Stmt> = Vec::new();
 
         if item.is_compound_call() {
             is_method_call = is_method(state, item.access());
@@ -299,10 +303,15 @@ fn transform_optional_chain_inner(
                 let rewritten = crate::plugins::dispatch::rewritten_key(state, item.access(), AccessPosition::Callee);
                 let key = match (item.kind, rewritten) {
                     (_, Some(key)) => {
-                        // a computed argument is still evaluated, after the receiver
+                        // a computed argument is still evaluated, after the receiver: inside the receiver's nil check
+                        // for an optional receiver (the receiver is then the temporary, which the key cannot change)
                         let statements = crate::plugins::dispatch::replaced_key_statements(state, item.access());
-                        base_expression =
-                            crate::plugins::dispatch::place_key_statements(prereqs, base_expression, statements);
+                        if item.optional {
+                            key_statements = statements;
+                        } else {
+                            base_expression =
+                                crate::plugins::dispatch::place_key_statements(prereqs, base_expression, statements);
+                        }
                         CalleeKey::Rewritten(key)
                     }
                     (ChainItemKind::PropertyCall { name, .. }, None) => CalleeKey::Name(name),
@@ -363,6 +372,7 @@ fn transform_optional_chain_inner(
         }
 
         if let Some((mut receiver, key)) = callee_read {
+            receiver_prereqs.push_list(key_statements);
             // a receiver bound by `compile_receiver` is declared first, and the callee read from it
             if let Some((bound, binding)) = state.plugin_file.optional_receivers.remove(&item.node) {
                 receiver_prereqs.push(binding);

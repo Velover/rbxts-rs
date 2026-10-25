@@ -281,6 +281,13 @@ interface KeyedList {
 	[index: number]: number;
 }
 declare const keyedList: KeyedList;
+/** Optional chains over `__probeKey` receivers. */
+interface KeyedMore extends Keyed {
+	g(x: number): KeyedMore;
+	h?: (x: number) => KeyedMore;
+}
+declare function getMaybeKeyed(): KeyedMore | undefined;
+declare function val(): number;
 /** Link texts: `{@link Name text}` and `{@link Name | text}`. */
 /** @probe links {@link marked} {@link marked the marked one} {@link maybeMarked | piped text } {@link keyed |} */
 declare function probeLinks(): string;

@@ -27,6 +27,132 @@ local c8 = keyedList[0]
 keyName()
 keyed.k_opt = nil
 local c9 = "marked=marked:-;marked=marked:the marked one;maybeMarked=maybeMarked:piped text;keyed=keyed:-"
+-- optional chains with a rewritten computed key: the key is evaluated after its receiver, and not at all when an
+-- optional receiver is nil
+local kv = 0
+local _self_1 = getMaybeKeyed()
+local _o1 = _self_1
+if _o1 ~= nil then
+	keyName()
+	_o1 = _o1.k_m
+	if _o1 ~= nil then
+		_o1 = _o1(_self_1, val())
+	end
+end
+local o1 = _o1
+local _o2 = getMaybeKeyed()
+if _o2 ~= nil then
+	keyName()
+	_o2 = _o2.k_f
+	if _o2 ~= nil then
+		_o2 = _o2(val())
+	end
+end
+local o2 = _o2
+local _o3 = getMaybeKeyed()
+if _o3 ~= nil then
+	keyName()
+	_o3 = _o3.k_a
+end
+local o3 = _o3
+local _o4 = getMaybeKeyed()
+if _o4 ~= nil then
+	keyName()
+	_o4 = _o4:k_m(val())
+end
+local o4 = _o4
+local _self_2 = getKeyed()
+keyName()
+local _o5 = _self_2.k_m
+if _o5 ~= nil then
+	_o5 = _o5(_self_2, val())
+end
+local o5 = _o5
+local _o6 = getMaybeKeyed()
+if _o6 ~= nil then
+	local _self_3 = _o6.k_inner
+	keyName()
+	_o6 = _self_3.k_m
+	if _o6 ~= nil then
+		_o6 = _o6(_self_3, val())
+	end
+end
+local o6 = _o6
+local _o7 = getMaybeKeyed()
+if _o7 ~= nil then
+	keyName()
+	_o7 = _o7.k_h
+	if _o7 ~= nil then
+		local _self_3 = _o7(val())
+		_o7 = _self_3
+		if _o7 ~= nil then
+			keyName()
+			_o7 = _o7.k_g
+			if _o7 ~= nil then
+				_o7 = _o7(_self_3, val())
+			end
+		end
+	end
+end
+local o7 = _o7
+local _o8 = getMaybeKeyed()
+if _o8 ~= nil then
+	keyName()
+	_o8 = _o8:k_g(val())
+	if _o8 ~= nil then
+		keyName()
+		_o8 = _o8.k_h
+		if _o8 ~= nil then
+			local _exp = _o8(val())
+			keyName()
+			_o8 = _exp.k_a
+		end
+	end
+end
+local o8 = _o8
+local _self_3 = getMaybeKeyed()
+local _o9 = _self_3
+if _o9 ~= nil then
+	kv = 1
+	local _ = kv
+	_o9 = _o9.k_m
+	if _o9 ~= nil then
+		_o9 = _o9(_self_3, val())
+	end
+end
+local o9 = _o9
+local _o10 = maybeKeyed
+if _o10 ~= nil then
+	keyName()
+	_o10 = _o10.k_f
+	if _o10 ~= nil then
+		_o10 = _o10(val())
+	end
+end
+local o10 = _o10
+local _self_4 = getMaybeKeyed()
+local _o11 = _self_4
+if _o11 ~= nil then
+	_o11 = _o11.k_m
+	if _o11 ~= nil then
+		_o11 = _o11(_self_4, val())
+	end
+end
+local o11 = _o11
+local _self_5 = getMaybeKeyed()
+local _result = _self_5
+if _result ~= nil then
+	keyName()
+	_result = _result.k_m
+	if _result ~= nil then
+		_result(_self_5, val())
+	end
+end
+local _result_1 = getMaybeKeyed()
+if _result_1 ~= nil then
+	keyName()
+	_result_1.k_opt = nil
+end
 -- assignments with a computed key: the hook compiles `key_node`
 local CompKeys
 do
@@ -62,5 +188,16 @@ return {
 	c7 = c7,
 	c8 = c8,
 	c9 = c9,
+	o1 = o1,
+	o2 = o2,
+	o3 = o3,
+	o4 = o4,
+	o5 = o5,
+	o6 = o6,
+	o7 = o7,
+	o8 = o8,
+	o9 = o9,
+	o10 = o10,
+	o11 = o11,
 	CompKeys = CompKeys,
 }
