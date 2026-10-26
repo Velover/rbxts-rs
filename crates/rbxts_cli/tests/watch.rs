@@ -478,6 +478,13 @@ impl Watcher {
         }
     }
 
+    /// After a change that starts a build: waits for it to start (however loaded the machine), then settles; the last
+    /// build-end.
+    fn changed(&self) -> Option<Value> {
+        self.build_start();
+        self.settle()
+    }
+
     /// Settles (no build for 1.5 s) and checks that the last build succeeded.
     fn settled_ok(&self, label: &str) {
         let last = self.settle();
@@ -524,7 +531,7 @@ fn package_files_in_subfolders_late_or_old_are_seen() {
             &root.join(format!("src/shared/{name}.ts")),
             &format!("import {{ v }} from \"@rbxts/{name}\";\n\nexport const w = v.size();\n"),
         );
-        let end = watcher.settle();
+        let end = watcher.changed();
         assert!(end.as_ref().is_some_and(|e| e["ok"] == false), "{name} is missing: {end:?}");
         write(&scope.join(format!("{name}/package.json")), &package_json(&name));
         std::fs::create_dir_all(scope.join(format!("{name}/out"))).unwrap();
@@ -542,7 +549,7 @@ fn package_files_in_subfolders_late_or_old_are_seen() {
             &root.join(format!("src/shared/{name}.ts")),
             &format!("import {{ extra }} from \"@rbxts/{name}\";\n\nexport const w = extra;\n"),
         );
-        let end = watcher.settle();
+        let end = watcher.changed();
         assert!(end.as_ref().is_some_and(|e| e["ok"] == false), "{name} is missing: {end:?}");
         write(&scope.join(format!("{name}/package.json")), &package_json(&name));
         write(&scope.join(format!("{name}/out/index.d.ts")), "export * from \"./extra\";\n");
@@ -574,11 +581,11 @@ fn node_modules_removed_and_reinstalled_is_seen() {
             unlink(link);
         }
         remove_tree(&root.join("node_modules"));
-        let end = watcher.settle();
+        let end = watcher.changed();
         assert!(end.as_ref().is_some_and(|e| e["ok"] == false), "{mode}: no node_modules: {end:?}");
         let b = std::fs::read_to_string(root.join("src/shared/b.ts")).unwrap();
         std::fs::write(root.join("src/shared/b.ts"), b + "\nexport const whileGone = 1;\n").unwrap();
-        let end = watcher.settle();
+        let end = watcher.changed();
         assert!(end.as_ref().is_some_and(|e| e["ok"] == false), "{mode}: the edit while it is gone: {end:?}");
         let links = if mode == "copy" {
             link_packages(&root.join("node_modules/@rbxts"))
@@ -862,7 +869,7 @@ fn a_folder_that_cannot_be_watched_starts_no_rebuild_loop() {
     watcher.build_start();
     watcher.still_ok("the folder can be listed again");
     std::fs::write(package.join("index.d.ts"), "export type V = string;\n").unwrap();
-    let end = watcher.settle();
+    let end = watcher.changed();
     assert!(end.is_some_and(|e| e["ok"] == false), "the package's watch was made: V is a string now");
     for link in links {
         unlink(&link);
@@ -1045,6 +1052,48 @@ fn a_new_file_a_referenced_project_includes_is_seen() {
     assert_eq!(end["ok"], false, "the conflicting declaration is part of common's program: {end}");
     std::fs::remove_file(&dup).unwrap();
     assert_eq!(watcher.build_end(2)["ok"], true);
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Files no program takes in start no rebuild: a TypeScript file in a folder the tsconfig excludes (in a source root),
+/// a folder made where no include could reach, and a declaration file in it. What a program does take in, or an asset
+/// in the excluded folder (roblox-ts copies everything under a root dir but compilable files), does.
+#[test]
+fn files_no_program_takes_in_start_no_rebuild() {
+    let Some((base, root, links)) = linked_project("noprogram") else { return };
+    let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
+    let tsconfig = tsconfig.replacen("\"include\": [\"src\"],", "\"include\": [\"src\"],\n\t\"exclude\": [\"src/excluded\"],", 1);
+    assert!(tsconfig.contains("\"exclude\""), "{tsconfig}");
+    std::fs::write(root.join("tsconfig.json"), tsconfig).unwrap();
+    std::fs::create_dir_all(root.join("src/excluded")).unwrap();
+    let watcher = start(&root);
+    assert_eq!(watcher.build_end(0)["ok"], true);
+    watcher.assert_quiet(Duration::from_millis(1000));
+
+    write(&root.join("src/excluded/skipped.ts"), "export const skipped: number = \"not checked\";\n");
+    write(&root.join("src/excluded/types.d.ts"), "declare const excludedGlobal: number;\n");
+    watcher.assert_quiet(Duration::from_millis(1500));
+    std::fs::create_dir_all(root.join("elsewhere")).unwrap();
+    watcher.assert_quiet(Duration::from_millis(1500));
+    write(&root.join("elsewhere/extra.d.ts"), "declare const elsewhereGlobal: number;\n");
+    write(&root.join("elsewhere/extra.ts"), "export const extra = 1;\n");
+    watcher.assert_quiet(Duration::from_millis(1500));
+    std::fs::remove_file(root.join("src/excluded/skipped.ts")).unwrap();
+    watcher.assert_quiet(Duration::from_millis(1500));
+
+    // an asset in the excluded folder is copied
+    write(&root.join("src/excluded/asset.lua"), "return 1\n");
+    assert_eq!(watcher.build_end(1)["ok"], true);
+    assert!(root.join("out/excluded/asset.lua").is_file());
+    // a file the program takes in
+    write(&root.join("src/shared/fresh.ts"), "export const fresh = 1;\n");
+    assert_eq!(watcher.build_end(2)["ok"], true);
+    assert!(root.join("out/shared/fresh.luau").is_file());
+
     for link in links {
         unlink(&link);
     }

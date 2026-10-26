@@ -22,9 +22,12 @@
 //!   directory (not dot entries: `.package-lock.json`, `.cache`); a Rojo project file in the project directory; in a folder a Rojo
 //!   resolver searches (type roots included), a project file, or a folder holding one or holding one it read;
 //!   inside a package the build uses, `package.json` and other JSON, TypeScript and Luau files and directories
-//!   (nothing else in a package that is only in a type root); under a root (not in its `node_modules` or `.git`),
-//!   anything; in the directory of a program file or one the include globs listed, a directory or a file the
-//!   tsconfig could take in (lockfiles in the project directory never count). A directory's own modification never
+//!   (nothing else in a package that is only in a type root); under a source root (not in its `node_modules` or
+//!   `.git`), anything but a TypeScript file no program takes in (an excluded one: roblox-ts neither compiles nor
+//!   copies it; a `.d.ts` of a declaration build is an asset), under a plugin's `watch_dir`, anything; in the
+//!   directory of a program file or one the include globs listed, a directory an include could reach into or a
+//!   file a program takes in (the tsconfig's `files`, or its `include` and not its `exclude`, by a new walk of its
+//!   globs once per burst) (lockfiles in the project directory never count). A directory's own modification never
 //!   counts (its entries' events say more; a directory created or moved in does), nor do rbxts-rs's temporary files
 //!   or this watcher's own artifacts as it wrote them, nor a directory holding nothing but this watcher's own
 //!   outputs and build infos (the `out` or `cache` folder its build made: no second build at startup).
@@ -232,9 +235,17 @@ struct Watched {
     /// Path keys of the folders the Rojo resolvers search for nested project files (`$path` folders outside the
     /// ignored roots, the type roots): a project file, or a folder holding one, created or removed there counts.
     rojo_dirs: Vec<String>,
-    /// Which files the programs could take in, for `open_dirs`: the root project's and every referenced project's
-    /// include matcher (none before a project loaded: any file).
+    /// Which files the programs could take in, for `open_dirs` and the source roots: the root project's and every
+    /// referenced project's include matcher (none before a project loaded: any file).
     matchers: Vec<IncludeMatcher>,
+    /// Per matcher, the root files its tsconfig finds on disk now (a new walk of its globs, made at most once per
+    /// burst of events: [`Watched::forget_listings`]).
+    listings: std::cell::RefCell<FxHashMap<usize, std::collections::HashSet<String>>>,
+    /// Path keys of the source roots (not the plugins' `watch_dir`s): a TypeScript file in them counts only when a
+    /// program takes it in; anything else in them (assets) does.
+    source_roots: Vec<String>,
+    /// A loaded project emits declarations: a `.d.ts` file under a source root is an asset of it.
+    declaration_assets: bool,
     /// Path keys of the JSON files the last load read, with their spelling and the hash of their text: an event
     /// leaving the same text under the same name does not count.
     texts: FxHashMap<String, (String, u64)>,
@@ -414,16 +425,43 @@ impl Watched {
         }
     }
 
-    /// Whether an entry of an open directory (not under a root) counts: a directory, or a file the program could
-    /// take in.
+    /// Whether an entry of an open directory (not under a root) counts: a directory a file the programs take in
+    /// could be in (watched from the next build on), or a file the programs take in now.
     fn open_entry_counts(&self, path: &str, name: &str) -> bool {
-        let includable = || self.matchers.is_empty() || self.matchers.iter().any(|m| m.possibly_includes(path));
+        let below = || self.matchers.is_empty() || self.matchers.iter().any(|m| m.possibly_includes_below(path));
         match std::fs::metadata(path) {
-            Ok(m) if m.is_dir() => true,
-            Ok(_) => includable(),
-            // gone: a directory (no extension) or a file the program could have taken in
-            Err(_) => !name.contains('.') || includable(),
+            Ok(m) if m.is_dir() => below(),
+            Ok(_) => self.taken_in(path),
+            // gone: a directory (no extension) or a file (one the program read is an anchor)
+            Err(_) => (!name.contains('.') && below()) || self.taken_in(path),
         }
+    }
+
+    /// Whether an entry under a source root counts: anything but a TypeScript file (`.ts`, `.tsx`) no program takes
+    /// in, which roblox-ts neither compiles nor copies (`copyItem`'s `isCompilableFile` filter: an excluded file).
+    /// A `.d.ts` file of a declaration build is an asset, copied.
+    fn root_entry_counts(&self, path: &str, name: &str) -> bool {
+        if !(name.ends_with(".ts") || name.ends_with(".tsx")) || std::fs::metadata(path).is_ok_and(|m| m.is_dir()) {
+            return true;
+        }
+        (self.declaration_assets && name.ends_with(".d.ts")) || self.taken_in(path)
+    }
+
+    /// Whether a program would take `path` in as a root file now: one of the tsconfigs' `files`, or matched by
+    /// its `include` and not its `exclude` (any file before a project loaded). The include matcher answers first;
+    /// a file it could take in is looked up in a new walk of that tsconfig's globs.
+    fn taken_in(&self, path: &str) -> bool {
+        self.matchers.is_empty()
+            || self.matchers.iter().enumerate().any(|(i, matcher)| {
+                matcher.possibly_includes(path)
+                    && (self.listings.borrow_mut().entry(i).or_insert_with(|| matcher.current_root_files()))
+                        .contains(&matcher.key(path))
+            })
+    }
+
+    /// Drops the walks [`Watched::taken_in`] made: the next burst of events walks again.
+    fn forget_listings(&self) {
+        self.listings.borrow_mut().clear();
     }
 
     /// Watches `path`'s deepest existing directory (its own directory when it exists, else the nearest existing
@@ -643,6 +681,8 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
         watched.root_keys.push(key(&root));
         watched.recursive.insert(root);
     }
+    watched.source_roots.extend(root_dirs.iter().map(|r| key(&nodepath::resolve(&[r]))));
+    watched.declaration_assets |= services.path_translator.declaration;
     watched.flat.insert(project_dir.clone());
     // node_modules, its scopes and the type roots: packages appearing or going
     let node_modules = services.data.node_modules_path.clone();
@@ -748,7 +788,9 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
 /// Rojo folders and its plugins' recorded inputs; its output roots are ignored, as the root's are (the root's program
 /// reads the declarations written there: their events are this watcher's own writes).
 fn add_referenced_project(watched: &mut Watched, session: &BuildSession<'_>, dirs: &mut FxHashMap<String, bool>) {
-    let Some((_, program_files, root_dirs)) = session.watch_roots() else { return };
+    let Some((services, program_files, root_dirs)) = session.watch_roots() else { return };
+    watched.source_roots.extend(root_dirs.iter().map(|r| key(&nodepath::resolve(&[r]))));
+    watched.declaration_assets |= services.path_translator.declaration;
     // a file its tsconfig could take in, in the directory of one of its program files, counts
     watched.matchers.extend(session.include_matcher());
     let protected: Vec<String> = root_dirs.iter().map(|r| key(r)).collect();
@@ -867,7 +909,11 @@ fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &Own) -> bo
         return false;
     }
     if watched.root_keys.iter().any(|root| is_under(&k, root)) {
-        return true;
+        // a TypeScript file in a source root (not in a plugin's `watch_dir` too) counts when a program takes it in
+        let source = |root: &String| watched.source_roots.contains(root);
+        let plugin_dir = watched.root_keys.iter().any(|root| is_under(&k, root) && !source(root));
+        let in_source_root = watched.source_roots.iter().any(|root| is_under(&k, root));
+        return plugin_dir || !in_source_root || watched.root_entry_counts(path, name);
     }
     watched.open_dirs.contains(parent) && watched.open_entry_counts(path, name)
 }
@@ -1022,6 +1068,7 @@ struct Scan<'a> {
 
 impl<'a> Scan<'a> {
     fn new(watched: &'a Watched, since: SystemTime, own: &'a Own) -> Scan<'a> {
+        watched.forget_listings();
         let mut reads: FxHashMap<String, Vec<(&str, Seen)>> = FxHashMap::default();
         for (path, seen) in &watched.reads {
             if let Some(parent) = parent_of(path) {
@@ -1183,6 +1230,7 @@ fn watch(
             let Some(events) = collect(&receiver) else { return 0 };
             // a directory watched from now on is compared with the disk from here (the answers below read it)
             let since = SystemTime::now();
+            watched.current().forget_listings();
             // a folder the last build made for its outputs (`out`, `cache`) is its own write
             let (relevant, dropped): (Vec<BurstPath>, Vec<BurstPath>) = events.into_iter().partition(|(p, folder_modify)| {
                 p == RESCAN

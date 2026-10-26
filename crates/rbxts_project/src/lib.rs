@@ -150,6 +150,44 @@ impl IncludeMatcher {
     pub fn possibly_includes(&self, file_name: &str) -> bool {
         self.0.possibly_matches_file_name(&tspath::normalize_slashes(file_name))
     }
+
+    /// Whether a file could be included below the directory `dir` (any spelling): it is in or below a directory the
+    /// `include` globs search (recursively, or that very directory), or above one, or above a file `files` lists.
+    /// TypeScript's `possiblyMatchesDirectoryName`, plus the ancestors a directory created on the way passes through.
+    pub fn possibly_includes_below(&self, dir: &str) -> bool {
+        let config = &*self.0;
+        let cwd = config.get_current_directory();
+        let case_sensitive = config.use_case_sensitive_file_names();
+        let dir_path = tspath::to_path(&tspath::normalize_slashes(dir), cwd, case_sensitive);
+        if config.possibly_matches_directory_name(&dir_path) {
+            return true;
+        }
+        let dir_key = dir_path.to_string();
+        let below = |path: &str| {
+            let key = tspath::to_path(path, cwd, case_sensitive).to_string();
+            key.len() > dir_key.len() && key.starts_with(&dir_key) && key.as_bytes()[dir_key.len()] == b'/'
+        };
+        config.wildcard_directories().is_some_and(|dirs| dirs.iter().any(|(wildcard, _)| below(wildcard)))
+            || config.literal_file_names().iter().any(|file| below(file))
+    }
+
+    /// The tsconfig's root files as its `files`, `include` and `exclude` find them on disk now (TypeScript's
+    /// `getFileNamesFromConfigSpecs`, a new walk of the include globs), as path keys ([`IncludeMatcher::key`]).
+    pub fn current_root_files(&self) -> std::collections::HashSet<String> {
+        let reloaded = self.0.reload_file_names_of_parsed_command_line(&bundled::wrap_fs(osvfs::fs()));
+        reloaded.file_names_by_path().keys().map(ToString::to_string).collect()
+    }
+
+    /// A file's path key, as [`IncludeMatcher::current_root_files`] lists it.
+    pub fn key(&self, file_name: &str) -> String {
+        let config = &*self.0;
+        tspath::to_path(
+            &tspath::normalize_slashes(file_name),
+            config.get_current_directory(),
+            config.use_case_sensitive_file_names(),
+        )
+        .to_string()
+    }
 }
 
 impl Project {
