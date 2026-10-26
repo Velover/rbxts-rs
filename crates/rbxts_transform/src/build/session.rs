@@ -1297,15 +1297,15 @@ impl<'p> BuildSession<'p> {
         report.timings.transform = start.elapsed();
         // the transform diagnostics of the project files not transformed again: their last transform's, so a rebuild
         // reports what a clean build would (a single project's, or a dirty project of a graph whose files all cached)
-        // (file name, diagnostics, plugin diagnostics)
-        let mut cached: Vec<(&str, Vec<P<Diagnostic>>, &[P<Diagnostic>])> = Vec::new();
+        // (transform order, diagnostics, plugin diagnostics)
+        let mut cached: Vec<(u32, Vec<P<Diagnostic>>, &[P<Diagnostic>])> = Vec::new();
         if let Some(c) = &committed {
             let transformed: FxHashSet<P<SourceFile>> = to_transform.iter().copied().collect();
             for &file in &files {
                 if !transformed.contains(&file)
                     && let Some(old) = c.files.get(&file.path().to_string())
                 {
-                    cached.push((file.get().file_name(), old.diagnostics.clone(), &old.plugin_diagnostics));
+                    cached.push((file_indices[&file].0, old.diagnostics.clone(), &old.plugin_diagnostics));
                 }
             }
         }
@@ -1318,14 +1318,15 @@ impl<'p> BuildSession<'p> {
                 .files
                 .iter_mut()
                 .zip(&plugin_reported)
-                .map(|(f, plugin)| crate::compile::DiagnosticOwner {
-                    file: &f.file_name,
+                .zip(&to_transform)
+                .map(|((f, plugin), file)| crate::compile::DiagnosticOwner {
+                    order: file_indices[file].0,
                     diagnostics: &mut f.diagnostics,
                     plugin,
                 })
                 .collect();
-            owners.extend(cached.iter_mut().map(|(file, diagnostics, plugin)| crate::compile::DiagnosticOwner {
-                file,
+            owners.extend(cached.iter_mut().map(|(order, diagnostics, plugin)| crate::compile::DiagnosticOwner {
+                order: *order,
                 diagnostics,
                 plugin,
             }));

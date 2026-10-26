@@ -1265,4 +1265,30 @@ fn a_plugin_diagnostic_is_kept_once_in_the_build() {
     project.write("src/shared/seamdiag2.ts", &second.replace("probeDiagDecl(true)", "probeDiagDecl()"));
     let report = project.build_with(&["stamp", "probe"], Some(1), |_| {});
     assert_eq!(kept(&report), vec![("seamdiag.ts".to_owned(), 1)]);
+
+    // copies whose related information differs only by file compare by path, lowercased on Windows as TypeScript
+    // compares it: `a.ts`'s before `B.ts`'s (and the others'), where the file names would put `B.ts` first
+    project.write("src/shared/a.ts", "export const a = probeDiagDecl(true);\n");
+    project.write("src/shared/B.ts", "export const b = probeDiagDecl(true);\n");
+    let report = project.build_with(&["stamp", "probe"], Some(1), |_| {});
+    assert_eq!(kept(&report), vec![("a.ts".to_owned(), 1)]);
+    std::fs::remove_file(project.root.join("src/shared/a.ts")).unwrap();
+    std::fs::remove_file(project.root.join("src/shared/B.ts")).unwrap();
+
+    // a plugin copy and roblox-ts's that differ only in category: the plugin's is kept, as stock adds transformer
+    // diagnostics before its own and sorts stably
+    project.write(
+        "src/shared/category.ts",
+        "declare const n: number;\nexport const c = probeDiagSame(n, \"Value will be checked against 0, NaN\", true) ? 1 : 0;\n",
+    );
+    let report = project.build_with(&["stamp", "probe"], Some(1), |_| {});
+    let truthy: Vec<Category> = report
+        .files
+        .iter()
+        .filter(|f| f.file_name.ends_with("category.ts"))
+        .flat_map(|f| &f.diagnostics)
+        .filter(|d| d.localize().starts_with("Value will be checked"))
+        .map(|d| d.category())
+        .collect();
+    assert_eq!(truthy, vec![Category::Message]);
 }

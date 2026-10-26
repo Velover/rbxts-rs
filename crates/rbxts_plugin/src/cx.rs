@@ -335,7 +335,8 @@ pub trait CxBackend {
     /// the category and the related information are not compared. Of a plugin diagnostic and the diagnostics equal
     /// to it, reported by this file or any other (another plugin, another file's hook at the same node of a third
     /// file, roblox-ts itself), the one first in TypeScript 5.9's `compareDiagnostics` order is kept: the one with
-    /// more related information; then a compiler diagnostic before a plugin's, then by file name and report order.
+    /// more related information; then a plugin's before a compiler diagnostic (stock adds transformer diagnostics
+    /// first and sorts stably), then by roblox-ts's transform order and report order.
     /// Watch and incremental builds keep the same copy as a clean build: the choice is made over every file's list,
     /// the cached lists of files not transformed again included, as each file's own transform reported it.
     fn report(&mut self, diagnostic: PluginDiagnostic);

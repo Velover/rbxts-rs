@@ -338,8 +338,9 @@ pub(crate) struct FileTransform {
 
 /// One file's transform diagnostics, for [`drop_plugin_duplicates`].
 pub(crate) struct DiagnosticOwner<'a> {
-    /// The file's name: which copy is kept when two are equal in every way does not depend on the build's order.
-    pub file: &'a str,
+    /// The file's place in roblox-ts's transform order, in which TypeScript transformers add their diagnostics: of
+    /// copies equal in every way, the first file's is kept, whichever files a rebuild transforms.
+    pub order: u32,
     pub diagnostics: &'a mut Vec<P<Diagnostic>>,
     /// Which of `diagnostics` plugins reported.
     pub plugin: &'a [P<Diagnostic>],
@@ -348,8 +349,9 @@ pub(crate) struct DiagnosticOwner<'a> {
 /// Keeps one of each plugin diagnostic in the build, as TypeScript's `sortAndDeduplicateDiagnostics` does: of the
 /// diagnostics equal to one a plugin reported (the same file, range, code (a plugin diagnostic's source) and message
 /// text, the hint included; the category and related information do not count), the one first in TypeScript 5.9's
-/// `compareDiagnostics` order is kept, which puts the one with more related information first; then a compiler
-/// diagnostic before a plugin's, then the owning file's name and the position in its list. Compiler diagnostics
+/// `compareDiagnostics` order is kept, which puts the one with more related information first; then a plugin's before
+/// a compiler diagnostic (stock adds the transformers' diagnostics before roblox-ts's own and sorts stably), then the
+/// owning file's place in the transform order and the position in its list. Compiler diagnostics
 /// equal only to each other are left alone, as stock roblox-ts reports them.
 ///
 /// **Watch and incremental builds.** `owners` holds every project file's transform diagnostics, the files
@@ -384,8 +386,8 @@ pub(crate) fn drop_plugin_duplicates(owners: &mut [DiagnosticOwner<'_>]) {
             .iter()
             .min_by(|a, b| {
                 ts_compare_diagnostics(a.2, b.2)
-                    .then(a.3.cmp(&b.3))
-                    .then_with(|| owners[a.0].file.cmp(owners[b.0].file))
+                    .then(b.3.cmp(&a.3))
+                    .then(owners[a.0].order.cmp(&owners[b.0].order))
                     .then(a.1.cmp(&b.1))
             })
             .expect("a group is not empty");
@@ -402,11 +404,12 @@ pub(crate) fn drop_plugin_duplicates(owners: &mut [DiagnosticOwner<'_>]) {
     }
 }
 
-/// TypeScript 5.9's `compareDiagnostics`: file, start, length, code (a plugin diagnostic's source first), message
-/// text, then related information (one with more first, one with none last).
+/// TypeScript 5.9's `compareDiagnostics`: file (its path, lowercased on Windows, as TypeScript compares it), start,
+/// length, code (a plugin diagnostic's source first), message text, then related information (one with more first,
+/// one with none last).
 fn ts_compare_diagnostics(d1: P<Diagnostic>, d2: P<Diagnostic>) -> std::cmp::Ordering {
     use std::cmp::Ordering;
-    let file = |d: P<Diagnostic>| d.file().map(|f| f.file_name().to_owned());
+    let file = |d: P<Diagnostic>| d.file().map(|f| f.path().to_string());
     let source = crate::plugins::diagnostic_source;
     let skip_related = file(d1)
         .cmp(&file(d2))

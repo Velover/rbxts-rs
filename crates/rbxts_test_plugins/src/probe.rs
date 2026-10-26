@@ -669,9 +669,14 @@ impl ProbeInstance {
             }
             "diagsame" => {
                 // `probeDiagSame(value, "<text>")`: a warning with that text at the call, which roblox-ts also
-                // reports there (once in the build)
+                // reports there (once in the build); with a third argument, as a message (the copy kept: stock adds
+                // transformer diagnostics first and sorts stably)
                 let text = arg(1).expect("two arguments").text();
-                cx.warning(call.node, text);
+                if arg(2).is_some() {
+                    cx.report(PluginDiagnostic::new(call.node, rbxts_plugin::ts::Category::Message, text));
+                } else {
+                    cx.warning(call.node, text);
+                }
                 let value = cx.compile_expr(arg(0).expect("an argument"))?;
                 self.claimed(value)
             }
