@@ -193,17 +193,17 @@ impl CompileReport {
     }
 }
 
-/// `fileUsesCommentDirectives`: `@ts-ignore`, `@ts-expect-error` and `@ts-nocheck` need `allowCommentDirectives`.
+/// `fileUsesCommentDirectives`: `@ts-ignore`, `@ts-expect-error` and `@ts-nocheck` need `allowCommentDirectives`. One
+/// diagnostic per `@ts-nocheck` pragma (stock's `sourceFile.pragmas.get("ts-nocheck")`), also one a later `@ts-check`
+/// overrides (TypeScript's check directive is the last of the two).
 pub(crate) fn comment_directive_diagnostics(file: P<SourceFile>) -> Vec<P<Diagnostic>> {
     let message = || tsrs_diagnostics::new_ad_hoc_message(&errors_text_no_comment_directives());
     let mut diagnostics = Vec::new();
     for directive in file.get().comment_directives() {
         diagnostics.push(new_diagnostic(Some(file), directive.loc, message(), &[]));
     }
-    if let Some(directive) = file.get().check_js_directive()
-        && !directive.enabled
-    {
-        diagnostics.push(new_diagnostic(Some(file), directive.range.text_range, message(), &[]));
+    for pragma in file.get().pragmas().iter().filter(|p| p.name == "ts-nocheck") {
+        diagnostics.push(new_diagnostic(Some(file), pragma.comment_range.text_range, message(), &[]));
     }
     diagnostics
 }

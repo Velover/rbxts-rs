@@ -899,3 +899,20 @@ export {};
          \twhile true do\n\t\tbreak\n\tend\nend\nreturn nil\n"
     );
 }
+
+/// `@ts-nocheck` without `allowCommentDirectives`: one error per pragma, as stock roblox-ts
+/// (`fileUsesCommentDirectives`), also when it is repeated or a later `@ts-check` overrides it.
+#[test]
+fn every_ts_nocheck_pragma_is_reported() {
+    let Some(project) = Project::new("nocheck") else { return };
+    project.write("src/shared/twice.ts", "// @ts-nocheck\n// @ts-nocheck\nexport const a = 1;\n");
+    project.write("src/shared/overridden.ts", "// @ts-nocheck\n// @ts-check\nexport const b = 1;\n");
+    let report = project.build(&["stamp", "probe"], |_| {});
+    let errors = errors(&report);
+    let count = |file: &str| {
+        let prefix = format!("error {file}: Usage of `@ts-ignore`, `@ts-expect-error`, and `@ts-nocheck`");
+        errors.iter().filter(|e| e.starts_with(&prefix)).count()
+    };
+    assert_eq!(count("twice.ts"), 2, "{errors:?}");
+    assert_eq!(count("overridden.ts"), 1, "{errors:?}");
+}
