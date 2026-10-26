@@ -54,7 +54,6 @@ fn first_declaration_name(initializer: P<Node>) -> P<Node> {
 /// (`for (x of …)`), without a temporary for the loop value.
 fn transform_for_initializer_expression_direct(
     state: &mut TransformState<'_>,
-    prereqs: &mut Prereqs,
     initializer: P<Node>,
     initializers: &mut Vec<Stmt>,
     value: Expr,
@@ -73,7 +72,11 @@ fn transform_for_initializer_expression_direct(
             initializers.extend(binding_prereqs.statements);
         }
         _ => {
-            let expression = transform_writable_expression(state, prereqs, initializer, false);
+            // rbxts-rs: fixes roblox-ts evaluating the target's prerequisites once, before the loop (see
+            // `transform_for_initializer`)
+            let mut target_prereqs = Prereqs::new();
+            let expression = transform_writable_expression(state, &mut target_prereqs, initializer, false);
+            initializers.extend(target_prereqs.statements);
             initializers.push(create::assignment(expression, AssignmentOperator::Assign, value));
         }
     }
@@ -83,7 +86,6 @@ fn transform_for_initializer_expression_direct(
 /// to `initializers`.
 fn transform_for_initializer(
     state: &mut TransformState<'_>,
-    prereqs: &mut Prereqs,
     initializer: P<Node>,
     initializers: &mut Vec<Stmt>,
 ) -> AnyIdentifier {
@@ -109,7 +111,12 @@ fn transform_for_initializer(
         }
         _ => {
             let value_id = temp_id("v");
-            let expression = transform_writable_expression(state, prereqs, initializer, false);
+            // rbxts-rs: fixes roblox-ts evaluating the target's prerequisites (`for (obj[k()] of …)` with `k()` captured,
+            // `list[i++]`) once, before the loop and before the iterable: JavaScript evaluates the target on every
+            // iteration, after taking the value
+            let mut target_prereqs = Prereqs::new();
+            let expression = transform_writable_expression(state, &mut target_prereqs, initializer, false);
+            initializers.extend(target_prereqs.statements);
             initializers.push(create::assignment(
                 expression,
                 AssignmentOperator::Assign,
@@ -134,11 +141,15 @@ fn transform_in_line_array_binding_pattern(
             ids.push(AnyIdentifier::Temporary(temp_id("")));
             continue;
         };
-        let id = transform_binding_name(state, name, initializers);
+        // rbxts-rs: fixes roblox-ts applying a nested pattern's default after destructuring the value
+        // (`for (const [k, [v] = [7]] of …)` indexed the nil value): the default comes first
+        let mut pattern_initializers = Vec::new();
+        let id = transform_binding_name(state, name, &mut pattern_initializers);
         if let Some(initializer) = element.as_binding_element().initializer() {
             let statement = transform_initializer(state, id.clone().into(), initializer);
             initializers.push(statement);
         }
+        initializers.extend(pattern_initializers);
         ids.push(id);
     }
 }
@@ -216,7 +227,6 @@ enum LoopBuilder {
 /// `buildArrayLoop`: `for _, x in array do`
 fn build_array_loop(
     state: &mut TransformState<'_>,
-    prereqs: &mut Prereqs,
     statements: Vec<Stmt>,
     initializer: P<Node>,
     exp: Expr,
@@ -224,7 +234,7 @@ fn build_array_loop(
     let mut initializers = Vec::new();
     let ids = vec![
         AnyIdentifier::Temporary(temp_id("")),
-        transform_for_initializer(state, prereqs, initializer, &mut initializers),
+        transform_for_initializer(state, initializer, &mut initializers),
     ];
     make_for_loop(ids, exp, initializers, statements)
 }
@@ -232,20 +242,18 @@ fn build_array_loop(
 /// `buildSetLoop`: `for x in set do`; also `buildIterableFunctionLoop`: `for x in iter do`.
 fn build_set_loop(
     state: &mut TransformState<'_>,
-    prereqs: &mut Prereqs,
     statements: Vec<Stmt>,
     initializer: P<Node>,
     exp: Expr,
 ) -> Vec<Stmt> {
     let mut initializers = Vec::new();
-    let ids = vec![transform_for_initializer(state, prereqs, initializer, &mut initializers)];
+    let ids = vec![transform_for_initializer(state, initializer, &mut initializers)];
     make_for_loop(ids, exp, initializers, statements)
 }
 
 /// `buildMapLoop`: `for k, v in map do`, with `[k, v]` patterns bound in line.
 fn build_map_loop(
     state: &mut TransformState<'_>,
-    prereqs: &mut Prereqs,
     statements: Vec<Stmt>,
     initializer: P<Node>,
     exp: Expr,
@@ -273,11 +281,11 @@ fn build_map_loop(
 
     if is_variable_declaration_list(initializer) {
         let mut binding_list = Vec::new();
-        let left = transform_for_initializer(state, prereqs, initializer, &mut binding_list);
+        let left = transform_for_initializer(state, initializer, &mut binding_list);
         initializers.push(create::local(left, Some(pair)));
         initializers.extend(binding_list);
     } else {
-        transform_for_initializer_expression_direct(state, prereqs, initializer, &mut initializers, pair);
+        transform_for_initializer_expression_direct(state, initializer, &mut initializers, pair);
     }
 
     make_for_loop(ids, exp, initializers, statements)
@@ -286,13 +294,12 @@ fn build_map_loop(
 /// `buildStringLoop`: `for char in string.gmatch(s, utf8.charpattern) do`
 fn build_string_loop(
     state: &mut TransformState<'_>,
-    prereqs: &mut Prereqs,
     statements: Vec<Stmt>,
     initializer: P<Node>,
     exp: Expr,
 ) -> Vec<Stmt> {
     let mut initializers = Vec::new();
-    let ids = vec![transform_for_initializer(state, prereqs, initializer, &mut initializers)];
+    let ids = vec![transform_for_initializer(state, initializer, &mut initializers)];
     let expression = create::call(globals::string::gmatch(), vec![exp, globals::utf8::charpattern()]);
     make_for_loop(ids, expression, initializers, statements)
 }
@@ -372,7 +379,7 @@ fn build_iterable_function_lua_tuple_loop(
         let mut loop_statements = Vec::new();
 
         let mut initializer_statements = Vec::new();
-        let value_id = transform_for_initializer(state, prereqs, initializer, &mut initializer_statements);
+        let value_id = transform_for_initializer(state, initializer, &mut initializer_statements);
         let value: Expr = value_id.clone().into();
 
         loop_statements.push(create::local(value_id, Some(create::array(vec![create::call(iter_func_id, vec![])]))));
@@ -396,7 +403,7 @@ fn build_iterable_function_lua_tuple_loop(
     }
 
     let mut binding_initializers = Vec::new();
-    let tuple_id = transform_for_initializer(state, prereqs, initializer, &mut binding_initializers);
+    let tuple_id = transform_for_initializer(state, initializer, &mut binding_initializers);
     statements.splice(0..0, binding_initializers);
 
     let ids: Vec<AnyIdentifier> = iterator_return_ids.iter().cloned().map(AnyIdentifier::Temporary).collect();
@@ -408,7 +415,6 @@ fn build_iterable_function_lua_tuple_loop(
 /// `buildGeneratorLoop`: `for result in gen.next do if result.done then break end …`
 fn build_generator_loop(
     state: &mut TransformState<'_>,
-    prereqs: &mut Prereqs,
     statements: Vec<Stmt>,
     initializer: P<Node>,
     exp: Expr,
@@ -426,13 +432,12 @@ fn build_generator_loop(
 
     if is_variable_declaration_list(initializer) {
         let mut binding_list = Vec::new();
-        let left = transform_for_initializer(state, prereqs, initializer, &mut binding_list);
+        let left = transform_for_initializer(state, initializer, &mut binding_list);
         initializers.push(create::local(left, Some(create::property(loop_value, "value"))));
         initializers.extend(binding_list);
     } else {
         transform_for_initializer_expression_direct(
             state,
-            prereqs,
             initializer,
             &mut initializers,
             create::property(loop_value, "value"),
@@ -453,17 +458,17 @@ impl LoopBuilder {
         exp: Expr,
     ) -> Vec<Stmt> {
         match self {
-            LoopBuilder::Array => build_array_loop(state, prereqs, statements, initializer, exp),
+            LoopBuilder::Array => build_array_loop(state, statements, initializer, exp),
             // `buildIterableFunctionLoop` is the same loop as `buildSetLoop`
             LoopBuilder::Set | LoopBuilder::IterableFunction => {
-                build_set_loop(state, prereqs, statements, initializer, exp)
+                build_set_loop(state, statements, initializer, exp)
             }
-            LoopBuilder::Map => build_map_loop(state, prereqs, statements, initializer, exp),
-            LoopBuilder::String => build_string_loop(state, prereqs, statements, initializer, exp),
+            LoopBuilder::Map => build_map_loop(state, statements, initializer, exp),
+            LoopBuilder::String => build_string_loop(state, statements, initializer, exp),
             LoopBuilder::IterableFunctionLuaTuple(t) => {
                 build_iterable_function_lua_tuple_loop(state, t, prereqs, statements, initializer, exp)
             }
-            LoopBuilder::Generator => build_generator_loop(state, prereqs, statements, initializer, exp),
+            LoopBuilder::Generator => build_generator_loop(state, statements, initializer, exp),
             LoopBuilder::None => Vec::new(),
         }
     }
@@ -516,9 +521,7 @@ pub fn transform_for_of_range_macro(state: &mut TransformState<'_>, node: P<Node
     let mut result = Vec::new();
 
     let mut statements = Vec::new();
-    let mut initializer_prereqs = Prereqs::new();
-    let id = transform_for_initializer(state, &mut initializer_prereqs, for_of.initializer, &mut statements);
-    result.extend(initializer_prereqs.statements);
+    let id = transform_for_initializer(state, for_of.initializer, &mut statements);
 
     let arguments = macro_call.arguments();
     let mut range_prereqs = Prereqs::new();
@@ -577,8 +580,10 @@ pub fn transform_for_of_statement(state: &mut TransformState<'_>, node: P<Node>)
     let mut loop_prereqs = Prereqs::new();
     let loop_statements = loop_builder.build(state, &mut loop_prereqs, statements, for_of.initializer, exp);
 
-    let mut result = loop_prereqs.statements;
-    result.extend(exp_prereqs.statements);
+    // rbxts-rs: fixes roblox-ts placing the loop builder's prerequisites (`local _iterFunc = <iterable>`) before the
+    // iterable's own, which then read temporaries not yet assigned
+    let mut result = exp_prereqs.statements;
+    result.extend(loop_prereqs.statements);
     result.extend(loop_statements);
     result
 }
