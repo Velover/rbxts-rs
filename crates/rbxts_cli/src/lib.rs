@@ -26,6 +26,7 @@
 //!
 //! `RBXTS_PLUGIN_CLAIMS=all` asks every matching plugin for each claimable node and reports double claims.
 
+mod pretty;
 pub mod watch;
 pub mod yargs;
 
@@ -38,10 +39,8 @@ use rbxts_project::{ProjectOptionLayer, ProjectType, STACK_SIZE, nodepath};
 use rbxts_transform::shared::diagnostics::text_diagnostic;
 use rbxts_transform::{CompileOptions, CompileReport, PluginOptions, compile_project_with};
 use tsrs_ast::Diagnostic;
-use tsrs_compiler::diagnosticwriter::{FormattingOptions, format_diagnostic_with_color_and_context};
 use tsrs_compiler::sort_and_deduplicate_diagnostics;
 use tsrs_core::P;
-use tsrs_core::tspath::ComparePathsOptions;
 use tsrs_diagnostics::Category;
 
 const USAGE: &str = "\
@@ -245,7 +244,7 @@ impl Cli {
             Err(_) => {
                 // a `CLIError`, logged with `LogService.writeLine`: the formatted diagnostic, then "\n"
                 let error = text_diagnostic("Unable to find tsconfig.json!", Category::Error);
-                println!("{}", format_diagnostic(error, &cwd));
+                println!("{}", format_diagnostic_logged(error, &cwd));
                 return 1;
             }
         };
@@ -265,7 +264,7 @@ impl Cli {
         let report = compile_project_with(&options, &plugin_options);
         if report.thrown {
             // `DiagnosticError.log`: `formatDiagnostics` of them all, then `LogService.writeLine`'s line feed
-            let text: String = report.diagnostics.iter().map(|d| format_diagnostic(*d, &cwd)).collect();
+            let text: String = report.diagnostics.iter().map(|d| format_diagnostic_logged(*d, &cwd)).collect();
             println!("{text}");
         } else {
             print_report(&report, &cwd, &build);
@@ -277,31 +276,32 @@ impl Cli {
 /// `ts.sys.newLine`.
 const NEW_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
 
-/// One diagnostic as TypeScript's `formatDiagnosticsWithColorAndContext` formats it (ending with a line end), with
-/// the OS's line ends. rbxts-rs: roblox-ts's own diagnostics, ad hoc messages here, show roblox-ts's code
-/// (`TS roblox-ts`, from `createTextDiagnostic` and `createDiagnosticWithLocation`) instead of tsrs's `TS-1`; a plugin
-/// diagnostic with a source (`Plugin::diagnostic_source`, `PluginDiagnostic::source`) shows that source instead
-/// (`TS @flamework-experimental/transformer`).
+/// One diagnostic as roblox-ts's `ts.createDiagnosticReporter(ts.sys, true)` prints it: TypeScript 5's
+/// `formatDiagnosticsWithColorAndContext` ([`pretty`]), ending with a line end, with the OS's line ends and `ts.sys`'s
+/// file name rules (case-insensitive on Windows). rbxts-rs: roblox-ts's own diagnostics, ad hoc messages here, show
+/// roblox-ts's code (`TS roblox-ts`, from `createTextDiagnostic` and `createDiagnosticWithLocation`) instead of tsrs's
+/// `TS-1`; a plugin diagnostic with a source (`Plugin::diagnostic_source`, `PluginDiagnostic::source`) shows that
+/// source instead (`TS @flamework-experimental/transformer`).
 pub fn format_diagnostic(diagnostic: P<Diagnostic>, cwd: &str) -> String {
-    let options = FormattingOptions {
-        compare_paths_options: ComparePathsOptions {
-            use_case_sensitive_file_names: false,
-            current_directory: tsrs_core::tspath::normalize_path(cwd),
-        },
-        new_line: NEW_LINE.to_owned(),
+    format_with(diagnostic, cwd, cfg!(not(windows)))
+}
+
+/// One diagnostic as roblox-ts's `formatDiagnostics` formats it (`DiagnosticError`, `CLIError`): as
+/// [`format_diagnostic`], with file names compared as they are spelled.
+pub fn format_diagnostic_logged(diagnostic: P<Diagnostic>, cwd: &str) -> String {
+    format_with(diagnostic, cwd, true)
+}
+
+fn format_with(diagnostic: P<Diagnostic>, cwd: &str, case_sensitive: bool) -> String {
+    let code = |diagnostic: P<Diagnostic>| {
+        if diagnostic.code() == -1 {
+            // a plugin diagnostic with a source shows it in the code slot, as the TS transformers' do (`code: " <name>"`)
+            format!(" {}", rbxts_transform::plugins::diagnostic_source(diagnostic).unwrap_or("roblox-ts"))
+        } else {
+            diagnostic.code().to_string()
+        }
     };
-    let mut out = Vec::new();
-    format_diagnostic_with_color_and_context(&mut out, diagnostic, &options);
-    let mut text = String::from_utf8_lossy(&out).into_owned();
-    if diagnostic.code() == -1 {
-        // a plugin diagnostic with a source shows it in the code slot, as the TS transformers' do (`code: " <name>"`)
-        let source = rbxts_transform::plugins::diagnostic_source(diagnostic).unwrap_or("roblox-ts");
-        text = text.replacen("\u{1b}[90m TS-1: ", &format!("\u{1b}[90m TS {source}: "), 1);
-    }
-    if !text.ends_with(NEW_LINE) {
-        text.push_str(NEW_LINE);
-    }
-    text
+    pretty::format_diagnostic(diagnostic, &pretty::Format { cwd, case_sensitive, new_line: NEW_LINE, code: &code })
 }
 
 /// Prints the build's outcome: warnings, plugin messages (`--verbose`), diagnostics with TypeScript's pretty

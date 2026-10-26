@@ -3,3 +3,5 @@
 * text=auto eol=lf
 # The json fixture's CRLF asset: copied as it is, so committed and checked out with its CRLF line ends.
 crates/rbxts_transform/tests/fixtures/json/**/crlf.json -text
+# Stock rbxtsc stdout, CRLF line ends and colour codes included: compared byte for byte.
+crates/rbxts_cli/tests/fixtures/*/expected-stdout.txt -text
