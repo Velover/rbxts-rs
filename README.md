@@ -230,7 +230,8 @@ resolution sees packages installed or upgraded since the last build.
   `finish` listed, tested or read): an event only they care about starts a rebuild when an answer changed (a file's
   glob transforms that file, a setup glob runs setup, a `finish` read runs `finish`). A trailing 100 ms debounce, `--usePolling`, `--events json` (`build-start` and
   `build-end` lines), and a restart of the watcher process past `RBXTS_WATCH_MEMORY_LIMIT_MB` (default 2048; 0 turns
-  it off), since programs are never freed. A crashed rebuild is reported and the next one starts clean.
+  it off), since programs are never freed. A crashed rebuild is reported and the next one starts clean. The status lines carry the local time in
+  Node's en-US form (`7:05:09 PM`), where Node follows the system's ICU locale.
 
 **Deviations from roblox-ts** (beside those listed in `build::outputs`): a case-only rename of a source renames its
 output too, so the Rojo instance follows; roblox-ts writes into the existing file and keeps its old name (a roblox-ts
