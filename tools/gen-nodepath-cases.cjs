@@ -42,6 +42,21 @@ const winFragments = [
 	"index.",
 	"C:relative",
 	"E:\\Work\\Proj\\node_modules\\@rbxts\\pkg\\out\\index.d.ts",
+	// UNC edge forms: doubled separators inside the root, a server alone, three leading separators, device paths
+	"//server//share",
+	"//server//share//x",
+	"\\\\server\\\\share\\x",
+	"///server/share",
+	"//server",
+	"//server/",
+	"\\\\?\\C:\\x",
+	"//./pipe/x",
+	// characters whose lowercase has another UTF-16 length (`İ`), a final sigma, a surrogate pair
+	"E:\\İx\\a",
+	"E:\\İx\\b\\cİd",
+	"e:\\i̇x\\B",
+	"E:\\Work\\Proj\\SRC\\ΑΣ",
+	"E:\\Work\\Proj\\src\\😀\\x",
 ];
 const posixFragments = [
 	"",

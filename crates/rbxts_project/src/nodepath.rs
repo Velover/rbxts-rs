@@ -175,26 +175,40 @@ pub mod win32 {
         c.is_ascii_alphabetic()
     }
 
-    /// The root of `path`: (device, is_absolute, root_end in bytes). Devices are `C:` or `\\server\share`.
-    fn root(path: &str) -> (&str, bool, usize) {
+    /// Node's root match of a path (bytes).
+    #[derive(Default)]
+    struct Root {
+        /// As Node spells it: `C:`, `\\server\share` (one backslash between the parts, however many separators the
+        /// path has), or a device root `\\.` / `\\?`; empty without one.
+        device: String,
+        is_absolute: bool,
+        root_end: usize,
+        /// For a `\\server\share` match (a device root's too): where the share part ends. `dirname` keeps it.
+        unc_end: Option<usize>,
+        /// `\\.\…` or `\\?\…`: the device is `\\.` or `\\?` and the root ends after its separator.
+        device_root: bool,
+    }
+
+    fn root(path: &str) -> Root {
         let b = path.as_bytes();
         let len = b.len();
         if len == 0 {
-            return ("", false, 0);
+            return Root::default();
         }
         let c0 = b[0] as char;
         if len == 1 {
-            return if is_sep(c0) { ("", true, 1) } else { ("", false, 0) };
+            return if is_sep(c0) { Root { is_absolute: true, root_end: 1, ..Root::default() } } else { Root::default() };
         }
         if is_sep(c0) {
             if is_sep(b[1] as char) {
-                // UNC: \\server\share
+                // UNC: \\server\share (separators between the parts collapse), or a device root \\.\ or \\?\
                 let mut j = 2;
                 let last = j;
                 while j < len && !is_sep(b[j] as char) {
                     j += 1;
                 }
                 if j < len && j != last {
+                    let first_part = &path[last..j];
                     let mut last = j;
                     while j < len && is_sep(b[j] as char) {
                         j += 1;
@@ -204,26 +218,37 @@ pub mod win32 {
                         while j < len && !is_sep(b[j] as char) {
                             j += 1;
                         }
-                        if j == len || j != last {
-                            return (&path[..j], true, j);
+                        if first_part == "." || first_part == "?" {
+                            return Root {
+                                device: format!("\\\\{first_part}"),
+                                is_absolute: true,
+                                root_end: 4,
+                                unc_end: Some(j),
+                                device_root: true,
+                            };
                         }
+                        return Root {
+                            device: format!("\\\\{first_part}\\{}", &path[last..j]),
+                            is_absolute: true,
+                            root_end: j,
+                            unc_end: Some(j),
+                            device_root: false,
+                        };
                     }
                 }
             }
-            return ("", true, 1);
+            return Root { is_absolute: true, root_end: 1, ..Root::default() };
         }
         if is_drive_letter(c0) && b[1] == b':' {
-            if len > 2 && is_sep(b[2] as char) {
-                return (&path[..2], true, 3);
-            }
-            return (&path[..2], false, 2);
+            let is_absolute = len > 2 && is_sep(b[2] as char);
+            return Root {
+                device: path[..2].to_owned(),
+                is_absolute,
+                root_end: if is_absolute { 3 } else { 2 },
+                ..Root::default()
+            };
         }
-        ("", false, 0)
-    }
-
-    /// The device of a root as Node spells it: `\\server\share` with backslashes.
-    fn device_text(device: &str) -> String {
-        device.replace('/', "\\")
+        Root::default()
     }
 
     /// Already what `resolve` would return: `C:\` and single backslashes, no `.` or `..` segments, no trailing
@@ -252,14 +277,11 @@ pub mod win32 {
             return if path == "/" { "\\".into() } else { path.into() };
         }
         let b = path.as_bytes();
+        let Root { device, is_absolute, root_end, unc_end, device_root } = root(path);
         // A UNC path that is only `\\server\share` gets a trailing separator.
-        if is_sep(b[0] as char) && is_sep(b[1] as char) {
-            let (device, _, root_end) = root(path);
-            if !device.is_empty() && root_end == len && !is_sep(b[len - 1] as char) {
-                return format!("{}\\", device_text(device));
-            }
+        if unc_end == Some(len) && !device_root {
+            return format!("{device}\\");
         }
-        let (device, is_absolute, root_end) = root(path);
         let mut tail = if root_end < len {
             super::normalize_segments(&path[root_end..], !is_absolute, is_sep, SEP)
         } else {
@@ -280,7 +302,6 @@ pub mod win32 {
                 return format!(".\\{tail}");
             }
         }
-        let device = device_text(device);
         if device.is_empty() {
             if is_absolute { format!("\\{tail}") } else { tail }
         } else if is_absolute {
@@ -370,17 +391,19 @@ pub mod win32 {
                 owned = cwd();
                 &owned
             } else {
+                // Node: the current directory unless its first two characters name another device and a
+                // backslash follows them
                 let cwd = cwd();
-                let (cwd_device, _, _) = root(&cwd);
-                owned = if cwd_device.eq_ignore_ascii_case(&resolved_device) {
-                    cwd.clone()
-                } else {
+                let head: String = cwd.chars().take(2).collect();
+                owned = if head.to_lowercase() != resolved_device.to_lowercase() && cwd.as_bytes().get(2) == Some(&b'\\')
+                {
                     format!("{resolved_device}\\")
+                } else {
+                    cwd
                 };
                 &owned
             };
-            let (device, is_absolute, root_end) = root(path);
-            let device = device_text(device);
+            let Root { device, is_absolute, root_end, .. } = root(path);
             if !device.is_empty() {
                 if !resolved_device.is_empty() {
                     if device.to_lowercase() != resolved_device.to_lowercase() {
@@ -433,25 +456,52 @@ pub mod win32 {
         if from_orig == to_orig {
             return String::new();
         }
-        // Node lowercases with `toLowerCase` and indexes UTF-16 units; for ASCII paths bytes are the same thing.
+        // Node lowercases with `toLowerCase` and indexes UTF-16 units; for ASCII paths bytes are the same thing
         if from_orig.is_ascii() && to_orig.is_ascii() {
             let from_l = from_orig.to_ascii_lowercase();
             let to_l = to_orig.to_ascii_lowercase();
             return relative_core(from_l.as_bytes(), to_l.as_bytes(), b'\\', &to_orig, |a, b| to_orig[a..b].to_owned());
         }
-        let lower = |s: &str| -> Vec<char> {
-            s.chars()
-                .map(|c| {
-                    let mut l = c.to_lowercase();
-                    match (l.next(), l.next()) {
-                        (Some(one), None) => one,
-                        _ => c,
-                    }
-                })
-                .collect()
-        };
-        let to_chars: Vec<char> = to_orig.chars().collect();
-        relative_core(&lower(&from_orig), &lower(&to_orig), '\\', &to_orig, |a, b| to_chars[a..b].iter().collect())
+        // `toLowerCase` is Unicode's full lowercase mapping (`İ` becomes two units), as Rust's `to_lowercase`
+        let from_l = from_orig.to_lowercase();
+        let to_l = to_orig.to_lowercase();
+        if from_l == to_l {
+            return String::new();
+        }
+        let units = |s: &str| -> Vec<u16> { s.encode_utf16().collect() };
+        let (from_u, to_u, from_lu, to_lu) = (units(&from_orig), units(&to_orig), units(&from_l), units(&to_l));
+        if from_u.len() != from_lu.len() || to_u.len() != to_lu.len() {
+            return relative_by_segments(&from_orig, &to_orig);
+        }
+        let slice = |a: usize, b: usize| String::from_utf16_lossy(&to_u[a.min(b).min(to_u.len())..b.min(to_u.len())]);
+        relative_core(&from_lu, &to_lu, u16::from(b'\\'), &to_orig, slice)
+    }
+
+    /// Node 23's `win32.relative` when lowercasing changes a path's length in UTF-16 units: segment by segment.
+    fn relative_by_segments(from_orig: &str, to_orig: &str) -> String {
+        let mut from: Vec<&str> = from_orig.split('\\').collect();
+        let mut to: Vec<&str> = to_orig.split('\\').collect();
+        if from.last() == Some(&"") {
+            from.pop();
+        }
+        if to.last() == Some(&"") {
+            to.pop();
+        }
+        let length = from.len().min(to.len());
+        let i = (0..length).find(|&i| from[i].to_lowercase() != to[i].to_lowercase()).unwrap_or(length);
+        if i == 0 {
+            return to_orig.to_owned();
+        }
+        if i == length {
+            if to.len() > length {
+                return to[i..].join("\\");
+            }
+            if from.len() > length {
+                return "..\\".repeat(from.len() - 1 - i) + "..";
+            }
+            return String::new();
+        }
+        "..\\".repeat(from.len() - i) + &to[i..].join("\\")
     }
 
     /// Node's `win32.relative` after both paths are resolved, over lowercased units; `slice` cuts `to`'s original
@@ -580,16 +630,15 @@ pub mod win32 {
         if is_sep(b[0] as char) {
             root_end = Some(1);
             offset = 1;
-            if is_sep(b[1] as char) {
-                let (device, _, end) = root(path);
-                if !device.is_empty() {
-                    if end == len {
-                        // The whole path is a UNC root.
-                        return path;
-                    }
-                    root_end = Some(end + 1);
-                    offset = end + 1;
+            if is_sep(b[1] as char)
+                && let Some(end) = root(path).unc_end
+            {
+                if end == len {
+                    // The whole path is a UNC root.
+                    return path;
                 }
+                root_end = Some(end + 1);
+                offset = end + 1;
             }
         } else if is_drive_letter(b[0] as char) && b[1] == b':' {
             let end = if len > 2 && is_sep(b[2] as char) { 3 } else { 2 };
