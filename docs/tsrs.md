@@ -63,11 +63,29 @@ Re-check these after an update; they are where tsrs's behaviour reaches our outp
   TS5 through `get_contextual_signature` (see `util/is_method.rs`).
 - `implements` entries are TypeReference nodes. `getIndexTypeOfType` takes a key type. A property access through an
   index signature gives an `__index` symbol. There is no `__String`.
+- TypeScript 7 gives the related information of `TS1007` ("The parser expected to find a '}' to match the '{' token
+  here.") a length of 0; rbxtsc prints it with TypeScript 5's length of 1 (`rbxts_cli/src/pretty.rs`), so its
+  underline matches stock's.
 - **Threading:** the checker is not `Send`, and `get_type_checker` takes a non-reentrant guard. Checking needs a
   512 MiB stack. Set only `checkers`: `single_threaded` also makes parsing and binding serial.
 
 ## TypeScript 5 behaviour rbxts-rs does not reproduce
-Known, accepted differences from stock roblox-ts on TypeScript 5. None changes a build's correctness.
+Known, accepted differences from stock roblox-ts on TypeScript 5, each inherent to TypeScript 7. None makes an output
+wrong; a few make a build fail where stock's passes, and the entry says how to write it for both.
+
+- **Export order.** A module's export table (`return { … }`) and a namespace's exports list their names in the order
+  TypeScript 7 gives a module's exports (tsrs sorts them with `compare_symbols_exported`), where TypeScript 5 keeps
+  declaration order. The same names reach the same values; only the field order differs.
+- **Union and mapped key order.** Where an output lists the properties of a union or a mapped type, TypeScript 7's
+  type ids order them, not TypeScript 5's (`util/ts5_property_order.rs` restores TypeScript 5's order where it can be
+  derived from the program). It cannot for a union whose members have the very same symbols (`PXY | PYX`: the first
+  member's order is used), a mapped type whose `as` clause makes several names from one key (`` `get${K}` |
+  `set${K}` ``: TypeScript 7's order), and guards and the plugin facade's `getFields`, which use the raw order (as
+  TypeScript 5's `Record`/`Pick` key order follows its own type ids). Flamework sorts where the order reaches its
+  output.
+- **`baseUrl`.** TypeScript 7 removed `baseUrl`, so an import that only resolves through it is `error TS2307: Cannot
+  find module`. Use `paths` with paths relative to the tsconfig (`"paths": { "*": ["./src/*"] }`), which both
+  resolve the same way.
 
 - **Declaration-emit symlinks.** With `declaration: true`, TypeScript 5's pre-emit diagnostics run the declaration
   emitter, and when it needs an `import("…")` specifier for a type from another module, its module-specifier code
