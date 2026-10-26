@@ -17,6 +17,7 @@ tsrs_diagnostics.workspace = true
 mimalloc-safe.workspace = true
 notify.workspace = true
 memory-stats.workspace = true
+chrono.workspace = true
 serde_json.workspace = true
 rustc-hash.workspace = true
 

@@ -45,6 +45,8 @@ dragonbox_ecma = "0.1.12"
 # restart past a memory limit).
 notify = { version = "8.2.0", default-features = false }
 memory-stats = "1.2.0"
+# rbxts_cli watch mode: the status line's local time (TypeScript's `toLocaleTimeString()`).
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 
 # A debug checker is unusably slow, so even dev builds are optimised (as in tsrs).
 [profile.dev]
