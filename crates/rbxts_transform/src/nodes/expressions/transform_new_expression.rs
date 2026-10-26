@@ -9,6 +9,7 @@ use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
 use crate::util::ensure_transform_order::ensure_transform_order;
+use crate::util::evaluation::effects::{effects_commute, get_effects, get_effects_of_statements};
 use crate::util::types::get_first_construct_symbol;
 use crate::util::validate_not_any::validate_not_any_type;
 
@@ -30,7 +31,14 @@ pub fn transform_new_expression(state: &mut TransformState<'_>, prereqs: &mut Pr
         };
     }
 
-    let expression = convert_to_indexable_expression(transform_expression(state, prereqs, class_expression));
-    let args = ensure_transform_order(state, prereqs, node.arguments());
+    let mut expression = convert_to_indexable_expression(transform_expression(state, prereqs, class_expression));
+    // rbxts-rs: fixes roblox-ts reading the constructor after the arguments' prerequisites ran: JavaScript evaluates
+    // it first, so `new C((C = B, x))` constructs the old `C`. It is captured when those prerequisites could change it.
+    let mut args_prereqs = Prereqs::new();
+    let args = ensure_transform_order(state, &mut args_prereqs, node.arguments());
+    if !effects_commute(&get_effects(&expression), &get_effects_of_statements(&args_prereqs.statements)) {
+        expression = prereqs.push_to_var(expression, "class");
+    }
+    prereqs.push_list(args_prereqs.statements);
     create::call(create::property(expression, "new"), args)
 }
