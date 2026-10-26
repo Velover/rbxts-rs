@@ -207,6 +207,9 @@ struct Watched {
     config_inputs: FxHashSet<String>,
     recursive: BTreeSet<String>,
     flat: BTreeSet<String>,
+    /// The flat directories inside a recursive watch ([`Watched::dedupe`]): watched themselves while that recursive
+    /// watch is not active (it failed: a folder that cannot be listed), so their events are not lost.
+    covered: BTreeSet<String>,
     /// Path keys of the directories whose events are dropped (output roots, include folder).
     ignored_roots: Vec<String>,
     /// Path keys of the recursive roots (source roots, plugin `watch_dir`s): any event under them counts (but
@@ -530,23 +533,27 @@ impl Watched {
         self.package_of(path_key).is_some()
     }
 
-    /// One watch per directory, whatever its spelling; none for a directory inside a recursive watch.
+    /// One watch per directory, whatever its spelling; none for a directory inside a recursive watch, which goes to
+    /// `covered` instead (watched itself while that recursive watch is not active).
     fn dedupe(&mut self) {
         let mut seen = FxHashSet::default();
         self.recursive.retain(|dir| seen.insert(key(dir)));
         let recursive_keys = seen;
         let mut seen = FxHashSet::default();
+        let mut covered = Vec::new();
         self.flat.retain(|dir| {
             let k = key(dir);
             let mut ancestor = Some(k.as_str());
             while let Some(a) = ancestor {
                 if recursive_keys.contains(a) {
+                    covered.push(dir.clone());
                     return false;
                 }
                 ancestor = parent_of(a);
             }
             seen.insert(k)
         });
+        self.covered = covered.into_iter().collect();
     }
 }
 
@@ -816,7 +823,7 @@ impl Subscriptions {
         if debug() {
             eprintln!("[rbxtsc watch] recursive {:?}\n[rbxtsc watch] flat {:?}", watched.recursive, watched.flat);
         }
-        let (wanted, missing): (FxHashSet<Watch>, FxHashSet<Watch>) = watched
+        let (mut wanted, missing): (FxHashSet<Watch>, FxHashSet<Watch>) = watched
             .recursive
             .iter()
             .map(|d| (d.clone(), true))
@@ -827,13 +834,43 @@ impl Subscriptions {
         let missing: FxHashSet<String> = missing.into_iter().map(|(d, _)| d).collect();
         let mut stale: Vec<String> = missing.iter().filter(|d| !self.missing.contains(*d)).cloned().collect();
         self.missing = missing;
-        for (dir, _) in self.active.iter().filter(|w| !wanted.contains(w)) {
-            let _ = self.watcher.unwatch(Path::new(dir));
+        // the covered flat directories (inside a recursive watch) that exist: watched themselves while that recursive
+        // watch is not active (it failed), so their events are not lost
+        let covered: Vec<Watch> =
+            watched.covered.iter().filter(|d| Path::new(d).is_dir()).map(|d| (d.clone(), false)).collect();
+        // every watch no longer wanted at all goes first: notify keeps one watch per path, so an unwatch after a new
+        // watch of the same path would remove that one
+        for watch @ (dir, _) in &self.active {
+            if !wanted.contains(watch) && !covered.contains(watch) {
+                let _ = self.watcher.unwatch(Path::new(dir));
+            }
         }
-        let new: Vec<&(String, bool)> = wanted.iter().filter(|w| !self.active.contains(w)).collect();
-        let mut active: FxHashSet<Watch> = self.active.intersection(&wanted).cloned().collect();
-        if !new.is_empty() {
-            let scan = Scan::new(watched, since, own);
+        let mut active: FxHashSet<Watch> = FxHashSet::default();
+        let mut scan = None;
+        // the recursive watches, then the flat ones with the covered ones whose recursive watch is not active
+        for recursive in [true, false] {
+            if !recursive {
+                let roots: Vec<String> = active.iter().filter(|(_, r)| *r).map(|(d, _)| key(d)).collect();
+                let under_root = |dir: &str| {
+                    let k = key(dir);
+                    roots.iter().any(|root| k == *root || is_under(&k, root))
+                };
+                for watch @ (dir, _) in &covered {
+                    if !under_root(dir) {
+                        wanted.insert(watch.clone());
+                    } else if self.active.contains(watch) && !roots.contains(&key(dir)) {
+                        // covered again by a recursive watch above it (one of the same path replaced it already)
+                        let _ = self.watcher.unwatch(Path::new(dir));
+                    }
+                }
+            }
+            active.extend(self.active.iter().filter(|w| w.1 == recursive && wanted.contains(w)).cloned());
+            let new: Vec<&(String, bool)> =
+                wanted.iter().filter(|w| w.1 == recursive && !self.active.contains(w)).collect();
+            if new.is_empty() {
+                continue;
+            }
+            let scan = scan.get_or_insert_with(|| Scan::new(watched, since, own));
             for watch @ (dir, recursive) in new {
                 let mode = if *recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
                 // a directory is compared with the build once: when first watched, whether the watch is made or
@@ -1326,6 +1363,64 @@ mod tests {
         subscriptions.update(&watched, SystemTime::now(), &own);
         assert_eq!(tried.lock().unwrap().len(), 2, "an active watch is not made again");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A watcher that refuses recursive watches while its flag is set.
+    struct RefuseRecursive(Arc<Mutex<bool>>);
+
+    impl notify::Watcher for RefuseRecursive {
+        fn new<F: notify::EventHandler>(_: F, _: notify::Config) -> notify::Result<Self> {
+            Ok(RefuseRecursive(Arc::default()))
+        }
+
+        fn watch(&mut self, _: &Path, mode: RecursiveMode) -> notify::Result<()> {
+            if mode == RecursiveMode::Recursive && *self.0.lock().unwrap() {
+                Err(notify::Error::generic("refused"))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn unwatch(&mut self, _: &Path) -> notify::Result<()> {
+            Ok(())
+        }
+
+        fn kind() -> notify::WatcherKind {
+            notify::WatcherKind::NullWatcher
+        }
+    }
+
+    /// A flat directory inside a wanted recursive watch is watched itself while that recursive watch is not active
+    /// (it failed), and no longer once it is.
+    #[test]
+    fn a_flat_directory_under_a_failed_recursive_watch_is_watched_itself() {
+        let root = std::env::temp_dir().join(format!("rbxts-rs-watch-covered-{}", std::process::id()));
+        let sub = root.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let refuse = Arc::new(Mutex::new(true));
+        let mut subscriptions = Subscriptions {
+            watcher: Box::new(RefuseRecursive(Arc::clone(&refuse))),
+            active: FxHashSet::default(),
+            missing: FxHashSet::default(),
+            failed: FxHashSet::default(),
+            last_stale: FxHashSet::default(),
+        };
+        let mut watched = Watched::default();
+        let tree = (path_text(&root), true);
+        let flat = (path_text(&sub), false);
+        watched.recursive.insert(tree.0.clone());
+        watched.flat.insert(flat.0.clone());
+        watched.dedupe();
+        assert!(watched.flat.is_empty(), "inside the recursive watch");
+        let own = FxHashMap::default();
+        subscriptions.update(&watched, SystemTime::now(), &own);
+        assert!(!subscriptions.active.contains(&tree));
+        assert!(subscriptions.active.contains(&flat), "watched itself: {:?}", subscriptions.active);
+        *refuse.lock().unwrap() = false;
+        subscriptions.update(&watched, SystemTime::now(), &own);
+        assert!(subscriptions.active.contains(&tree));
+        assert!(!subscriptions.active.contains(&flat), "covered again: {:?}", subscriptions.active);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
