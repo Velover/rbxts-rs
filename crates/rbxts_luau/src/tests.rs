@@ -95,7 +95,8 @@ fn precedence_and_parentheses() {
             b(b(a(), "..", bb()), "..", c()),
             b(b(a(), "//", bb()), "%", c()),
         ]),
-        // an if-expression as a binary's left operand of equal precedence keeps no parentheses (as in TypeScript)
+        // an if-expression is parenthesized as any binary operand: roblox-ts left it bare on the left of `or`, which
+        // then joined its `else` branch
         print(vec![
             b(if_expr(a(), bb(), c()), "+", d()),
             b(d(), "or", if_expr(a(), bb(), c())),
@@ -109,7 +110,7 @@ fn precedence_and_parentheses() {
         "print((a + b) * c, a - (b - c), a - b - c)\nprint(a ^ (b ^ c), (-a) ^ b, a ^ (-b))\n\
          print(not (a == b), -(a + b), #a[1])\nprint(a and b or c, (a or b) and c, a or b and c)\n\
          print(a .. (b .. c), a .. b .. c, a // b % c)\n\
-         print((if a then b else c) + d, d or (if a then b else c), if a then b else c or d)\n\
+         print((if a then b else c) + d, d or (if a then b else c), (if a then b else c) or d)\n\
          print(not not a, -(if a then b else c))\nprint(a, (a + b), (a + b) * c)\n"
     );
 }

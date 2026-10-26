@@ -437,8 +437,11 @@ fn expr(v: &Value) -> R<Expr> {
 mod tests {
     /// The hand-written edge cases (`tools/luau-edge-cases.cjs`), as roblox-ts's renderer renders them.
     #[test]
-    // rbxts-rs: one deliberate difference, in edge/literalCalls: a literal that is indexed or called keeps its
-    // parentheses (`("abc"):upper()`), where roblox-ts renders `"abc":upper()`, which does not parse
+    // rbxts-rs: deliberate differences (the fixture's expected text has rbxts-rs's form):
+    // - edge/literalCalls: a literal that is indexed or called keeps its parentheses (`("abc"):upper()`), where
+    //   roblox-ts renders `"abc":upper()`, which does not parse;
+    // - edge/precedence: an if-expression left of `or` is parenthesized (`(if a then b else c) or d`), where roblox-ts
+    //   leaves it bare and the `or` joins the `else` branch
     fn edge_cases_render_as_roblox_ts_does() {
         let fixture = include_str!("../fixtures/luau-edge-cases.jsonl");
         let mut count = 0;

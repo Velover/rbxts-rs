@@ -568,7 +568,10 @@ impl Renderer<'_> {
                 }
             }
             Expr::If(node) => {
-                let parens = needs_parentheses(IF_EXPRESSION_PRECEDENCE, ctx);
+                // rbxts-rs: fixes roblox-ts (luau-ast's `needsParentheses`) leaving an if-expression bare as the left
+                // operand of `or`, its equal: `if a then b else c or d` parses as `if a then b else (c or d)`. The
+                // `else` branch takes everything after it, so an if-expression is parenthesized as any binary operand.
+                let parens = matches!(ctx, Ctx::Binary { .. }) || needs_parentheses(IF_EXPRESSION_PRECEDENCE, ctx);
                 if parens {
                     self.out.push('(');
                 }
