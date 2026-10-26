@@ -456,6 +456,10 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
             for path in &report.artifacts_deleted {
                 let _ = writeln!(out, "  deleted {path}");
             }
+            // `info` messages (rbxtsc prints them with --verbose), such as `decline-audit`'s
+            for message in &report.plugin_messages {
+                let _ = writeln!(out, "  info {message}");
+            }
         }
         if args.timings {
             for plugin in &report.plugin_timings {

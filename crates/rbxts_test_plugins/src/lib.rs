@@ -11,6 +11,9 @@
 //! - [`identity`]: claims calls, accesses (`property_key`), assignments or most expression kinds, and lowers them as
 //!   roblox-ts would (`compile_expr`, `compile_call`, `compile_binary`, `compile_object_literal`): its output must
 //!   equal a build without plugins.
+//! - [`decline`]: `decline-all`, offered everything (every call, access, assignment, class, expression and statement
+//!   kind) and declining it all: its output must equal a build without plugins; `decline-audit` also reports what it
+//!   was not offered.
 //! - [`inputs`]: `probe-inputs`, every build input and persistence method of DESIGN §14 (environment, globs,
 //!   recorded finish reads, `remove_empty_dir`, encoded file parts, a diagnostic source).
 //! - [`transformer`]: claims a tsconfig transform and does nothing (the `--writeTransformedFiles` fixture).
@@ -20,6 +23,7 @@
 #[path = "../../rbxts_plugin/tests/support/stamp.rs"]
 pub mod stamp;
 
+pub mod decline;
 pub mod identity;
 pub mod inputs;
 pub mod probe;
@@ -50,6 +54,8 @@ pub const NAMES: &[&str] = &[
     "identity-key",
     "identity-assign",
     "identity-fallback",
+    "decline-all",
+    "decline-audit",
     "probe-inputs",
     "scan",
     "scan-reader",
@@ -80,6 +86,8 @@ pub fn by_name(name: &str) -> Option<Box<dyn DynPlugin>> {
         "identity-key" => erase(identity::Identity(identity::IdentityMode::Key)),
         "identity-assign" => erase(identity::Identity(identity::IdentityMode::Assign)),
         "identity-fallback" => erase(identity::Identity(identity::IdentityMode::Fallback)),
+        "decline-all" => erase(decline::DeclineAll { audit: false }),
+        "decline-audit" => erase(decline::DeclineAll { audit: true }),
         "probe-inputs" => erase(inputs::InputsProbe),
         "scan" => erase(scan::Scan),
         "scan-reader" => erase(scan::ScanReader),

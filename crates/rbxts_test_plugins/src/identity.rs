@@ -79,7 +79,7 @@ const FALLBACK_KINDS: &[Kind] = &[
 ];
 
 /// Every property name the program's accesses use (`obj.name`, `obj["name"]`).
-fn accessed_names(cx: &SetupCx<'_>) -> Vec<&'static str> {
+pub(crate) fn accessed_names(cx: &SetupCx<'_>) -> Vec<&'static str> {
     fn walk(node: P<Node>, out: &mut rustc_hash::FxHashSet<&'static str>) {
         match node.kind() {
             Kind::PropertyAccessExpression => {
