@@ -31,6 +31,35 @@ const { createNodeModulesPathMapping } = require(path.join(RT, "out/Project/func
 const { getRootDirs } = require(path.join(RT, "out/Shared/util/getRootDirs"));
 const { getCanonicalFileName } = require(path.join(RT, "out/Shared/util/getCanonicalFileName"));
 
+// `compileFiles` is not exported in pieces, so its setup part (the Rojo resolver and its warnings, the input file
+// list, the project type and the runtime library checks) is copied below. Refuse to dump when the checkout's
+// `compileFiles.js` no longer holds what was copied, so a roblox-ts change cannot go unnoticed.
+(function checkCopiedSetup() {
+	const source = fs.readFileSync(path.join(RT, "out/Project/functions/compileFiles.js"), "utf8");
+	const copied = [
+		"rojo_resolver_1.RojoResolver.fromPath(data.rojoConfigPath) : rojo_resolver_1.RojoResolver.synthetic(outDir)",
+		"for (const warning of rojoResolver.getWarnings()) {",
+		".filter(sourceFile => !sourceFile.isDeclarationFile && !program.isSourceFileFromExternalLibrary(sourceFile))",
+		"(0, checkRojoConfig_1.checkRojoConfig)(data, rojoResolver, (0, getRootDirs_1.getRootDirs)(compilerOptions), inputFileNames, pathTranslator);",
+		"if (!path_1.default.normalize(sourceFile.fileName).startsWith(data.nodeModulesPath)) {",
+		"const pkgRojoResolvers = compilerOptions.typeRoots.map(rojo_resolver_1.RojoResolver.synthetic);",
+		"(0, createNodeModulesPathMapping_1.createNodeModulesPathMapping)(compilerOptions.typeRoots);",
+		"data.projectOptions.type) !== null && _b !== void 0 ? _b : inferProjectType(data, rojoResolver);",
+		"if (data.isPackage) {\n        return constants_1.ProjectType.Package;\n    }\n    else if (rojoResolver.isGame) {",
+		"if (projectType !== constants_1.ProjectType.Package && data.rojoConfigPath === undefined) {\n        return emitResultFailure(\"Non-package projects must have a Rojo project file!\");",
+		"runtimeLibRbxPath = rojoResolver.getRbxPathFromFilePath(path_1.default.join(data.projectOptions.includePath, \"RuntimeLib.lua\"));",
+		"return emitResultFailure(\"Rojo project contained no data for include folder!\");",
+		"else if (rojoResolver.getNetworkType(runtimeLibRbxPath) !== rojo_resolver_1.NetworkType.Unknown) {\n            return emitResultFailure(\"Runtime library cannot be in a server-only or client-only container!\");",
+		"else if (rojoResolver.isIsolated(runtimeLibRbxPath)) {\n            return emitResultFailure(\"Runtime library cannot be in an isolated container!\");",
+	];
+	const missing = copied.filter(text => !source.replace(/\r\n/g, "\n").includes(text));
+	if (missing.length > 0) {
+		console.error("roblox-ts's compileFiles.js changed; update the setup this tool copies from it. Missing:");
+		for (const text of missing) console.error(`  ${text}`);
+		process.exit(2);
+	}
+})();
+
 function parseArgs() {
 	const args = process.argv.slice(2);
 	const positional = [];
