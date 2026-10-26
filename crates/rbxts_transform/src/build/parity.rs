@@ -5,13 +5,17 @@
 //!   configs and include folder, with `node_modules` linked, never copied). Each step edits `work/` and hands the
 //!   touched paths to the session (`Watcher::apply(ChangeSet)` of the design).
 //! - After each step, the sources are copied to a fresh `clean-<n>/` and built there by a new session, **seeded with
-//!   the watcher's committed plugin states from before the step** (the state the watcher's build started from).
+//!   the watcher's committed plugin states from before the step** (the state the watcher's build started from; for
+//!   incremental builds, those of the last build that committed, which the next process starts from).
 //! - **A step that builds:** every file of the two trees must be equal byte for byte (outputs, assets, plugin
 //!   artifacts and state files; the incremental state is left out, as it names absolute paths), and the clean build
 //!   must succeed too.
 //! - **A step that fails:** the watcher's tree must be unchanged (nothing written), and its error diagnostics must
 //!   equal the clean build's. With project references, per project: one that built has the clean build's outputs,
 //!   one that failed or was blocked wrote nothing.
+//! - **Every step:** every diagnostic, warnings included, equals the clean build's, each as often as it is
+//!   reported (a watch rebuild, or a new process of an incremental build, reports the warnings of the files it does
+//!   not transform again too).
 //!
 //! Scripts are JSON: `{"prepare": [action, …], "steps": [{"name": …, "do": [action, …], "expect": "ok" | "error"}]}`,
 //! where `prepare` edits the watched copy before the initial build. Actions: `{"write":
@@ -385,7 +389,8 @@ pub fn error_texts(report: &CompileReport, root: &Path) -> Vec<String> {
     out
 }
 
-/// Every diagnostic of a report (each category) and its warnings, as [`error_texts`] names them, sorted.
+/// Every diagnostic of a report (each category) and its warnings, as [`error_texts`] names them, sorted, each as
+/// often as it is reported.
 pub fn diagnostic_texts(report: &CompileReport, root: &Path) -> Vec<String> {
     let root = root.to_string_lossy().replace('\\', "/").to_lowercase();
     let mut out: Vec<String> = report
@@ -408,9 +413,9 @@ pub fn diagnostic_texts(report: &CompileReport, root: &Path) -> Vec<String> {
         .chain(report.warnings.iter().map(|w| format!("warning {}", w.replace('\\', "/").to_lowercase().replace(&root, ""))))
         .collect();
     out.sort();
-    out.dedup();
     out
 }
+
 
 /// Runs the script; the results of the initial build (step 0) and of every step.
 ///
@@ -485,8 +490,12 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
         tree.into_iter().filter(|(path, _)| !path_is_source(path, &options.copy)).collect()
     };
     let mut watch_out: Option<PathBuf> = None;
+    // incremental: the plugin states of the last build that committed. A new process starts from what that build
+    // persisted; one that failed committed nothing, and its session (a new one, which read no plugin state) does not
+    // stand for what the next process starts from
+    let mut last_committed = session.committed_states();
     for (index, step) in all_steps.iter().enumerate() {
-        let seed = session.committed_states();
+        let seed = if options.incremental { last_committed.clone() } else { session.committed_states() };
         let before = outputs_of(snapshot(&work));
         let touched = match apply(&work, &step.actions) {
             Ok(touched) => touched,
@@ -501,6 +510,9 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
             session = BuildSession::new(compile_options(&work, None), &plugin_options, false);
         }
         let (report, summary) = session.build(&touched);
+        if options.incremental && !report.has_errors() {
+            last_committed = session.committed_states();
+        }
         let watch_ms = start.elapsed().as_secs_f64() * 1e3;
         if !report.out_dir.is_empty() {
             watch_out = Some(PathBuf::from(&report.out_dir));
@@ -619,8 +631,9 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
                 result.problems.push(format!("diagnostics differ: watch {watch_errors:?} / clean {clean_errors:?}"));
             }
         }
-        // every diagnostic, warnings included, equals the clean build's (a watch rebuild, or a new process of an
-        // incremental build, reports the warnings of the files it does not transform again)
+        // every diagnostic, warnings included and each as often as it is reported, equals the clean build's (a watch
+        // rebuild, or a new process of an incremental build, reports the warnings of the files it does not transform
+        // again)
         {
             let moved_out = clean.join("out").to_string_lossy().replace('\\', "/").to_lowercase();
             let watch_all = diagnostic_texts(&report, &work);

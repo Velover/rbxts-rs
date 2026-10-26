@@ -77,12 +77,29 @@ fn run_fixture_ignoring(
     copy: &[&str],
     ignore_unknown: bool,
 ) -> Option<Vec<StepResult>> {
+    run_script_copying(fixture, fixture, label, plugins, incremental, copy, ignore_unknown)
+}
+
+/// [`run_fixture`] with the script `<script>.script.json` over the fixture `fixture`.
+fn run_script(fixture: &str, script: &str, label: &str, plugins: &[&str], incremental: bool) -> Option<Vec<StepResult>> {
+    run_script_copying(fixture, script, label, plugins, incremental, COPY, plugins.is_empty())
+}
+
+fn run_script_copying(
+    fixture: &str,
+    script: &str,
+    label: &str,
+    plugins: &[&str],
+    incremental: bool,
+    copy: &[&str],
+    ignore_unknown: bool,
+) -> Option<Vec<StepResult>> {
     let Some(node_modules) = node_modules() else {
         rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return None;
     };
     let script =
-        parity::parse_script(&std::fs::read_to_string(fixtures().join(format!("{fixture}.script.json"))).unwrap())
+        parity::parse_script(&std::fs::read_to_string(fixtures().join(format!("{script}.script.json"))).unwrap())
             .unwrap();
     let scratch = std::env::temp_dir().join(format!("rbxts-rs-watch-{label}-{}", std::process::id()));
     let plugins: Vec<Box<dyn DynPlugin>> =
@@ -213,6 +230,13 @@ fn plugin_diagnostic_duplicates_rebuild_as_clean_builds() {
     };
     let edit = results.iter().find(|r| r.name == "seamdiag.ts: an unrelated edit").expect("the step");
     assert_eq!(edit.transformed, 1, "the other file's diagnostics are replayed, not transformed again");
+    // ties on related information, and file-name case (`a3.ts`, `B.ts`)
+    run_script("plugindiag", "plugindiag-ties", "plugindiag-ties", &["stamp", "probe"], false);
+    run_script("plugindiag", "plugindiag-ties", "plugindiag-ties-inc", &["stamp", "probe"], true);
+    // roblox-ts errors in the file holding the kept copy, and in the other; the incremental builds after a failing
+    // one start from the last committed state (the stamp plugin's build counter)
+    run_script("plugindiag", "plugindiag-errors", "plugindiag-errors", &["stamp", "probe"], false);
+    run_script("plugindiag", "plugindiag-errors", "plugindiag-errors-inc", &["stamp", "probe"], true);
 }
 
 #[test]
