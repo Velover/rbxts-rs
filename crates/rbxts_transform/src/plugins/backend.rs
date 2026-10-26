@@ -5,7 +5,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rbxts_luau::{Effects, Expr, Stmt, create};
+use rbxts_luau::{AnyIdentifier, Effects, Expr, Stmt, create};
 use rbxts_plugin::erased::DynInstance;
 use rbxts_plugin::{
     Aborted, AccessPosition, Arg, BinOp, CallKind, CallSite, Callee, Cx, CxBackend, FileInfo, GlobMatcher, JsDocTag,
@@ -22,6 +22,7 @@ use tsrs_diagnostics::{Category, new_ad_hoc_message};
 use super::HookKind;
 use super::dispatch;
 use super::facts;
+use super::hoist_check;
 use super::file_state::{EffectMark, HookFrame, SpillableHoist, SpillableLocal, declared_locals};
 use super::host::PluginHost;
 use crate::classes::prereqs::{Prereqs, temp_id};
@@ -452,9 +453,46 @@ impl HookBackend<'_, '_> {
         self.note_effect("calling hoist");
         self.touch();
         let id = self.seam_temp(hint);
+        self.state.plugin_file.top_level_temps.insert(id.id);
         self.state.plugin_file.main_chunk_locals += 1;
         self.state.plugin_file.root_inserts.push(create::local(id.clone(), Some(value)));
         Expr::TemporaryIdentifier(id)
+    }
+
+    /// Refuses a value to hoist that uses something the current top-level statement declares, which it would not read
+    /// before that statement ([`hoist_check`]): an internal error naming the plugin, and `true`.
+    fn refuse_hoist(&mut self, what: &str, value: &Expr) -> bool {
+        let start = self.state.plugin_file.root_temp_start;
+        let top_level = std::mem::take(&mut self.state.plugin_file.top_level_temps);
+        let problem = hoist_check::hoist_problem(self.state, self.anchor, value, start, &top_level);
+        self.state.plugin_file.top_level_temps = top_level;
+        let Some(problem) = problem else { return false };
+        self.misuse(&format!(
+            "{what}: the value {problem}; a hoist is declared before the top-level statement around its node, where \
+             it would not read the same (hoist only values that need nothing that statement declares)"
+        ));
+        true
+    }
+
+    /// Temporaries `stmts` declare at the file's top level, before every later statement (for [`hoist_check`]).
+    fn note_top_level_temps(&mut self, stmts: &[Stmt]) {
+        for statement in stmts {
+            match statement {
+                Stmt::VariableDeclaration(node) => {
+                    for id in &node.left {
+                        if let AnyIdentifier::Temporary(t) = id {
+                            self.state.plugin_file.top_level_temps.insert(t.id);
+                        }
+                    }
+                }
+                Stmt::FunctionDeclaration(node) if node.localize => {
+                    if let Expr::TemporaryIdentifier(t) = &node.name {
+                        self.state.plugin_file.top_level_temps.insert(t.id);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Records the internal error for a call the phase table refuses, and says whether it was refused.
@@ -683,6 +721,7 @@ impl CxBackend for HookBackend<'_, '_> {
             self.note_effect("calling insert_before_root_statement");
             self.touch();
             self.state.plugin_file.main_chunk_locals += stmts.iter().map(declared_locals).sum::<u32>();
+            self.note_top_level_temps(&stmts);
             self.state.plugin_file.root_inserts.extend(stmts);
         }
     }
@@ -711,19 +750,20 @@ impl CxBackend for HookBackend<'_, '_> {
             self.note_effect("calling header");
             self.touch();
             self.state.plugin_file.main_chunk_locals += stmts.iter().map(declared_locals).sum::<u32>();
+            self.note_top_level_temps(&stmts);
             self.state.plugin_file.header.extend(stmts);
         }
     }
 
     fn hoist(&mut self, value: Expr, hint: &str) -> Expr {
-        if self.refused("hoist", Row::Lowering) {
+        if self.refused("hoist", Row::Lowering) || self.refuse_hoist("hoist", &value) {
             return create::nil();
         }
         self.hoist_unchecked(value, hint)
     }
 
     fn hoist_spillable(&mut self, value: Expr, hint: &str) -> Expr {
-        if self.refused("hoist_spillable", Row::Lowering) {
+        if self.refused("hoist_spillable", Row::Lowering) || self.refuse_hoist("hoist_spillable", &value) {
             return create::nil();
         }
         // spilled into one table local at the end of the file if the main chunk is past Luau's limit (`spill`)
@@ -736,7 +776,7 @@ impl CxBackend for HookBackend<'_, '_> {
     }
 
     fn hoist_spillable_named(&mut self, value: Expr, name: &str) -> Expr {
-        if self.refused("hoist_spillable_named", Row::Lowering) {
+        if self.refused("hoist_spillable_named", Row::Lowering) || self.refuse_hoist("hoist_spillable_named", &value) {
             return create::nil();
         }
         if !rbxts_luau::is_valid_identifier(name) {
@@ -763,7 +803,13 @@ impl CxBackend for HookBackend<'_, '_> {
         let anchor = self.anchor;
         let before = self.state.diagnostics.diagnostics.len();
         match dispatch::import_named(self.state, self.host, anchor, specifier, export) {
-            Ok(value) if !has_errors_since(self.state, before) => Ok(value),
+            Ok(value) if !has_errors_since(self.state, before) => {
+                // declared with the imports, at the top of the file
+                if let Expr::TemporaryIdentifier(t) = &value {
+                    self.state.plugin_file.top_level_temps.insert(t.id);
+                }
+                Ok(value)
+            }
             Ok(_) => Err(Aborted),
             Err(message) => Err(self.misuse(&message)),
         }

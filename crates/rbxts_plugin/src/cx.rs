@@ -177,9 +177,14 @@ pub trait CxBackend {
     fn header(&mut self, stmts: Vec<LuauStmt>);
     /// A local holding `value`, declared before the current root statement; returns the local.
     ///
-    /// The value is declared before the root statement, so it must not depend on anything emitted in the current
-    /// scope. That includes prereqs of the hook and of `compile_*` calls (`hoist(compile_expr(x ?? y))` uses a
-    /// temporary declared later). Hoist only values that need no prereqs; the compiler does not detect this yet.
+    /// The value is declared before the root statement (the top-level statement around the hook's node), so it must
+    /// not use anything that statement declares: a temporary its lowering made so far, the prereqs of the hook and of
+    /// `compile_*` calls included (`hoist(compile_expr(x ?? y))` uses a temporary declared later), a parameter or local
+    /// of the code around the node (`hoist(compile_expr(p))` in a function with parameter `p`), or `self` / `super`
+    /// inside a function or class. There it would read a global instead. The compiler refuses such a value (for
+    /// `hoist_spillable` and `hoist_spillable_named` too): an internal error naming the plugin, and `nil`. What is
+    /// declared before the root statement is fine: earlier top-level locals, other hoists, plugin imports, header and
+    /// root-insertion locals, and a function's own locals inside a function value.
     fn hoist(&mut self, value: LuauExpr, hint: &str) -> LuauExpr;
     /// As `hoist`, but the compiler may turn the local into a field of one spill table when the main chunk would
     /// pass Luau's 200-local limit; returns the expression to use either way.

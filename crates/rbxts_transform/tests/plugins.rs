@@ -614,6 +614,85 @@ fn seam_misuse_is_refused_naming_the_plugin() {
     assert!(!project.out_exists());
 }
 
+/// A hoist is declared before the top-level statement around the hook's node: a value that uses something that
+/// statement declares (a temporary of its lowering, a parameter, a local, `self`) is refused, naming the plugin;
+/// values that use only what is declared before it (earlier statements, other hoists, plugin imports) are not.
+#[test]
+fn a_hoist_of_what_its_statement_declares_is_refused() {
+    let Some(project) = Project::new("hoists") else { return };
+    project.write(
+        "src/shared/hoists.ts",
+        "const top = mk();\n\
+         export const fine1 = probeHoist(top);\n\
+         export const fine2 = probeHoist([probeHoist(sideEffect())]);\n\
+         export const fine3 = probeSpill(() => { const inner = mk(); return nx ?? inner; });\n\
+         export const bad1 = probeHoist(nx ?? sideEffect());\n\
+         export function bad2(p: number) {\n\
+         \treturn probeSpill(p);\n\
+         }\n\
+         export class Bad3 {\n\
+         \tm() {\n\
+         \t\treturn probeNamed(this);\n\
+         \t}\n\
+         }\n\
+         for (const i of [1, 2]) {\n\
+         \tprint(probeHoist([i]));\n\
+         }\n\
+         export const bad5 = (() => { const loc = mk(); return probeHoist(loc); })();\n",
+    );
+    let report = project.build(&["stamp", "probe"], |_| {});
+    let prefix = "error hoists.ts: rbxts-rs internal error: plugin `probe`:";
+    let tail = "; a hoist is declared before the top-level statement around its node, where it would not read the \
+                same (hoist only values that need nothing that statement declares)";
+    let found: Vec<String> = errors(&report).into_iter().filter(|e| e.contains("hoists.ts")).collect();
+    assert_eq!(
+        found,
+        vec![
+            format!(
+                "{prefix} hoist: the value uses a temporary declared in the current statement (a prerequisite's, or \
+                 one roblox-ts made while lowering it){tail}"
+            ),
+            format!(
+                "{prefix} hoist_spillable: the value uses `p`, which is declared in the current statement (a parameter \
+                 or a local of the code around its node){tail}"
+            ),
+            format!(
+                "{prefix} hoist_spillable_named: the value uses `self`, which is a local of the function or class \
+                 around its node{tail}"
+            ),
+            format!(
+                "{prefix} hoist: the value uses `i`, which is declared in the current statement (a parameter or a \
+                 local of the code around its node){tail}"
+            ),
+            format!(
+                "{prefix} hoist: the value uses `loc`, which is declared in the current statement (a parameter or a \
+                 local of the code around its node){tail}"
+            ),
+        ]
+    );
+    assert!(!project.out_exists());
+
+    // the values that use only what is declared before the statement are hoisted
+    project.write(
+        "src/shared/hoists.ts",
+        "const top = mk();\n\
+         export const fine1 = probeHoist(top);\n\
+         export const fine2 = probeHoist([probeHoist(sideEffect())]);\n\
+         export const fine3 = probeSpill(() => { const inner = mk(); return nx ?? inner; });\n",
+    );
+    let report = project.build(&["stamp", "probe"], |_| {});
+    assert_eq!(errors(&report), Vec::<String>::new());
+    let file = report.files.iter().find(|f| f.file_name.ends_with("hoists.ts")).unwrap();
+    assert_eq!(
+        file.luau.as_deref().unwrap(),
+        "-- Compiled with roblox-ts v3.0.0\nlocal top = mk()\nlocal _hoisted = top\nlocal fine1 = _hoisted\n\
+         local _hoisted_1 = sideEffect()\nlocal _hoisted_2 = { _hoisted_1 }\nlocal fine2 = _hoisted_2\n\
+         local _spilled = function()\n\tlocal inner = mk()\n\tlocal _condition = nx\n\tif _condition == nil then\n\
+         \t\t_condition = inner\n\tend\n\treturn _condition\nend\nlocal fine3 = _spilled\nreturn {\n\tfine1 = fine1,\n\
+         \tfine2 = fine2,\n\tfine3 = fine3,\n}\n"
+    );
+}
+
 #[test]
 fn luau_decides_every_file_plugins_emitted_into() {
     let Some(project) = Project::new("locals") else { return };

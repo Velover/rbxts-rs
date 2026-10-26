@@ -1331,11 +1331,12 @@ pub struct RootMark {
 
 /// Starts a statement of the file's top level (`parent` is the source file); `None` otherwise or without plugins.
 #[inline]
-pub fn root_statement_start(state: &TransformState<'_>, parent: Option<P<Node>>) -> Option<RootMark> {
+pub fn root_statement_start(state: &mut TransformState<'_>, parent: Option<P<Node>>) -> Option<RootMark> {
     state.plugins?;
     if parent?.kind() != Kind::SourceFile {
         return None;
     }
+    state.plugin_file.root_temp_start = crate::classes::prereqs::next_temp_id();
     Some(RootMark { diagnostics_start: state.diagnostics.diagnostics.len(), runtime_lib_uses: state.runtime_lib_uses })
 }
 

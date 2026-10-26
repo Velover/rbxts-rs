@@ -28,6 +28,11 @@ impl TempIds {
         TemporaryIdentifier { name: name.into(), id, facts: Facts::default() }
     }
 
+    /// The id the next temporary gets: every temporary made before has a smaller one.
+    pub fn next_id(&self) -> u32 {
+        self.next
+    }
+
     /// [`TempIds::temp_id`] as an expression.
     pub fn expr(&mut self, name: impl Into<String>) -> Expr {
         Expr::TemporaryIdentifier(self.temp_id(name))

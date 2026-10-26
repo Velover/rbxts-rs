@@ -158,6 +158,12 @@ pub struct PluginFileState {
     identifier_names: OnceCell<FxHashSet<&'static str>>,
     /// The file's identifier texts, sorted (`file_identifier_texts`).
     identifier_texts: OnceCell<std::rc::Rc<[&'static str]>>,
+    /// The id of the first temporary made in the current top-level statement (`hoist` refuses a value using a later
+    /// one, unless it is in `top_level_temps`).
+    pub root_temp_start: u32,
+    /// Temporaries the seam declared at the file's top level before the current statement: hoists, plugin imports,
+    /// header and root-insertion locals.
+    pub top_level_temps: FxHashSet<u32>,
     /// `insert_before_statement` statements, by the TS statement they go before; taken when that statement's list
     /// is lowered.
     pub before_statement: FxHashMap<P<Node>, Vec<Stmt>>,

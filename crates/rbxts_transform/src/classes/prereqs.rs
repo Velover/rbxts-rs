@@ -18,6 +18,11 @@ pub fn reset_temp_ids() {
     TEMP_IDS.with(|ids| *ids.borrow_mut() = TempIds::new());
 }
 
+/// rbxts-rs: the id the next temporary of this file gets (every temporary made so far has a smaller one).
+pub fn next_temp_id() -> u32 {
+    TEMP_IDS.with(|ids| ids.borrow().next_id())
+}
+
 /// `luau.tempId(name)`
 pub fn temp_id(name: impl Into<String>) -> TemporaryIdentifier {
     TEMP_IDS.with(|ids| ids.borrow_mut().temp_id(name))

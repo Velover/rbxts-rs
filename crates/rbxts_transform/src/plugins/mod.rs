@@ -138,6 +138,7 @@ pub mod host;
 pub mod lifecycle;
 
 mod facts;
+mod hoist_check;
 mod lowering;
 pub(crate) mod spill;
 
