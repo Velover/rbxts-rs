@@ -1,7 +1,8 @@
 //! `classes/DiagnosticService.ts`: the diagnostics of one file's transform.
 //!
 //! rbxts-rs: roblox-ts keeps one static list for the whole build; here each file's `TransformState` owns one, and
-//! the pipeline collects them in transform order. `addSingleDiagnostic`'s once-per-code rule is per file.
+//! the pipeline collects them in transform order. roblox-ts's `addSingleDiagnostic` is not ported: nothing in
+//! roblox-ts calls it.
 //!
 //! `addDiagnosticWithCache` (once per compilation and symbol) does not depend on the checker count: its caches are
 //! keyed by [`ReportOnce`], each file records the keys of what it reported, and the build drops a file's diagnostic
@@ -17,7 +18,6 @@ use tsrs_diagnostics::Category;
 #[derive(Default)]
 pub struct DiagnosticService {
     pub diagnostics: Vec<P<Diagnostic>>,
-    single_diagnostics: FxHashSet<String>,
     /// rbxts-rs: the node kinds (or forms) reported as not yet supported, in report order.
     pub unsupported: Vec<String>,
     /// rbxts-rs: the diagnostics reported once per compilation, with their keys ([`drop_reported_earlier`]).
@@ -30,16 +30,14 @@ impl DiagnosticService {
         self.diagnostics.push(diagnostic);
     }
 
-    /// `addSingleDiagnostic`: only the first diagnostic with this message.
-    pub fn add_single_diagnostic(&mut self, diagnostic: P<Diagnostic>) {
-        let key = diagnostic.message().map(|m| m.text().to_owned()).unwrap_or_default();
-        if self.single_diagnostics.insert(key) {
-            self.add_diagnostic(diagnostic);
-        }
-    }
-
     /// `addDiagnosticWithCache`'s report, once its cache took `key`.
+    ///
+    /// rbxts-rs: an error, always (roblox-ts's three are: `noAny`, enum and namespace merging). A build drops a file's
+    /// once-reported diagnostic an earlier file reported, and keeps what is left with the file: an incremental or
+    /// watch build that does not transform the earlier file again reports what was kept. That is only what a clean
+    /// build reports because a file with an error never commits, so nothing once-keyed is ever kept.
     pub fn add_diagnostic_once(&mut self, key: ReportOnce, diagnostic: P<Diagnostic>) {
+        assert_eq!(diagnostic.category(), Category::Error, "a once-per-compilation diagnostic must be an error");
         self.once.push((key, diagnostic));
         self.add_diagnostic(diagnostic);
     }
