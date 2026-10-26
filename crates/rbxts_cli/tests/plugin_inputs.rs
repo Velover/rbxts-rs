@@ -351,7 +351,9 @@ impl Drop for Denied {
 }
 
 /// A directory `finish` lists that cannot be listed (its watch fails at every update) while builds stop before
-/// `finish` (a type error) and a file `finish` read changes: one rebuild, not one after another. Fixing the error
+/// `finish` (a type error) and a file `finish` read changes: one rebuild, not one after another. Then a new entry in
+/// a directory setup globs, still broken: one rebuild too (a failed watch is not a new one at every update; the
+/// recheck's finish-only rule doesn't cover setup's reads, so this one catches that rule alone). Fixing the error
 /// rebuilds once, with the changed file; once the directory can be listed again, its watch is made and its entries
 /// are seen.
 #[test]
@@ -377,10 +379,15 @@ fn a_failed_input_watch_and_builds_failing_before_finish_start_no_rebuild_loop()
     let ends = watcher.ends_until_quiet();
     assert!(ends.len() <= 1, "{} rebuilds after one change: {:?}", ends.len(), ends.first());
     assert!(ends.iter().all(|end| end["ok"] == false), "{ends:?}");
+    project.write("setup-glob/x.txt", "x");
+    let ends = watcher.ends_until_quiet();
+    assert!(ends.len() <= 1, "{} rebuilds after a new setup-glob entry: {:?}", ends.len(), ends.first());
+    assert!(ends.iter().all(|end| end["ok"] == false), "{ends:?}");
 
     project.write("src/shared/d.ts", &good);
     watcher.next_end();
     assert!(project.read("probe-inputs.txt").contains("file Some(\"changed while broken\\n\")"));
+    assert!(project.read("probe-inputs.txt").contains("x.txt"), "{}", project.read("probe-inputs.txt"));
     watcher.assert_quiet(quiet);
 
     // listable again: the next build lists it and its watch is made, then an entry is seen
