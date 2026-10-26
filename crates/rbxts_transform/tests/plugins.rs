@@ -372,19 +372,16 @@ fn hook_failures_fail_the_build_and_write_nothing() {
         assert!(!project.out_exists(), "{plugin}: nothing is written");
         assert!(!project.root.join("probe-report.json").exists(), "{plugin}: no artifact");
         if *plugin == "probe-panic" {
-            // the checker may be inconsistent after a panic: no later file of that checker is transformed (with one
-            // checker, no later file at all); the other checkers' files are
-            assert!(report.files.iter().any(|f| f.file_name.ends_with("/failures.ts")));
-            assert!(
-                report.fatal[0].starts_with("the transform stopped after an internal error in")
-                    && report.fatal[0].contains("failures.ts; later files"),
-                "{:?}",
-                report.fatal
-            );
+            // the checker may be inconsistent after a panic: its group stops, and the report is cut at the first panic
+            // in transform order, so any checker count reports what one checker does
+            let names = |r: &rbxts_transform::CompileReport| -> Vec<String> { r.files.iter().map(|f| f.file_name.clone()).collect() };
+            assert_eq!(report.files.last().unwrap().file_name.rsplit('/').next(), Some("failures.ts"));
+            assert_eq!(report.fatal.len(), 1, "{:?}", report.fatal);
+            assert!(report.fatal[0].ends_with("failures.ts; later files were not transformed"), "{:?}", report.fatal);
             let one = project.build_with(&["stamp", plugin], Some(1), |_| {});
             assert_eq!(errors(&one), *expected, "{plugin}, one checker");
-            assert_eq!(one.files.last().unwrap().file_name.rsplit('/').next(), Some("failures.ts"));
-            assert!(one.fatal[0].ends_with("failures.ts; later files were not transformed"), "{:?}", one.fatal);
+            assert_eq!(names(&one), names(&report), "{plugin}: the same files for one checker and for several");
+            assert_eq!(one.fatal, report.fatal, "{plugin}: the same fatal text for one checker and for several");
             assert!(!project.out_exists(), "{plugin}, one checker: nothing is written");
         }
     }

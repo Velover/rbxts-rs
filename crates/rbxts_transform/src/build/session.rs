@@ -1254,8 +1254,8 @@ impl<'p> BuildSession<'p> {
                 report.fatal.extend(fatal);
                 return (report, summary, committed, Some(loaded));
             }
-            // the files transformed, in transform order (a group stopped by an internal error leaves the rest of its files
-            // out; the build then fails)
+            // the files transformed, in transform order (an internal error leaves every later file out; the build then
+            // fails)
             let mut done = Vec::with_capacity(to_transform.len());
             let mut once = Vec::with_capacity(to_transform.len());
             let mut classify = Vec::new();

@@ -51,15 +51,15 @@ pub(crate) struct GroupPlugins<'a, 'p> {
 
 /// What the transform of a build's files gave.
 pub(crate) struct Transformed {
-    /// Per file, in the order of the files given: its transform, or `None` when its checker's group stopped before it
-    /// (an internal error in an earlier file of that group).
+    /// Per file, in the order of the files given: its transform, or `None` after the first file whose transform
+    /// panicked (an internal error), whichever checker had it.
     pub files: Vec<Option<FileTransform>>,
     /// The plugins' hook times, summed over the groups (thread time: with several checkers they overlap).
     pub hook_times: Option<HookTimes>,
     /// Errors that stop the build before any file is transformed (the macro manager, unsupported plugin interests):
     /// every group meets the same ones, and the first group's are kept. `files` is then empty.
     pub setup_fatal: Option<Vec<String>>,
-    /// The groups stopped by an internal error: the message, in the order of the stopping files.
+    /// The transform stopped by an internal error: its message (at most one).
     pub stopped: Vec<String>,
 }
 
@@ -110,7 +110,7 @@ pub(crate) fn transform_files(
         setup_fatal: None,
         stopped: Vec::new(),
     };
-    let mut stopped: Vec<(usize, String)> = Vec::new();
+    let mut first_panic: Option<usize> = None;
     for output in outputs {
         if let Some(fatal) = output.setup_fatal {
             transformed.setup_fatal.get_or_insert(fatal);
@@ -130,28 +130,23 @@ pub(crate) fn transform_files(
             }
         }
         for (i, file) in output.files {
-            if file.panicked {
-                let name = files[i].get().file_name();
-                stopped.push((
-                    i,
-                    if count == 1 {
-                        format!("the transform stopped after an internal error in {name}; later files were not transformed")
-                    } else {
-                        format!(
-                            "the transform stopped after an internal error in {name}; later files of its checker were not \
-                             transformed"
-                        )
-                    },
-                ));
+            if file.panicked && first_panic.is_none_or(|first| i < first) {
+                first_panic = Some(i);
             }
             transformed.files[i] = Some(file);
         }
     }
     if transformed.setup_fatal.is_some() {
         transformed.files.iter_mut().for_each(|f| *f = None);
+    } else if let Some(first) = first_panic {
+        // rbxts-rs: a group stops at its first panic (its checker may be inconsistent, FOLLOWUPS T1); the other groups
+        // go on. What the report holds is cut at the first panic in transform order, so it is what one checker gives,
+        // for any checker count: every file before it, and nothing after it.
+        transformed.files.iter_mut().skip(first + 1).for_each(|f| *f = None);
+        let name = files[first].get().file_name();
+        transformed.stopped =
+            vec![format!("the transform stopped after an internal error in {name}; later files were not transformed")];
     }
-    stopped.sort_by_key(|(i, _)| *i);
-    transformed.stopped = stopped.into_iter().map(|(_, message)| message).collect();
     transformed
 }
 
