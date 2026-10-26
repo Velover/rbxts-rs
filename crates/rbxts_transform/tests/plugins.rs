@@ -38,12 +38,9 @@ use rbxts_transform::{CompileOptions, CompileReport, PluginOptions, compile_proj
 use tsrs_compiler::diagnosticwriter::flatten_diagnostic_message;
 use tsrs_diagnostics::Category;
 
-const DEFAULT_NODE_MODULES: &str = "E:/Projects/TS/Flamework/roblox-ts-test/roblox-ts/tests/node_modules";
 
 fn node_modules() -> Option<PathBuf> {
-    let path = std::env::var_os("RBXTS_RS_FIXTURE_NODE_MODULES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_NODE_MODULES));
+    let path = rbxts_test_support::node_modules().unwrap_or_default();
     path.join("@rbxts").join("compiler-types").is_dir().then_some(path)
 }
 
@@ -87,7 +84,7 @@ impl Project {
     /// A copy of the entries `names` of the fixture at `fixture`, with a `node_modules` junction.
     fn copy_of(fixture: &Path, names: &[&str], label: &str) -> Option<Project> {
         let Some(node_modules) = node_modules() else {
-            eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+            rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
             return None;
         };
         let root = std::env::temp_dir().join(format!("rbxts-rs-plugins-{label}-{}", std::process::id()));

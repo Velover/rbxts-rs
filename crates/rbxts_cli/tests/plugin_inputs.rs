@@ -16,7 +16,6 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-const DEFAULT_NODE_MODULES: &str = "E:/Projects/TS/Flamework/roblox-ts-test/roblox-ts/tests/node_modules";
 const CHILD_ARGS: &str = "RBXTS_TEST_CHILD_ARGS";
 
 /// The compiler with `probe-inputs`, when this process was started as one (its arguments in `RBXTS_TEST_CHILD_ARGS`,
@@ -47,11 +46,9 @@ struct Project(PathBuf);
 
 impl Project {
     fn new(label: &str, incremental: bool) -> Option<Project> {
-        let node_modules = std::env::var_os("RBXTS_RS_FIXTURE_NODE_MODULES")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_NODE_MODULES));
+        let node_modules = rbxts_test_support::node_modules().unwrap_or_default();
         if !node_modules.join("@rbxts").join("compiler-types").is_dir() {
-            eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+            rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
             return None;
         }
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../rbxts_transform/tests/watch_fixtures/basic");

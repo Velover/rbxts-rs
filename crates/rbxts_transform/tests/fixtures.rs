@@ -110,95 +110,11 @@ use rbxts_transform::{CompileOptions, CompileReport, PluginOptions, compile_proj
 use tsrs_compiler::diagnosticwriter::flatten_diagnostic_message;
 use tsrs_diagnostics::Category;
 
-const NODE_MODULES_VAR: &str = "RBXTS_RS_FIXTURE_NODE_MODULES";
-/// The packages a fixture's `node_modules` must have.
-const PACKAGES: [&str; 4] = ["compiler-types", "types", "testez", "services"];
+use rbxts_test_support::{copy_dir, link_dir, node_modules};
 
-fn has_packages(node_modules: &Path) -> bool {
-    PACKAGES.iter().all(|name| node_modules.join("@rbxts").join(name).is_dir())
-}
-
-/// The `node_modules` to link into fixtures, or `None` (with the reason) to skip. Panics when
-/// `RBXTS_RS_FIXTURE_NODE_MODULES` names a directory without the packages: a set variable means the fixtures should
-/// run.
-fn node_modules() -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os(NODE_MODULES_VAR) {
-        let path = PathBuf::from(path);
-        assert!(
-            has_packages(&path),
-            "{NODE_MODULES_VAR}={} has no @rbxts/{{{}}}",
-            path.display(),
-            PACKAGES.join(", ")
-        );
-        return Ok(path);
-    }
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    manifest
-        .ancestors()
-        .flat_map(|dir| {
-            [dir.join("roblox-ts/tests/node_modules"), dir.join("roblox-ts-test/roblox-ts/tests/node_modules")]
-        })
-        .find(|candidate| has_packages(candidate))
-        .ok_or_else(|| {
-            format!(
-                "no node_modules with @rbxts/{{{}}}: set {NODE_MODULES_VAR}, or have the roblox-ts tests project \
-                 (roblox-ts/tests or roblox-ts-test/roblox-ts/tests) with its packages installed beside {} or a \
-                 directory above it",
-                PACKAGES.join(", "),
-                manifest.display()
-            )
-        })
-}
-
-/// Fixtures must run (a missing `node_modules` fails them): `RBXTS_RS_FIXTURE_REQUIRE=1`, or `CI` set.
-fn fixtures_required() -> bool {
-    std::env::var_os("RBXTS_RS_FIXTURE_REQUIRE").is_some_and(|v| v == "1") || std::env::var_os("CI").is_some()
-}
-
-/// Skips a test without a `node_modules`, saying why on the terminal: written to stderr directly, since the test
-/// harness captures (and, for a passing test, drops) `eprintln!`. A skipped test passes, unless
-/// [`fixtures_required`].
+/// Skips a fixture test without a `node_modules` ([`rbxts_test_support::skip`]).
 fn skip(test: &str, why: &str) {
-    assert!(!fixtures_required(), "fixtures::{test}: {why} (fixtures are required: CI or RBXTS_RS_FIXTURE_REQUIRE=1)");
-    let _ = writeln!(std::io::stderr(), "fixtures::{test} skipped: {why}");
-}
-
-/// Links `link` to the directory `target`: a junction on Windows (it needs no privileges, unlike a directory
-/// symlink), a symlink elsewhere.
-fn link_dir(link: &Path, target: &Path) {
-    #[cfg(windows)]
-    {
-        // mklink wants backslashes
-        let output = std::process::Command::new("cmd")
-            .args(["/C", "mklink", "/J"])
-            .arg(link.to_string_lossy().replace('/', "\\"))
-            .arg(target.to_string_lossy().replace('/', "\\"))
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "could not link {} to {}: {}",
-            link.display(),
-            target.display(),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    #[cfg(not(windows))]
-    std::os::unix::fs::symlink(target, link)
-        .unwrap_or_else(|e| panic!("could not link {} to {}: {e}", link.display(), target.display()));
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_dir(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), target).unwrap();
-        }
-    }
+    rbxts_test_support::skip(&format!("fixtures::{test}"), why);
 }
 
 fn collect_files(base: &Path, dir: &Path, out: &mut Vec<String>) {

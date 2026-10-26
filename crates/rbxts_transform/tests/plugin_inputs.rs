@@ -23,12 +23,9 @@ use rbxts_project::{ProjectOptionLayer, STACK_SIZE};
 use rbxts_transform::build::parity::{self, ParityOptions};
 use rbxts_transform::{BuildSession, CompileOptions, CompileReport, PluginOptions};
 
-const DEFAULT_NODE_MODULES: &str = "E:/Projects/TS/Flamework/roblox-ts-test/roblox-ts/tests/node_modules";
 
 fn node_modules() -> Option<PathBuf> {
-    let path = std::env::var_os("RBXTS_RS_FIXTURE_NODE_MODULES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_NODE_MODULES));
+    let path = rbxts_test_support::node_modules().unwrap_or_default();
     path.join("@rbxts").join("compiler-types").is_dir().then_some(path)
 }
 
@@ -52,7 +49,7 @@ struct Project(PathBuf);
 impl Project {
     fn new(label: &str, incremental: bool) -> Option<Project> {
         let Some(node_modules) = node_modules() else {
-            eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+            rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
             return None;
         };
         let root = std::env::temp_dir().join(format!("rbxts-rs-inputs-{label}-{}", std::process::id()));
@@ -316,7 +313,7 @@ fn incremental_builds_bring_the_encoded_parts() {
 fn the_harness_with_recorded_inputs_equals_clean_builds() {
     for incremental in [false, true] {
         let Some(node_modules) = node_modules() else {
-            eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+            rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
             return;
         };
         let script =

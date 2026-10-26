@@ -24,3 +24,4 @@ serde_json.workspace = true
 
 [dev-dependencies]
 rbxts_test_plugins.workspace = true
+rbxts_test_support.workspace = true

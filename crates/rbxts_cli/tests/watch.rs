@@ -12,7 +12,6 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-const DEFAULT_NODE_MODULES: &str = "E:/Projects/TS/Flamework/roblox-ts-test/roblox-ts/tests/node_modules";
 
 fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
@@ -80,11 +79,9 @@ impl Watcher {
 
 #[test]
 fn the_watcher_debounces_renames_and_recovers_from_errors() {
-    let node_modules = std::env::var_os("RBXTS_RS_FIXTURE_NODE_MODULES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_NODE_MODULES));
+    let node_modules = rbxts_test_support::node_modules().unwrap_or_default();
     if !node_modules.join("@rbxts").join("compiler-types").is_dir() {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return;
     }
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../rbxts_transform/tests/watch_fixtures/basic");
@@ -238,11 +235,9 @@ impl Watcher {
 /// directory on Windows), and a package installed, then changed, under `node_modules` with no source edit.
 #[test]
 fn the_watcher_sees_directories_moved_in_and_packages_installed() {
-    let node_modules = std::env::var_os("RBXTS_RS_FIXTURE_NODE_MODULES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_NODE_MODULES));
+    let node_modules = rbxts_test_support::node_modules().unwrap_or_default();
     if !node_modules.join("@rbxts").join("compiler-types").is_dir() {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return;
     }
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../rbxts_transform/tests/watch_fixtures/basic");
@@ -326,11 +321,9 @@ fn the_watcher_sees_directories_moved_in_and_packages_installed() {
 /// A copy of the watch fixture without the stamp plugin, with a real `node_modules` and `@rbxts` holding one
 /// junction per package (so packages can be added in the copy alone). Returns (base, project, junctions).
 fn linked_project(label: &str) -> Option<(PathBuf, PathBuf, Vec<PathBuf>)> {
-    let node_modules = std::env::var_os("RBXTS_RS_FIXTURE_NODE_MODULES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_NODE_MODULES));
+    let node_modules = rbxts_test_support::node_modules().unwrap_or_default();
     if !node_modules.join("@rbxts").join("compiler-types").is_dir() {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return None;
     }
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../rbxts_transform/tests/watch_fixtures/basic");
@@ -349,9 +342,7 @@ fn linked_project(label: &str) -> Option<(PathBuf, PathBuf, Vec<PathBuf>)> {
 
 /// The fixture's `node_modules`: `RBXTS_RS_FIXTURE_NODE_MODULES` or roblox-ts's tests project's.
 fn fixture_node_modules() -> PathBuf {
-    std::env::var_os("RBXTS_RS_FIXTURE_NODE_MODULES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_NODE_MODULES))
+    rbxts_test_support::node_modules().unwrap_or_default()
 }
 
 /// Makes `scope` (a real directory) with one junction per package of the fixture's `@rbxts`; the junctions.
@@ -966,7 +957,7 @@ fn the_runtime_include_source_is_watched() {
 fn edits_in_a_referenced_project_are_seen() {
     let node_modules = fixture_node_modules();
     if !node_modules.join("@rbxts").join("compiler-types").is_dir() {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return;
     }
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../rbxts_transform/tests/watch_fixtures/references");
@@ -1011,7 +1002,7 @@ fn edits_in_a_referenced_project_are_seen() {
 fn the_first_build_starts_no_second_one() {
     let node_modules = fixture_node_modules();
     if !node_modules.join("@rbxts").join("compiler-types").is_dir() {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return;
     }
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../rbxts_transform/tests/watch_fixtures/midsolution");
@@ -1038,7 +1029,7 @@ fn the_first_build_starts_no_second_one() {
 fn a_new_file_a_referenced_project_includes_is_seen() {
     let node_modules = fixture_node_modules();
     if !node_modules.join("@rbxts").join("compiler-types").is_dir() {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return;
     }
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../rbxts_transform/tests/watch_fixtures/midsolution");

@@ -526,6 +526,7 @@ dependencies = [
  "rbxts_plugin",
  "rbxts_project",
  "rbxts_test_plugins",
+ "rbxts_test_support",
  "rbxts_transform",
  "rustc-hash",
  "serde_json",
@@ -603,6 +604,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rbxts_test_support"
+version = "0.0.0"
+
+[[package]]
 name = "rbxts_transform"
 version = "0.0.0"
 dependencies = [
@@ -611,6 +616,7 @@ dependencies = [
  "rbxts_plugin",
  "rbxts_project",
  "rbxts_test_plugins",
+ "rbxts_test_support",
  "rustc-hash",
  "serde_json",
  "tsrs_ast",

@@ -8,17 +8,14 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const DEFAULT_NODE_MODULES: &str = "E:/Projects/TS/Flamework/roblox-ts-test/roblox-ts/tests/node_modules";
 const RBXTSC: &str = env!("CARGO_BIN_EXE_rbxtsc");
 
 fn node_modules() -> Option<PathBuf> {
-    let path = std::env::var_os("RBXTS_RS_FIXTURE_NODE_MODULES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_NODE_MODULES));
+    let path = rbxts_test_support::node_modules().unwrap_or_default();
     if path.join("@rbxts").join("compiler-types").is_dir() {
         Some(path)
     } else {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         None
     }
 }

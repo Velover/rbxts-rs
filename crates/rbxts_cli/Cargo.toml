@@ -23,6 +23,7 @@ rustc-hash.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 rbxts_test_plugins.workspace = true
+rbxts_test_support.workspace = true
 
 [[bin]]
 name = "rbxtsc"

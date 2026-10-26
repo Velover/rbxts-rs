@@ -30,12 +30,9 @@ use rbxts_transform::build::parity::{self, ParityOptions, StepResult};
 use rbxts_test_plugins::scan;
 use rbxts_transform::{BuildSession, BuildSummary, CompileOptions, PluginOptions};
 
-const DEFAULT_NODE_MODULES: &str = "E:/Projects/TS/Flamework/roblox-ts-test/roblox-ts/tests/node_modules";
 
 fn node_modules() -> Option<PathBuf> {
-    let path = std::env::var_os("RBXTS_RS_FIXTURE_NODE_MODULES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_NODE_MODULES));
+    let path = rbxts_test_support::node_modules().unwrap_or_default();
     path.join("@rbxts").join("compiler-types").is_dir().then_some(path)
 }
 
@@ -70,7 +67,7 @@ fn run_fixture_copying(
     copy: &[&str],
 ) -> Option<Vec<StepResult>> {
     let Some(node_modules) = node_modules() else {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return None;
     };
     let script =
@@ -299,7 +296,7 @@ impl Drop for Copy {
 #[test]
 fn a_kept_shared_survives_failures_and_input_changes_rerun_setup() {
     let Some(node_modules) = node_modules() else {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return;
     };
     let root = std::env::temp_dir().join(format!("rbxts-rs-watch-shared-{}", std::process::id()));
@@ -493,7 +490,7 @@ impl PluginInstance for KeeperInstance {
 /// A copy of the basic fixture for the keeper tests, with `"incremental": true` when asked.
 fn keeper_copy(label: &str, incremental: bool) -> Option<(Copy, PathBuf)> {
     let Some(node_modules) = node_modules() else {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return None;
     };
     let root = std::env::temp_dir().join(format!("rbxts-rs-watch-{label}-{}", std::process::id()));
@@ -926,7 +923,7 @@ fn another_plugins_state_file_is_a_setup_input_like_any_other() {
 #[test]
 fn the_clean_keeps_what_roblox_ts_keeps_and_removes_links_as_links() {
     let Some(node_modules) = node_modules() else {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return;
     };
     let root = std::env::temp_dir().join(format!("rbxts-rs-watch-keep-{}", std::process::id()));
@@ -1034,7 +1031,7 @@ impl Plugin for ArtifactAt {
 #[test]
 fn an_artifact_may_not_overwrite_an_asset_output() {
     let Some(node_modules) = node_modules() else {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return;
     };
     let root = std::env::temp_dir().join(format!("rbxts-rs-watch-artifact-{}", std::process::id()));
@@ -1069,7 +1066,7 @@ fn an_artifact_may_not_overwrite_an_asset_output() {
 #[test]
 fn a_watch_rebuild_load_checks_what_a_plugin_emitted_into() {
     let Some(node_modules) = node_modules() else {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return;
     };
     let root = std::env::temp_dir().join(format!("rbxts-rs-watch-luau-{}", std::process::id()));
@@ -1138,7 +1135,7 @@ fn a_watch_rebuild_load_checks_what_a_plugin_emitted_into() {
 #[test]
 fn a_late_string_that_makes_a_cached_file_refused_fails_the_watch_rebuild() {
     let Some(node_modules) = node_modules() else {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return;
     };
     // round 7's validator case: `a.ts` compares the stamp plugin's build id (a late string) with a constant, and a

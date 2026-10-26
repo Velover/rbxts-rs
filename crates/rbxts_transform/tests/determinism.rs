@@ -19,16 +19,13 @@ use rbxts_project::{ProjectOptionLayer, STACK_SIZE};
 use rbxts_transform::{CompileOptions, CompileReport, PluginOptions, compile_project_with};
 use tsrs_compiler::diagnosticwriter::flatten_diagnostic_message;
 
-const DEFAULT_NODE_MODULES: &str = "E:/Projects/TS/Flamework/roblox-ts-test/roblox-ts/tests/node_modules";
 
 /// (checkers, `TSRS_CHECKER_ASSIGNMENT`); the first is the reference.
 const CONFIGS: &[(usize, Option<&str>)] =
     &[(1, None), (2, Some("random:21")), (4, Some("random:22")), (8, Some("random:23")), (4, None)];
 
 fn node_modules() -> Option<PathBuf> {
-    let path = std::env::var_os("RBXTS_RS_FIXTURE_NODE_MODULES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_NODE_MODULES));
+    let path = rbxts_test_support::node_modules().unwrap_or_default();
     path.join("@rbxts").join("compiler-types").is_dir().then_some(path)
 }
 
@@ -244,7 +241,7 @@ export const z9 = src.value.x;
 #[test]
 fn outputs_and_diagnostics_do_not_depend_on_the_checkers() {
     let Some(node_modules) = node_modules() else {
-        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return;
     };
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
