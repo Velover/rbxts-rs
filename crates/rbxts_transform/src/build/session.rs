@@ -1219,8 +1219,10 @@ impl<'p> BuildSession<'p> {
         }
         // roblox-ts's `compileFiles` checks and transforms file by file, in transform order, and stops transforming at
         // the first error: the files before the first one the check failed are transformed (their diagnostics are
-        // reported, up to the first transform error), nothing is written (`first_error_cut`)
-        let mut checked_prefix = false;
+        // reported, up to the first transform error), nothing is written (`first_error_cut`). A rebuild transforms
+        // those of them it would transform anyway and reports the cached lists of the others; the transform order of
+        // the first failing file is `checked_prefix`.
+        let mut checked_prefix: Option<u32> = None;
         if check_failed {
             if let Some(run) = &run {
                 explain_failures(&mut report, project, services, &run.active, &run.shared, &run.times, &ctx, &env);
@@ -1232,12 +1234,15 @@ impl<'p> BuildSession<'p> {
                 .map(|d| d.file())
                 .collect::<Option<_>>()
                 .unwrap_or_default();
-            let first = to_transform.iter().position(|f| failing.contains(f)).unwrap_or(0);
-            if first == 0 || self.options.write_partial {
+            let first = files.iter().filter(|f| failing.contains(*f)).map(|f| file_indices[f].0).min();
+            let Some(first) = first.filter(|&first| files.iter().any(|f| file_indices[f].0 < first)) else {
+                return (report, summary, committed, Some(loaded));
+            };
+            if self.options.write_partial {
                 return (report, summary, committed, Some(loaded));
             }
-            to_transform.truncate(first);
-            checked_prefix = true;
+            to_transform.retain(|f| file_indices[f].0 < first);
+            checked_prefix = Some(first);
         }
 
         // 5. transform
@@ -1325,6 +1330,7 @@ impl<'p> BuildSession<'p> {
             let transformed: FxHashSet<P<SourceFile>> = to_transform.iter().copied().collect();
             for &file in &files {
                 if !transformed.contains(&file)
+                    && checked_prefix.is_none_or(|first| file_indices[&file].0 < first)
                     && let Some(old) = c.files.get(&file.path().to_string())
                 {
                     cached.push((file_indices[&file].0, old.diagnostics.clone(), &old.plugin_diagnostics));
@@ -1357,7 +1363,7 @@ impl<'p> BuildSession<'p> {
         report.diagnostics.extend(cached.into_iter().flat_map(|(_, diagnostics, _)| diagnostics));
 
         let any_errors = report.has_errors();
-        if (any_errors && !self.options.write_partial) || checked_prefix {
+        if (any_errors && !self.options.write_partial) || checked_prefix.is_some() {
             if let Some(run) = &run {
                 record_timings(&mut report, &run.active, &run.times, hook_times.as_ref());
             }
