@@ -1,7 +1,8 @@
 //! Incremental and watch builds (DESIGN §14) on `tests/watch_fixtures/basic`:
 //! - the W1 harness (`rbxts_transform::build::parity`) runs `basic.script.json` as watch rebuilds with the `stamp`
 //!   plugin (artifacts, a state file, late strings re-rendered in cached files), without plugins, and as
-//!   incremental builds in new sessions; after every step the output must equal a clean build's;
+//!   incremental builds in new sessions; after every step the output must equal a clean build's (JSON modules
+//!   included: an edit re-copies the asset and re-transforms only the importers);
 //! - `attack.script.json` on `tests/watch_fixtures/attack`: the review of the branch's attack sequence;
 //! - the kept-`Shared` contract, with a plugin that counts its `setup` and `rebuild_start` calls;
 //! - the clean of a declaration build over a used output directory, against roblox-ts's keep set, with a junction.
@@ -109,7 +110,14 @@ fn watch_rebuilds_equal_clean_builds_with_the_stamp_plugin() {
     // a tsconfig change re-runs setup: every file
     assert!(step(&results, "a tsconfig edit (the plugin's options)").all);
     assert_eq!(step(&results, "an unchanged save").transformed, 0);
+    // a JSON module's edit: its importer, not every file; a JSON file nothing imports is only an asset
+    let json = step(&results, JSON_TYPE_EDIT);
+    assert!(!json.all && json.transformed == 1);
+    assert_eq!(step(&results, "a JSON module: a new JSON file nothing imports").transformed, 0);
 }
+
+/// The basic script's step that turns a JSON module's number into a string, which changes its importer's Luau.
+const JSON_TYPE_EDIT: &str = "a JSON module: a number becomes a string (the importer's `+` becomes `..`)";
 
 /// The review's attack sequence (globals reached through the closure, augmentation and export hops, const enums,
 /// JSDoc macro modes, renames, deletions and re-adds, a twin .d.ts, tsconfig and Rojo edits, a case-only rename).
@@ -131,6 +139,9 @@ fn incremental_builds_equal_clean_builds() {
     let chain = step(&results, "C → B → D: Inner.a array to map");
     assert_eq!(chain.kind, Some(BuildKind::Incremental));
     assert!(!chain.all && chain.transformed > 0);
+    let json = step(&results, JSON_TYPE_EDIT);
+    assert_eq!(json.kind, Some(BuildKind::Incremental));
+    assert!(!json.all && json.transformed == 1);
 }
 
 // --- the kept-Shared contract ---

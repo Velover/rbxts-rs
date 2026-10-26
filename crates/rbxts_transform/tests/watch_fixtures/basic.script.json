@@ -438,6 +438,99 @@
 					"delete": "src/shared/d.luau"
 				}
 			]
+		},
+		{
+			"name": "a JSON module: a value edit",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/jsonModule.json",
+						"find": "\"speed\": 16",
+						"replace": "\"speed\": 20"
+					}
+				}
+			]
+		},
+		{
+			"name": "a JSON module: a number becomes a string (the importer's `+` becomes `..`)",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/jsonModule.json",
+						"find": "\"speed\": 20",
+						"replace": "\"speed\": \"20\""
+					}
+				}
+			]
+		},
+		{
+			"name": "a JSON module: back to a number",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/jsonModule.json",
+						"find": "\"speed\": \"20\"",
+						"replace": "\"speed\": 21"
+					}
+				}
+			]
+		},
+		{
+			"name": "a JSON module: deleted",
+			"do": [
+				{
+					"delete": "src/shared/jsonModule.json"
+				}
+			],
+			"expect": "error"
+		},
+		{
+			"name": "a JSON module: added again",
+			"do": [
+				{
+					"write": {
+						"file": "src/shared/jsonModule.json",
+						"text": "{ \"speed\": 3 }\n"
+					}
+				}
+			]
+		},
+		{
+			"name": "a JSON module: a new JSON file nothing imports",
+			"do": [
+				{
+					"write": {
+						"file": "src/shared/cfg/unused.json",
+						"text": "[1, 2]\n"
+					}
+				}
+			]
+		},
+		{
+			"name": "a JSON module: the importer switches to the new file",
+			"do": [
+				{
+					"write": {
+						"file": "src/shared/cfg/unused.json",
+						"text": "{ \"speed\": \"slow\" }\n"
+					}
+				},
+				{
+					"patch": {
+						"file": "src/shared/useJsonModule.ts",
+						"find": "./jsonModule.json",
+						"replace": "./cfg/unused.json"
+					}
+				}
+			]
+		},
+		{
+			"name": "a JSON module: an unchanged save",
+			"do": [
+				{
+					"touch": "src/shared/cfg/unused.json"
+				}
+			]
 		}
 	]
 }

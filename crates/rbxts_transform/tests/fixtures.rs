@@ -32,6 +32,9 @@
 //!   parameter (TypeScript 5 gives them its contextual `this`), next to arrows, `this` users and `this: void` slots.
 //! - `exprs`: conditional expressions, `||=` / `&&=` / `??=`, `yield` and `yield*`, `delete`, `await`, tagged
 //!   templates, `import()`, mixed edge cases, and a server script importing the modules.
+//! - `json`: JSON modules (`resolveJsonModule`): default, namespace, named and dynamic imports, a JSON file outside
+//!   the root dirs (imported at its Rojo-mapped source path), and one nothing imports. The only fixture checked as a
+//!   written output tree ([`check_tree`]): its JSON files are assets, copied as they are.
 //! - `jsx`: JSX elements, attributes (string, boolean, namespaced, with prerequisites), spread props (first, later,
 //!   possibly undefined, conditional), fragments, keyed, conditional, mapped and spread children, JSX text whitespace
 //!   and entities, `@jsx` / `@jsxFrag` pragmas, and the JSX factory import kept alive when only JSX uses it.
@@ -227,8 +230,8 @@ impl Drop for TempProject {
     }
 }
 
-/// Builds the project at `root` (no writes) on a thread with the compiler's stack size.
-fn build(root: &Path) -> CompileReport {
+/// Builds the project at `root` (no writes, unless `write`) on a thread with the compiler's stack size.
+fn build(root: &Path, write: bool) -> CompileReport {
     let cwd = root.to_string_lossy().into_owned();
     std::thread::Builder::new()
         .stack_size(STACK_SIZE)
@@ -239,7 +242,7 @@ fn build(root: &Path) -> CompileReport {
                 project_options: ProjectOptionLayer::default(),
                 out_dir_override: None,
                 write_partial: false,
-                no_write: true,
+                no_write: !write,
                 checkers: None,
             })
         })
@@ -317,6 +320,35 @@ fn compare(report: &CompileReport, root: &Path, expected: &Path) -> Vec<String> 
     failures
 }
 
+/// The build's report, then its written `out` tree against `expected` (both ways, line ends aside).
+fn compare_tree(report: &CompileReport, root: &Path, expected: &Path) -> Vec<String> {
+    let mut failures = reported(report, root);
+    let out = root.join("out");
+    let mut written = Vec::new();
+    if out.is_dir() {
+        collect_files(&out, &out, &mut written);
+    }
+    let mut expected_files = Vec::new();
+    collect_files(expected, expected, &mut expected_files);
+    let read = |path: &Path| std::fs::read_to_string(path).map(|text| text.replace("\r\n", "\n"));
+    for relative in &written {
+        let ours = read(&out.join(relative)).unwrap_or_default();
+        match read(&expected.join(relative)) {
+            Err(_) => failures.push(format!("{relative}: written but not in expected/\n--- ours\n{ours}")),
+            Ok(theirs) if theirs != ours => {
+                failures.push(format!("{relative}: differs from expected\n--- ours\n{ours}"))
+            }
+            Ok(_) => {}
+        }
+    }
+    for relative in expected_files {
+        if !written.contains(&relative) {
+            failures.push(format!("{relative}: expected but not written"));
+        }
+    }
+    failures
+}
+
 /// Builds a fixture copy, in each layout of its `links.json` (one default layout without one), and checks it.
 ///
 /// `links.json` is `{ "project"?: dir, "layouts": { name: [[link, target], …] } }`: the project directory inside the
@@ -324,6 +356,17 @@ fn compare(report: &CompileReport, root: &Path, expected: &Path) -> Vec<String> 
 /// target, `@shared/<package>` for the shared `node_modules`'s `@rbxts/<package>` or a path inside the copy. Without
 /// `links.json`, `node_modules` links to the shared `node_modules`.
 fn check(area: &'static str) {
+    check_in(area, false);
+}
+
+/// [`check`], comparing the written output tree instead: every file under the project's `out` (Luau and assets) equals
+/// its `expected/` file, line ends aside, and every `expected/` file is written.
+fn check_tree(area: &'static str) {
+    check_in(area, true);
+}
+
+/// [`check`] (`tree` false) or [`check_tree`].
+fn check_in(area: &'static str, tree: bool) {
     let node_modules = match node_modules() {
         Ok(path) => path,
         Err(why) => return skip(area, &why),
@@ -366,8 +409,12 @@ fn check(area: &'static str) {
             project.link(&link, &target);
         }
         let root = project.root.join(&project_dir);
-        let report = build(&root);
-        let layout_failures = compare(&report, &root, &fixture.join("expected"));
+        let report = build(&root, tree);
+        let layout_failures = if tree {
+            compare_tree(&report, &root, &fixture.join("expected"))
+        } else {
+            compare(&report, &root, &fixture.join("expected"))
+        };
         if !layout_failures.is_empty() {
             failures.push(format!("{label}:\n{}", layout_failures.join("\n")));
         }
@@ -433,6 +480,11 @@ fn contextual_this() {
 #[test]
 fn exprs() {
     check("exprs");
+}
+
+#[test]
+fn json() {
+    check_tree("json");
 }
 
 #[test]

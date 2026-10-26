@@ -85,6 +85,13 @@ in `RBXTS_RS_FIXTURE_NODE_MODULES` (default: the roblox-ts tests project's `node
 for byte; any diagnostic fails the fixture. A fixture with a `links.json` is built in each linked layout it describes
 (junctions made at test time). Without a `node_modules` the tests are skipped with a note on the terminal, or fail
 when `CI` or `RBXTS_RS_FIXTURE_REQUIRE=1` is set; a variable naming a directory without the packages is an error.
+The `json` fixture is compared as the written output tree (`expected/` is stock `rbxtsc build`'s `out`).
+
+**JSON modules** (`resolveJsonModule`) are handled as stock roblox-ts handles them: no JSON is transformed. A JSON
+file under a root dir is an asset, copied to the output as it is (Rojo makes it a ModuleScript) whether anything
+imports it or not, and an import names that output (`TS.import(script, …, "shared", "data")`); a JSON file outside
+the root dirs is imported at its source path, which the Rojo project must map. An edit of a JSON module re-copies it
+and re-checks and re-transforms its importers (watch and incremental builds; `tests/watch_fixtures/basic`).
 
 ## Plugins (`rbxts_plugin`, `rbxts_transform::plugins`, `rbxts_cli`)
 
