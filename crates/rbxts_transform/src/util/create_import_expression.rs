@@ -49,10 +49,7 @@ pub fn get_source_file_from_module_specifier(
     if tsrs_ast::is_string_literal_like(module_specifier) {
         let source_file = source_file_of(module_specifier);
         let program = state.program;
-        let resolver = state
-            .multi_transform_state
-            .module_resolver
-            .get_or_insert_with(|| rbxts_project::ModuleResolver::new(program.options(), program.get_current_directory()));
+        let resolver = state.module_resolver;
         // `ts.resolveModuleName` is called without a resolution mode; with no mode tsrs picks the same conditions
         // (e.g. "import" under bundler) as TypeScript
         if let Some(resolved) = resolver.resolve(

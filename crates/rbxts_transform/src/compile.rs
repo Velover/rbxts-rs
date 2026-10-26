@@ -454,7 +454,7 @@ pub(crate) fn transform_file(
     // the program (not on the files its checker transformed before it), for any checker count and in rebuilds
     multi.function_effects.clear();
     multi.binding_keys.clear();
-    let mut state = TransformState::new(project.program, checker, services, macro_manager, multi, file);
+    let mut state = TransformState::new(project, checker, services, macro_manager, multi, file);
     if let Some(host) = host {
         state.plugins = Some(host);
         state.plugin_file = PluginFileState::new(file_info(services, host, file), host.len());
@@ -566,7 +566,7 @@ pub(crate) fn explain_failures(
         for (i, file) in files {
             let diagnostics: Vec<P<Diagnostic>> =
                 report.diagnostics.iter().copied().filter(|d| d.file() == Some(file)).collect();
-            let mut state = TransformState::new(program, &mut checker, services, &macro_manager, &mut multi, file);
+            let mut state = TransformState::new(project, &mut checker, services, &macro_manager, &mut multi, file);
             state.plugins = Some(&host);
             state.plugin_file = PluginFileState::new(file_info(services, &host, file), host.len());
             let root = file.as_node();

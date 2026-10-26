@@ -41,6 +41,9 @@ pub enum TryUse {
 /// `TransformState`: everything the transform of one source file reads and records.
 pub struct TransformState<'a> {
     pub program: &'static Program,
+    /// rbxts-rs: the resolver for `$getModuleTree` specifiers no import resolves (`ts.resolveModuleName` with
+    /// `ts.sys`): the project's ([`rbxts_project::Project::module_resolver`]).
+    pub module_resolver: &'a rbxts_project::ModuleResolver,
     pub checker: &'a mut Checker,
     pub services: &'a ProjectServices,
     pub compiler_options: P<CompilerOptions>,
@@ -77,17 +80,19 @@ pub struct TransformState<'a> {
 
 impl<'a> TransformState<'a> {
     pub fn new(
-        program: &'static Program,
+        project: &'a rbxts_project::Project,
         checker: &'a mut Checker,
         services: &'a ProjectServices,
         macro_manager: &'a MacroManager,
         multi_transform_state: &'a mut MultiTransformState,
         source_file: P<SourceFile>,
     ) -> TransformState<'a> {
+        let program = project.program;
         let resolver = checker.get_emit_resolver();
         let is_in_replicated_first = services.file_info(source_file.get().file_name()).in_replicated_first;
         TransformState {
             program,
+            module_resolver: project.module_resolver(),
             checker,
             services,
             compiler_options: program.options(),

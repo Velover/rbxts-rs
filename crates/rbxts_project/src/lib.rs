@@ -296,9 +296,13 @@ impl Project {
                 package_name: (!resolved.package_id.name.is_empty()).then(|| resolved.package_id.name.to_owned()),
             });
         }
-        self.module_resolver
-            .get_or_init(|| ModuleResolver::new(self.program.options(), &self.cwd))
-            .resolve(specifier, from.get().file_name(), mode)
+        self.module_resolver().resolve(specifier, from.get().file_name(), mode)
+    }
+
+    /// A resolver with the program's options and directory, for specifiers the program itself did not resolve: one
+    /// per project load, made on first use, shared by every checker's transform.
+    pub fn module_resolver(&self) -> &ModuleResolver {
+        self.module_resolver.get_or_init(|| ModuleResolver::new(self.program.options(), &self.cwd))
     }
 
     /// Every program source file in program order, with what setup needs to know of it.
