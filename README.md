@@ -174,8 +174,8 @@ own errors as `TS roblox-ts` text diagnostics. A successful build copies the run
 from the roblox-ts package the project resolves (the first `node_modules/roblox-ts` from the project folder upwards),
 so the include folder equals stock's; without one, from the files embedded from roblox-ts master 68648b0
 (`crates/rbxts_transform/include`). The tsconfig must suit TypeScript 7: `module: "preserve"` with
-`moduleResolution: "bundler"`, `paths` instead of `baseUrl`, no `downlevelIteration`, and `types` listed (TypeScript 7
-includes no type roots by default), e.g. `"types": ["types", "compiler-types"]`.
+`moduleResolution: "bundler"`, `paths` instead of `baseUrl` and no `downlevelIteration`. Without `types`, every
+package of the type roots is included, as TypeScript 5 does (TypeScript 7 alone includes none; see `docs/tsrs.md`).
 
 A tsconfig `plugins` entry (`transform`) that no compiled-in plugin claims is handled as stock roblox-ts 3.0.0 handles
 a transformer it can't load: when `resolve.sync` can't find it from the project folder (`.js` files only), or Node
