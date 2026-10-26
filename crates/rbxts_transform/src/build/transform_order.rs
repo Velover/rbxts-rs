@@ -12,18 +12,17 @@
 //!
 //! `referencedMap` is TypeScript 5's `getReferencedFiles`, rebuilt from the program's resolutions instead of the
 //! checker (`getSymbolAtLocation` of each import's module name gives the declaring files of the module symbol):
-//! - each resolved import and module augmentation (type-only imports, `export … from`, `import()` and `import("…")`
-//!   types included) references the module's file and every file that augments that module;
-//! - an import of an ambient module (`declare module "name"` in a script file) references the files declaring it and
-//!   the module files augmenting it (`declare module "name"` in a module file, a name that resolves to no file);
+//! - each import and module augmentation (type-only imports, `export … from`, `import()` and `import("…")` types
+//!   included) references what TypeScript 5's `resolveExternalModule` gives for its name: an ambient module of that
+//!   name (`declare module "name"` in a script file; a non-relative name only), even when the name also resolves to
+//!   a file; else the file it resolves to; else the pattern ambient module (`declare module "*.png"`) whose prefix
+//!   is the longest among those matching it (the first in program order on a tie);
+//! - an ambient or pattern ambient module references the files declaring it and the module files augmenting it by
+//!   that name (`declare module "name"` in a module file); a module file references the module's file and every
+//!   file that augments that module;
 //! - triple-slash path references (the path as written, resolved against the file's directory) and the file's
 //!   resolved type reference directives;
 //! - every file references the files declaring an ambient module with more than one declaration (other than itself).
-//!
-//! Not modelled: pattern ambient modules (`declare module "*.png"`) and module names only the checker resolves. A
-//! non-relative import that both resolves to a file and matches a `declare module "name"` is the ambient module to
-//! TypeScript 5's checker (so it references the declaring files), while this references the file it resolves to;
-//! reachable only when a project shadows an installed package with an ambient declaration.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsrs_ast::SourceFile;
@@ -45,15 +44,38 @@ pub fn transform_order(program: &Program) -> Vec<P<SourceFile>> {
     let resolved_modules = program.get_resolved_modules();
     let type_references = program.get_resolved_type_reference_directives();
 
-    // the modules each file augments (by the module's file, or by name when the name resolves to no file: an
-    // ambient module's augmentation), and the files declaring each ambient module (one entry per declaration)
-    let mut augmenters: FxHashMap<String, Vec<usize>> = FxHashMap::default();
-    let mut ambient_augmenters: FxHashMap<&str, Vec<usize>> = FxHashMap::default();
+    // the files declaring each ambient module (one entry per declaration), and the pattern ambient modules in program
+    // order (TypeScript 5's `patternAmbientModules`: names with exactly one `*`)
     let mut ambient: FxHashMap<&str, Vec<usize>> = FxHashMap::default();
+    let mut patterns: Vec<(&str, &str, &str)> = Vec::new();
     for (i, &file) in files.iter().enumerate() {
         for &name in file.ambient_module_names() {
             ambient.entry(name).or_default().push(i);
+            if let Some((prefix, suffix)) = name.split_once('*')
+                && !suffix.contains('*')
+            {
+                patterns.push((name, prefix, suffix));
+            }
         }
+    }
+    // `tryFindAmbientModule`: an ambient module by that name, which a non-relative name gives before its resolution
+    let ambient_module = |name: &str| (!tspath::is_external_module_name_relative(name)).then(|| ambient.get(name)).flatten();
+    // `findBestPatternMatch`: the longest prefix wins, the first one on a tie
+    let pattern_module = |name: &str| {
+        let mut best: Option<(&str, usize)> = None;
+        for &(pattern, prefix, suffix) in &patterns {
+            let matches = name.len() >= prefix.len() + suffix.len() && name.starts_with(prefix) && name.ends_with(suffix);
+            if matches && best.is_none_or(|(_, longest)| prefix.len() > longest) {
+                best = Some((pattern, prefix.len()));
+            }
+        }
+        best.map(|(pattern, _)| pattern)
+    };
+    // the modules each file augments: by the module's file, or by name for an ambient module (or a name that resolves
+    // to no file)
+    let mut augmenters: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+    let mut ambient_augmenters: FxHashMap<&str, Vec<usize>> = FxHashMap::default();
+    for (i, &file) in files.iter().enumerate() {
         let augmentations: FxHashSet<&str> = file
             .module_augmentations()
             .iter()
@@ -66,7 +88,8 @@ pub fn transform_order(program: &Program) -> Vec<P<SourceFile>> {
         let mut to_files: FxHashSet<&str> = FxHashSet::default();
         if let Some(resolutions) = resolved_modules.get(file.path()) {
             for (cache_key, resolved) in resolutions {
-                if augmentations.contains(cache_key.name) && resolved.is_resolved() {
+                if augmentations.contains(cache_key.name) && resolved.is_resolved() && ambient_module(cache_key.name).is_none()
+                {
                     augmenters.entry(key(resolved.resolved_file_name)).or_default().push(i);
                     to_files.insert(cache_key.name);
                 }
@@ -94,17 +117,24 @@ pub fn transform_order(program: &Program) -> Vec<P<SourceFile>> {
         };
         if let Some(resolutions) = resolved_modules.get(file.path()) {
             for (cache_key, resolved) in resolutions {
-                if resolved.is_resolved() {
-                    let module = key(resolved.resolved_file_name);
-                    add_key(&mut referenced, &module);
-                    if let Some(augmenting) = augmenters.get(&module) {
-                        referenced.extend(augmenting.iter().copied());
+                // TS5's `getSymbolAtLocation` gives the merged ambient module: its declarations and the module files
+                // augmenting it (they don't count in `getAmbientModules`, whose symbol is the unmerged one)
+                let name = cache_key.name;
+                let declaring = match ambient_module(name) {
+                    Some(declaring) => Some(declaring),
+                    None if resolved.is_resolved() => {
+                        let module = key(resolved.resolved_file_name);
+                        add_key(&mut referenced, &module);
+                        if let Some(augmenting) = augmenters.get(&module) {
+                            referenced.extend(augmenting.iter().copied());
+                        }
+                        continue;
                     }
-                } else if let Some(declaring) = ambient.get(cache_key.name) {
-                    // TS5's `getSymbolAtLocation` gives the merged ambient module: its declarations and the module
-                    // files augmenting it (they don't count in `getAmbientModules`, whose symbol is the unmerged one)
+                    None => pattern_module(name).and_then(|p| ambient.get(p)),
+                };
+                if let Some(declaring) = declaring {
                     referenced.extend(declaring.iter().copied());
-                    if let Some(augmenting) = ambient_augmenters.get(cache_key.name) {
+                    if let Some(augmenting) = ambient_augmenters.get(name) {
                         referenced.extend(augmenting.iter().copied());
                     }
                 }

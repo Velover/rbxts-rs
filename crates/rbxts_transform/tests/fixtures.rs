@@ -91,8 +91,8 @@
 //!   datatype globals recognised); nothing else in the fixture depends on it.
 //!   `tests/error_fixtures/jsx_entity` holds an input stock roblox-ts crashes on, which rbxts-rs reports as errors
 //!   (outside `tests/fixtures`, whose builds must succeed).
-//! - `transform_order`: imports, a triple-slash reference, a module augmentation, an ambient module import and a
-//!   module file augmenting that ambient module, whose files roblox-ts transforms in another order than the program's; [`transform_order`] also checks that order
+//! - `transform_order`: imports, a triple-slash reference, a module augmentation, an ambient module import, a
+//!   module file augmenting that ambient module, pattern ambient modules and an ambient module shadowing a file, whose files roblox-ts transforms in another order than the program's; [`transform_order`] also checks that order
 //!   (`order.txt`, stock roblox-ts's `getChangedSourceFiles`).
 //! - `write_transformed`: `writeTransformedFiles` with a TypeScript transformer that changes nothing (`identity.cjs`,
 //!   claimed by the `transformer` test plugin): each compiled file printed again beside its Luau. Without the
