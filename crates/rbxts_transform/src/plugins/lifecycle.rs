@@ -187,8 +187,9 @@ pub(crate) fn activate<'p>(
     Ok((active, warnings))
 }
 
-/// Node's core modules (`is-core-module` for the Node versions roblox-ts runs on): `resolve.sync` returns their name
-/// before looking in any `node_modules`.
+/// Node's core modules (`is-core-module` 2.16, which roblox-ts 3.0.0's `resolve` 1.22 uses, for Node 22.14 and later,
+/// 23.4 and later included): `resolve.sync` returns their name before looking in any `node_modules`. Each is also
+/// a core module with `node:` in front.
 const NODE_CORE_MODULES: &[&str] = &[
     "assert",
     "assert/strict",
@@ -260,9 +261,16 @@ const NODE_CORE_MODULES: &[&str] = &[
     "_tls_wrap",
 ];
 
-/// `isCore` of `resolve` (`is-core-module`): a core module's name, or a `node:` one.
+/// The core modules `is-core-module` knows only with `node:` in front (`node:test`, not `test`).
+const NODE_PREFIXED_ONLY_CORE_MODULES: &[&str] = &["sea", "sqlite", "test", "test/reporters"];
+
+/// `isCore` of `resolve` (`is-core-module`): a core module's name, with or without `node:`, or one of the names
+/// it knows only with `node:`. Any other `node:` name is a package name (`Cannot find module 'node:x'`).
 fn is_node_core_module(specifier: &str) -> bool {
-    specifier.starts_with("node:") || NODE_CORE_MODULES.contains(&specifier)
+    match specifier.strip_prefix("node:") {
+        Some(name) => NODE_CORE_MODULES.contains(&name) || NODE_PREFIXED_ONLY_CORE_MODULES.contains(&name),
+        None => NODE_CORE_MODULES.contains(&specifier),
+    }
 }
 
 /// roblox-ts's transformer lookup, `resolve.sync(specifier, { basedir })` of `resolve` 1.22 with its defaults
@@ -957,6 +965,14 @@ mod tests {
         assert_eq!(found("dot-main"), Ok(format!("{root}/node_modules/dot-main/index.js")));
         // a core module wins over a package of its name
         assert_eq!(found("fs"), Ok("fs".into()));
+        // `node:` names: only those `is-core-module` lists
+        assert_eq!(found("node:fs"), Ok("node:fs".into()));
+        assert_eq!(found("node:fs/promises"), Ok("node:fs/promises".into()));
+        assert_eq!(found("node:test"), Ok("node:test".into()));
+        assert_eq!(found("node:test/reporters"), Ok("node:test/reporters".into()));
+        assert_eq!(found("test"), missing("test"));
+        assert_eq!(found("node:nope"), missing("node:nope"));
+        assert_eq!(found("node:test/mock_loader"), missing("node:test/mock_loader"));
         // `.\` is no path for resolve: a package name
         assert_eq!(found(r".\local"), missing(r".\local"));
     }
