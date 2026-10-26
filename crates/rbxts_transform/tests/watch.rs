@@ -5,7 +5,9 @@
 //!   included: an edit re-copies the asset and re-transforms only the importers);
 //! - `attack.script.json` on `tests/watch_fixtures/attack`: the review of the branch's attack sequence;
 //! - `references.script.json` on `tests/watch_fixtures/references`: TypeScript project references (edits in a
-//!   referenced project, errors, new and deleted files, hand-deleted outputs, a referenced tsconfig edit);
+//!   referenced project, errors, new and deleted files, hand-deleted outputs, a referenced tsconfig edit, projects
+//!   skipped while not dirty, edits made while a reference fails); `midsolution.script.json` on
+//!   `tests/watch_fixtures/midsolution`: the same through a solution config in the middle of the graph;
 //! - the kept-`Shared` contract, with a plugin that counts its `setup` and `rebuild_start` calls;
 //! - the clean of a declaration build over a used output directory, against roblox-ts's keep set, with a junction.
 //!
@@ -167,7 +169,25 @@ fn project_references_rebuild_as_clean_builds() {
     // a type change reaches the files that import it, across the reference boundary
     assert!(step(&results, "a referenced type change reaches the root's Luau (`+` becomes `..`)").transformed >= 3);
     assert_eq!(step(&results, "an unchanged save in a referenced project").transformed, 0);
+    // a project that is not dirty is not built (roblox-ts's `ProjectBuild`); one that failed is built again
+    assert_eq!(step(&results, "an edit in the root alone: both referenced projects are skipped").skipped, 2);
+    assert_eq!(step(&results, "an edit in shared alone: common is skipped").skipped, 1);
+    assert_eq!(step(&results, "a root edit while common still fails: common is built again and reports its error").skipped, 0);
     run_fixture_copying("references", "references-inc", &[], true, REFERENCES_COPY);
+}
+
+const MIDSOLUTION_COPY: &[&str] = &["src", "tsconfig.json", "base.json", "default.project.json", "package.json", "projects"];
+
+/// Project references through a solution config in the middle of the graph (`midsolution.script.json`): a failure
+/// below it blocks everything above it, a project that is not dirty is skipped, and every step equals a clean build.
+#[test]
+fn a_solution_config_in_the_middle_passes_failures_on() {
+    let Some(results) = run_fixture_copying("midsolution", "midsolution", &[], false, MIDSOLUTION_COPY) else { return };
+    assert_eq!(step(&results, "an edit in the root alone: every referenced project is skipped").skipped, 3);
+    let right = "an edit in right: left and common are skipped, the root rebuilt through the solution config";
+    assert_eq!(step(&results, right).skipped, 2);
+    assert_eq!(step(&results, "an unchanged save of the solution config: every project is dirty").skipped, 0);
+    run_fixture_copying("midsolution", "midsolution-inc", &[], true, MIDSOLUTION_COPY);
 }
 
 #[test]

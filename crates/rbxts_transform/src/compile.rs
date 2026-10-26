@@ -185,6 +185,10 @@ pub struct CompileReport {
     /// A build with project references: each project that builds, in build order, with its output roots and whether
     /// its build succeeded (a project whose references failed is not built: blocked). Empty otherwise.
     pub projects: Vec<ProjectOutcome>,
+    /// The diagnostics were thrown before any project was built (the project graph's: TS6306, TS6310, TS6202):
+    /// roblox-ts's `build` command prints them as its `DiagnosticError` does, as one formatted block in the order
+    /// found, then a line feed.
+    pub thrown: bool,
 }
 
 /// One project of a build with project references.
@@ -197,6 +201,8 @@ pub struct ProjectOutcome {
     pub ok: bool,
     /// Not built: a project it references failed or was blocked.
     pub blocked: bool,
+    /// Not built: not dirty (its last report repeated).
+    pub skipped: bool,
 }
 
 impl CompileReport {

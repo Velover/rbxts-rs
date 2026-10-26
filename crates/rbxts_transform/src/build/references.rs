@@ -3,8 +3,11 @@
 //!
 //! Each build makes the graph anew, then builds every project in build order, each with a [`BuildSession`] of its
 //! own (its committed state, incremental state and watch facts are its own), and the root last:
-//! - a solution config (only references) builds nothing;
-//! - a project whose references, directly or not, failed is not built (`blocked`), and reports nothing itself;
+//! - a solution config (only references) builds nothing, and passes its references' failure on;
+//! - a project whose references, directly or not (through solution configs too), failed is not built (`blocked`),
+//!   and reports nothing itself;
+//! - a project that is not dirty is not built: it reports its last diagnostics again (`ProjectBuild.build`'s
+//!   `dirty`; [`BuildSession::needs_build`]); a project its references make dirty is dirty;
 //! - every project gets the graph's facts ([`GraphContext`]): its project data (options and Rojo file as the graph
 //!   sets them), the reference paths an import of a referenced project's file names, and the other projects'
 //!   outputs, which are never its assets;
@@ -17,19 +20,19 @@
 //! rbxts-rs: deviations from roblox-ts, besides the per-project ones of [`BuildSession`]:
 //! - a build with an outDir override (parity runs) builds only the root: the referenced projects' outputs are read
 //!   as they are on disk;
-//! - every buildable project is built every time (roblox-ts skips one whose inputs did not change in watch mode);
-//!   an unchanged project transforms nothing and writes nothing, so only its program load is repeated;
+//! - what makes a project dirty is a superset of roblox-ts's (see [`BuildSession::needs_build`]);
 //! - the runtime files are copied by each runtime project's commit (a successful build), as in a build without
 //!   references, not before the build; a solution root of one deployment, which builds nothing, copies them after
-//!   its projects' builds.
+//!   its projects' builds, and only when they all built: a failing build writes nothing (DESIGN §14), where
+//!   roblox-ts copies them whatever the build does.
 
 use std::collections::{HashMap, HashSet};
 
 use rbxts_project::ProjectData;
-use rbxts_project::graph::{GraphError, ProjectGraph, ProjectNode};
+use rbxts_project::graph::{GraphError, ProjectGraph, ProjectNode, reference_key};
 
 use super::outputs::GraphOutputs;
-use super::session::{BuildSession, BuildSummary};
+use super::session::{BuildSession, BuildSummary, Replay};
 use crate::compile::{CompileOptions, CompileReport, ProjectOutcome};
 
 /// What the graph tells one project's builds.
@@ -71,7 +74,10 @@ pub(super) fn build_graph(root: &mut BuildSession<'_>, touched: &[String]) -> (C
             let mut report = CompileReport::default();
             match error {
                 GraphError::Project(error) => report.fatal = error.messages,
-                GraphError::Diagnostics(diagnostics) => report.diagnostics = diagnostics,
+                GraphError::Diagnostics(diagnostics) => {
+                    report.diagnostics = diagnostics;
+                    report.thrown = true;
+                }
             }
             return (report, BuildSummary::default());
         }
@@ -85,22 +91,30 @@ pub(super) fn build_graph(root: &mut BuildSession<'_>, touched: &[String]) -> (C
         output_roots: node.output_roots(),
         ok,
         blocked,
+        skipped: false,
     };
-    // the projects whose build failed or was blocked
+    let skipped = |node: &ProjectNode| ProjectOutcome { skipped: true, ..outcome(node, true, false) };
+    // a config of the graph (a tsconfig, an extended config, a Rojo file) changed: every project is dirty
+    let config_keys: HashSet<String> = graph.config_paths.iter().map(|p| reference_key(p, false)).collect();
+    let config_changed = touched.is_empty() || touched.iter().any(|p| config_keys.contains(&reference_key(p, false)));
+    // the projects whose build failed or that were blocked (solution configs included: they pass it on)
     let mut failed: HashSet<String> = HashSet::new();
+    // the projects that are dirty this build (dirty references make their consumers dirty)
+    let mut dirty: HashSet<String> = HashSet::new();
     let mut old: Vec<(String, BuildSession<'_>)> = std::mem::take(&mut root.references);
     let build_references = root.options.out_dir_override.is_none();
     let (references, root_node) = graph.nodes.split_at(graph.nodes.len() - 1);
     for node in references {
+        let blocked = node.dependencies.iter().any(|d| failed.contains(d));
+        let dependency_dirty = node.dependencies.iter().any(|d| dirty.contains(d));
         if node.path_translator.is_none() {
-            continue;
-        }
-        if node.dependencies.iter().any(|d| failed.contains(d)) {
-            failed.insert(node.key.clone());
-            outcomes.push(outcome(node, false, true));
-            continue;
-        }
-        if !build_references {
+            // a solution config builds nothing; it passes its references' failure and dirtiness on
+            if blocked {
+                failed.insert(node.key.clone());
+            }
+            if config_changed || dependency_dirty {
+                dirty.insert(node.key.clone());
+            }
             continue;
         }
         let mut session = match old.iter().position(|(key, _)| *key == node.key) {
@@ -120,8 +134,30 @@ pub(super) fn build_graph(root: &mut BuildSession<'_>, touched: &[String]) -> (C
                 session
             }
         };
+        if blocked {
+            failed.insert(node.key.clone());
+            dirty.insert(node.key.clone());
+            session.must_build = true;
+            outcomes.push(outcome(node, false, true));
+            root.references.push((node.key.clone(), session));
+            continue;
+        }
+        if !build_references {
+            root.references.push((node.key.clone(), session));
+            continue;
+        }
         session.graph = Some(GraphContext::of(node, &outputs));
+        if !(config_changed || dependency_dirty || session.needs_build(touched)) {
+            // not dirty: roblox-ts skips it and reports its last diagnostics again
+            let replay = session.replay.as_ref().map(Replay::report).unwrap_or_default();
+            outcomes.push(skipped(node));
+            reports.push((replay, BuildSummary::default()));
+            root.references.push((node.key.clone(), session));
+            continue;
+        }
+        dirty.insert(node.key.clone());
         let (report, summary) = session.build(touched);
+        record(&mut session, &report);
         if report.has_errors() {
             failed.insert(node.key.clone());
         }
@@ -132,20 +168,35 @@ pub(super) fn build_graph(root: &mut BuildSession<'_>, touched: &[String]) -> (C
 
     let node = &root_node[0];
     let blocked = node.dependencies.iter().any(|d| failed.contains(d));
-    let root_built = node.path_translator.is_some() && !blocked;
-    if root_built {
+    let dependency_dirty = node.dependencies.iter().any(|d| dirty.contains(d));
+    let root_ran = node.path_translator.is_some() && !blocked;
+    if root_ran {
         root.graph = Some(GraphContext::of(node, &outputs));
-        let (report, summary) = root.build_project(touched);
-        outcomes.push(outcome(node, !report.has_errors(), false));
-        reports.push((report, summary));
+        if build_references && !(config_changed || dependency_dirty || root.needs_build(touched)) {
+            let replay = root.replay.as_ref().map(Replay::report).unwrap_or_default();
+            outcomes.push(skipped(node));
+            reports.push((replay, BuildSummary::default()));
+        } else {
+            let (report, summary) = root.build_project(touched);
+            record(root, &report);
+            outcomes.push(outcome(node, !report.has_errors(), false));
+            reports.push((report, summary));
+        }
     } else if node.path_translator.is_some() {
+        root.must_build = true;
         outcomes.push(outcome(node, false, true));
     }
-    let (mut report, mut summary) = merge(reports, root_built);
+    let (mut report, mut summary) = merge(reports, root_ran);
     report.projects = outcomes;
-    if node.path_translator.is_none() && graph.shared_deployment && root.options.out_dir_override.is_none() {
-        // a solution root of one deployment builds nothing, yet its include folder is the one its projects use:
-        // roblox-ts copies its runtime files (`copyInclude` of the runtime projects) whatever the build does
+    if node.path_translator.is_none()
+        && graph.shared_deployment
+        && build_references
+        && failed.is_empty()
+        && !report.has_errors()
+    {
+        // a solution root of one deployment builds nothing, yet its include folder is the one its projects use. roblox-ts
+        // copies the runtime files before building, whatever the build does; rbxts-rs copies them only when every
+        // project built (a failing build writes nothing, DESIGN §14)
         let copied = crate::project::copy_include::prepare_copy_include_of(&node.data)
             .and_then(|copy| copy.map_or_else(|| Ok(Vec::new()), |copy| copy.commit()));
         match copied {
@@ -154,6 +205,12 @@ pub(super) fn build_graph(root: &mut BuildSession<'_>, touched: &[String]) -> (C
         }
     }
     (report, summary)
+}
+
+/// Keeps what a project's build reported for the builds that skip it, and whether the next one must build it.
+fn record(session: &mut BuildSession<'_>, report: &CompileReport) {
+    session.must_build = report.has_errors();
+    session.replay = (!report.has_errors()).then(|| Replay::of(report));
 }
 
 /// The reports of a graph's builds as one: the last one's (the root's, when it was built) with every other one's

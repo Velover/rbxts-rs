@@ -216,6 +216,34 @@ pub struct BuildSession<'p> {
     pub(super) is_reference: bool,
     /// The config paths of the last project graph made (watched).
     pub(super) graph_config_paths: Vec<String>,
+    /// In a build with project references: what this project's last build reported, replayed while it is not
+    /// dirty (roblox-ts keeps a clean project's last diagnostics); None until a build succeeded.
+    pub(super) replay: Option<Replay>,
+    /// In a build with project references: the next build must build this project (its last build failed, or it
+    /// was blocked by a reference that did).
+    pub(super) must_build: bool,
+}
+
+/// A project's last report, as a build that skips it reports it again.
+#[derive(Clone, Default)]
+pub(super) struct Replay {
+    /// Its diagnostics, the transform's included.
+    pub diagnostics: Vec<P<Diagnostic>>,
+    pub warnings: Vec<String>,
+}
+
+impl Replay {
+    pub(super) fn of(report: &CompileReport) -> Replay {
+        let mut diagnostics = report.diagnostics.clone();
+        for file in &report.files {
+            diagnostics.extend(file.diagnostics.iter().copied());
+        }
+        Replay { diagnostics, warnings: report.warnings.clone() }
+    }
+
+    pub(super) fn report(&self) -> CompileReport {
+        CompileReport { diagnostics: self.diagnostics.clone(), warnings: self.warnings.clone(), ..CompileReport::default() }
+    }
 }
 
 /// What one build decided, for reports and events.
@@ -268,6 +296,8 @@ impl<'p> BuildSession<'p> {
             references: Vec::new(),
             is_reference: false,
             graph_config_paths: Vec::new(),
+            replay: None,
+            must_build: true,
         }
     }
 
@@ -538,6 +568,45 @@ impl<'p> BuildSession<'p> {
         self.committed = committed;
         self.last = last;
         (report, summary)
+    }
+
+    /// Whether this project of a build with project references is dirty (roblox-ts's `ProjectBuild.build`):
+    /// a first build (no paths touched), its last build failed or was blocked, or one of `touched` concerns it:
+    /// under its root dirs, one of its program files, configs (Rojo files and plugin inputs included) or plugin state
+    /// files, under a plugin's watched directory, a recorded plugin input that answers differently, or a path its
+    /// last program load read or probed (or in a directory it listed, or above one). rbxts-rs: also any path under a
+    /// `node_modules` and any Rojo project file, which roblox-ts leaves to its watcher. A project its references
+    /// make dirty is dirty too (the caller's).
+    pub(super) fn needs_build(&self, touched: &[String]) -> bool {
+        if touched.is_empty() || self.must_build || self.replay.is_none() || self.committed.is_none() {
+            return true;
+        }
+        let Some(last) = &self.last else { return true };
+        let services = &last.services;
+        let key = |path: &str| path_key_of(services, path);
+        let Some((_, files, roots)) = self.watch_roots() else { return true };
+        if self.recorded_inputs_changed(Some(touched)) {
+            return true;
+        }
+        let under = |path: &str, root: &str| outputs::is_descendant_key(path, root);
+        let roots: Vec<String> =
+            roots.iter().map(|r| key(r)).chain(self.plugin_watch_dirs().iter().map(|d| key(d))).collect();
+        let mut exact: FxHashSet<String> = files.iter().map(|f| key(f)).collect();
+        exact.extend(self.config_inputs().iter().map(|c| key(c)));
+        exact.extend(self.state_files().iter().map(|s| key(&s.path)));
+        let reads: Vec<String> = self
+            .reads
+            .as_ref()
+            .map(|log| log.entries().into_iter().map(|(path, _)| key(&path)).collect())
+            .unwrap_or_default();
+        touched.iter().any(|path| {
+            let k = key(path);
+            k.contains("/node_modules/")
+                || k.ends_with(".project.json")
+                || exact.contains(&k)
+                || roots.iter().any(|root| under(&k, root))
+                || reads.iter().any(|read| under(read, &k) || nodepath::dirname(&k) == read)
+        })
     }
 
     pub(super) fn tsconfig_path(&self) -> String {

@@ -64,7 +64,7 @@ pub fn path_key(services: &ProjectServices, path: &str) -> String {
 }
 
 /// `isPathDescendantOf` on keys: `path` is `root` or inside it.
-fn is_descendant_key(path: &str, root: &str) -> bool {
+pub(super) fn is_descendant_key(path: &str, root: &str) -> bool {
     path == root || (path.len() > root.len() && path.starts_with(root) && path.as_bytes()[root.len()] == b'/')
 }
 

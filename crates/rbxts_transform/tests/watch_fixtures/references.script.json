@@ -65,6 +65,36 @@
 		{
 			"name": "an unchanged save in a referenced project",
 			"do": [{ "touch": "projects/shared/src/index.ts" }]
+		},
+		{
+			"name": "an edit in the root alone: both referenced projects are skipped",
+			"do": [{ "patch": { "file": "src/greet.ts", "find": "return `hello ${name}`;", "replace": "return `hi ${name}`;" } }]
+		},
+		{
+			"name": "an edit in shared alone: common is skipped",
+			"do": [{ "patch": { "file": "projects/shared/src/index.ts", "find": "public name = \"shared\";", "replace": "public name = \"shared!\";" } }]
+		},
+		{
+			"name": "an error in common and a root edit in one build: nothing is written",
+			"do": [
+				{ "patch": { "file": "projects/common/src/index.ts", "find": "export function add(value: number)", "replace": "export function add(value: nmber)" } },
+				{ "patch": { "file": "src/greet.ts", "find": "return `hi ${name}`;", "replace": "return `hey ${name}`;" } }
+			],
+			"expect": "error"
+		},
+		{
+			"name": "a root edit while common still fails: common is built again and reports its error",
+			"do": [{ "patch": { "file": "src/greet.ts", "find": "return `hey ${name}`;", "replace": "return `hello ${name}`;" } }],
+			"expect": "error"
+		},
+		{
+			"name": "an edit in shared while common still fails",
+			"do": [{ "patch": { "file": "projects/shared/src/index.ts", "find": "public name = \"shared!\";", "replace": "public name = \"shared\";" } }],
+			"expect": "error"
+		},
+		{
+			"name": "common fixed: every project builds the edits made while it failed",
+			"do": [{ "patch": { "file": "projects/common/src/index.ts", "find": "export function add(value: nmber)", "replace": "export function add(value: number)" } }]
 		}
 	]
 }

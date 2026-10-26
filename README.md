@@ -111,13 +111,19 @@ error 6202), each project inheriting the root's command-line options, validates 
 `noEmit`, Rojo paths for every runtime project, overlapping output roots) and maps each referenced project's root
 dirs to its Rojo output path, so an import across the boundary names the referenced project's output
 (`util/create_import_expression.rs`). Each project is a `BuildSession` of its own (incremental and watch state
-included), built before the projects that reference it; a project whose references failed is blocked (not built,
-nothing written), and the build reports every project's outcome (`CompileReport.projects`). A solution root (no
-files of its own) only copies the runtime include. The root program reads a referenced project's output
+included), built before the projects that reference it; a project whose references failed, directly or through a
+solution config, is blocked (not built, nothing written), and the build reports every project's outcome
+(`CompileReport.projects`). A project that is not dirty (no change under its root dirs, program files, configs,
+reads or plugin inputs, and no dirty reference: `BuildSession::needs_build`) is not built, and its last diagnostics
+are reported again, as roblox-ts does in watch mode. A solution root (no files of its own) only copies the runtime
+include, and only when every project built: roblox-ts copies it whatever the build does, rbxts-rs writes nothing
+for a failing build (DESIGN §14), on purpose. Graph errors (TS6306, TS6310, TS6202) are printed as roblox-ts's
+`DiagnosticError` prints them. The root program reads a referenced project's output
 declarations where module resolution names its sources; the incremental closure and the transform order follow that
 redirect, so an edit in a referenced project reaches its importers. `rbxtsc -w` watches every project of the graph
 and ignores every project's output roots. Deviations: `--out-dir` builds the root project only (roblox-ts would point
-every project at the one directory); every project is rebuilt (its closure only) on each watch event.
+every project at the one directory); what makes a project dirty is a superset of roblox-ts's (any change under a
+`node_modules` or to a Rojo project file).
 
 **Declarations** (`project/emit_declarations.rs`): a `declaration` or `composite` build checks the declaration
 diagnostics with the others and emits the `.d.ts` (and `.d.ts.map`) of every transformed file through tsrs's

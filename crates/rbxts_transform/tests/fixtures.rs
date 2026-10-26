@@ -72,6 +72,9 @@
 //!   are dropped).
 //! - `macros`: every call, identifier, constructor and property-call macro, as values and statements, on optional
 //!   chains and with evaluation-order cases.
+//! - `midsolution`: project references through a solution config in the middle of the graph (`projects/group`, only
+//!   references): its written `out` tree (maps TypeScript 7's, `expected-ts5/` keeps stock's), and with an error in
+//!   the deepest project or in one branch ([`midsolution_errors`]: the failure blocks every project above it).
 //! - `project_references`: TypeScript project references (a root, `projects/shared` and `projects/common`, both
 //!   `composite` with a `declarationDir`): each project's written output tree (`expected/<outDir>`, build infos
 //!   left out), imports across the reference boundary included.
@@ -701,6 +704,61 @@ fn write_transformed_without_transformers() {
         if std::fs::read(project.root.join("out").join(file)).ok() != std::fs::read(fixture.join("expected").join(file)).ok()
         {
             failures.push(format!("{file}: differs from expected"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// A solution config in the middle of the graph: the root references `projects/group` (`files: []`, only
+/// references), which references `left` and `right`, both referencing `common`. `expected/` is stock's `out`.
+#[test]
+fn midsolution() {
+    check_tree("midsolution");
+}
+
+/// `midsolution` with an error: the solution config in the middle passes the failure on, as roblox-ts's `blocked`
+/// does. An error in `common` blocks every other project (stock reports that error alone and writes no output); one
+/// in `left` blocks the group and the root, while `common` and `right` build (`expected-error-left/`, stock's `out`
+/// but for its runtime include copy, which rbxts-rs leaves to a successful build).
+#[test]
+fn midsolution_errors() {
+    let Ok(node_modules) = node_modules() else { return };
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/midsolution");
+    let cases: [(&str, &str, &str, &str, &str); 2] = [
+        (
+            "common",
+            "projects/common/src/util/math.ts",
+            "export const twice",
+            "export const bad: number = \"x\";\nexport const twice",
+            "error projects/common/src/util/math.ts: Type 'string' is not assignable to type 'number'.",
+        ),
+        (
+            "left",
+            "projects/left/src/index.ts",
+            "make(twice(1))",
+            "make(\"1\")",
+            "error projects/left/src/index.ts: Argument of type 'string' is not assignable to parameter of type 'number'.",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (case, file, find, replace, expected_error) in cases {
+        let mut project = TempProject::copy_of(&fixture, &format!("midsolution-error-{case}"));
+        project.link("node_modules", &node_modules);
+        let path = project.root.join(file);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(find), "{case}: {file} has no `{find}`");
+        std::fs::write(&path, text.replacen(find, replace, 1)).unwrap();
+        let report = build(&project.root, true, &[]);
+        let lines = reported(&report, &project.root);
+        if lines != [expected_error] {
+            failures.push(format!("{case}: reported {lines:?}"));
+        }
+        let expected = fixture.join(format!("expected-error-{case}"));
+        failures.extend(
+            compare_one_tree(&project.root.join("out"), &expected, "out/").into_iter().map(|f| format!("{case}: {f}")),
+        );
+        if project.root.join("include").exists() {
+            failures.push(format!("{case}: a failing build copied the runtime include"));
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));

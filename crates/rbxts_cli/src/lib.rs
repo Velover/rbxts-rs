@@ -263,7 +263,13 @@ impl Cli {
         }
         let plugin_options = PluginOptions { plugins: &self.plugins, ..PluginOptions::default() };
         let report = compile_project_with(&options, &plugin_options);
-        print_report(&report, &cwd, &build);
+        if report.thrown {
+            // `DiagnosticError.log`: `formatDiagnostics` of them all, then `LogService.writeLine`'s line feed
+            let text: String = report.diagnostics.iter().map(|d| format_diagnostic(*d, &cwd)).collect();
+            println!("{text}");
+        } else {
+            print_report(&report, &cwd, &build);
+        }
         u8::from(report.has_errors())
     }
 }
