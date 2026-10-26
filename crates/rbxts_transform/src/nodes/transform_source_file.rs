@@ -38,7 +38,8 @@ fn get_export_pair(state: &mut TransformState<'_>, export_symbol: P<Symbol>) -> 
         {
             name = declaration_name.text();
         }
-        (create::string(export_symbol.name()), create::id(name))
+        // rbxts-rs: an export named by a string (`export { x as "a\b" }`) has its decoded value as its name
+        (crate::util::create_string_from_literal::create_string_from_value(export_symbol.name()), create::id(name))
     }
 }
 

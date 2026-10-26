@@ -12,6 +12,7 @@ use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::expressions::transform_identifier::transform_identifier_defined;
 use crate::nodes::transform_property_name::transform_property_name;
 use crate::shared::diagnostics::errors;
+use crate::util::create_string_from_literal::create_string_from_value;
 use crate::util::expression_might_mutate::expression_might_mutate;
 use crate::util::has_multiple_definitions::has_multiple_definitions;
 use crate::util::symbols::validate_identifier;
@@ -66,7 +67,8 @@ pub fn transform_enum_declaration(state: &mut TransformState<'_>, node: P<Node>)
             let Some(LiteralValue::String(value)) = get_constant_value(state, member) else {
                 unreachable!("every member has a string value")
             };
-            fields.push((key, create::string(value)));
+            // rbxts-rs: fixes roblox-ts passing the decoded value to `luau.string`, which renders it as source text
+            fields.push((key, create_string_from_value(value)));
         }
         statements.extend(prereqs.statements);
         let right = create::map(fields);
@@ -104,7 +106,8 @@ pub fn transform_enum_declaration(state: &mut TransformState<'_>, node: P<Node>)
         };
 
         let value_exp = match get_constant_value(state, member) {
-            Some(LiteralValue::String(value)) => create::string(value),
+            // rbxts-rs: the value, not source text (`create_string_from_value`)
+            Some(LiteralValue::String(value)) => create_string_from_value(value),
             Some(LiteralValue::Number(value)) => create::number(value.0),
             _ => {
                 // the constant value is always a number without an initializer

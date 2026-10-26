@@ -105,17 +105,21 @@ pub fn create_string_from_literal(node: P<Node>) -> String {
         }
         i += escape_len;
     }
-    out
+    // rbxts-rs: fixes roblox-ts copying a raw NUL (written in the source, or after a backslash) into the output, which
+    // Luau rejects in every kind of string ("Malformed string"). `\x00` takes exactly two digits, so a following
+    // digit stays a digit. Escapes stay escapes: a NUL character here is always a NUL in the value.
+    if out.contains('\0') { out.replace('\0', "\\x00") } else { out }
 }
 
 /// rbxts-rs: a Luau string literal whose value is exactly `value` (plain text, not source text). roblox-ts passes such
 /// values to `luau.string`, whose renderer treats them as source text between delimiters. Text that renders as
-/// itself keeps that spelling; other text is escaped ([`rbxts_plugin::text_literal`]): text with a backslash or a
-/// carriage return (Luau would read an escape or a line end), and text with a leading newline that the renderer
-/// puts in a long bracket (`[[` drops a newline right after it).
+/// itself keeps that spelling; other text is escaped ([`rbxts_plugin::text_literal`]): text with a NUL (malformed in
+/// every Luau string) or a carriage return (malformed between quotes; a long bracket reads CR LF as LF), text the
+/// renderer puts between quotes with a backslash (an escape there), and text it puts in a long bracket with a leading
+/// newline (`[[` drops a newline right after it). A long bracket reads a backslash as itself.
 pub fn create_string_from_value(value: &str) -> rbxts_luau::Expr {
     let long_bracket = value.contains('\n') || (value.contains('"') && value.contains('\''));
-    let renders_as_itself =
-        !value.contains('\\') && !value.contains('\r') && !(long_bracket && value.starts_with('\n'));
+    let renders_as_itself = !value.contains(['\r', '\0'])
+        && if long_bracket { !value.starts_with('\n') } else { !value.contains('\\') };
     if renders_as_itself { rbxts_luau::create::string(value) } else { rbxts_plugin::text_literal(value) }
 }
