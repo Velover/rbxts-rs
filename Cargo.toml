@@ -20,6 +20,9 @@ tsrs_compiler = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/cra
 tsrs_diagnostics = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_diagnostics" }
 tsrs_checker = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_checker" }
 tsrs_scanner = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_scanner" }
+tsrs_parser = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_parser" }
+tsrs_printer = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_printer" }
+tsrs_sourcemap = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_sourcemap" }
 mimalloc-safe = { version = "0.1.67", features = ["v3", "no_thp"] }
 rbxts_project = { path = "crates/rbxts_project" }
 rbxts_luau = { path = "crates/rbxts_luau" }

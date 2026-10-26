@@ -203,6 +203,17 @@ pub fn prepare_copy_include(
     Ok(Some(IncludeCopy { source, files, luau: data.options.luau }))
 }
 
+/// The include copy of a project that is built by none of its own (a solution config of one deployment, whose
+/// referenced projects use its include folder), or None when it gets none.
+pub fn prepare_copy_include_of(data: &rbxts_project::ProjectData) -> Result<Option<IncludeCopy>, String> {
+    if !wants_include(&data.options, data.is_package) {
+        return Ok(None);
+    }
+    let source = find_include_source(&data.project_path);
+    let files = get_include_files(&source, &data.options.include_path, data.options.luau)?;
+    Ok(Some(IncludeCopy { source, files, luau: data.options.luau }))
+}
+
 impl IncludeCopy {
     /// Writes the files whose bytes differ, each after deleting its output's alternate extension (`.lua` beside a
     /// `.luau` output, or the reverse). Returns the files written.

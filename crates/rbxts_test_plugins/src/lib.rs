@@ -13,6 +13,7 @@
 //!   equal a build without plugins.
 //! - [`inputs`]: `probe-inputs`, every build input and persistence method of DESIGN §14 (environment, globs,
 //!   recorded finish reads, `remove_empty_dir`, encoded file parts, a diagnostic source).
+//! - [`transformer`]: claims a tsconfig transform and does nothing (the `--writeTransformedFiles` fixture).
 //! - [`scan`]: a `Shared` that depends on whether the plugin's own state file exists, as Flamework's candidate scan's;
 //!   `scan-reader`, one that depends on the bytes of `scan`'s state file.
 
@@ -23,6 +24,7 @@ pub mod identity;
 pub mod inputs;
 pub mod probe;
 pub mod scan;
+pub mod transformer;
 
 use rbxts_plugin::erased::{DynPlugin, erase};
 
@@ -51,6 +53,7 @@ pub const NAMES: &[&str] = &[
     "probe-inputs",
     "scan",
     "scan-reader",
+    "transformer",
 ];
 
 /// A test plugin by name (`rbxts-bench build --plugin <name>`).
@@ -80,6 +83,7 @@ pub fn by_name(name: &str) -> Option<Box<dyn DynPlugin>> {
         "probe-inputs" => erase(inputs::InputsProbe),
         "scan" => erase(scan::Scan),
         "scan-reader" => erase(scan::ScanReader),
+        "transformer" => erase(transformer::Transformer),
         _ => return None,
     })
 }
