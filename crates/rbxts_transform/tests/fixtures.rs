@@ -23,7 +23,8 @@
 //! - `binding`: destructuring in declarations (`export let` and hoisted names included), parameters (rest tuples
 //!   too) and assignments (optimized, nested, below a rest element, used as values), over arrays, tuples, LuaTuple
 //!   calls, strings, sets, maps, iterable functions, generators and `SharedTable`; computed, string and numeric keys
-//!   on strings and arrays; patterns in class constructors and methods.
+//!   on strings and arrays; patterns in class constructors and methods. A hole in an optimized LuaTuple assignment
+//!   declares its temporary (`local _`), which stock roblox-ts leaves a global (the `stockfix` fixture).
 //! - `classes`: class declarations and expressions, constructors (parameter properties, property initializers,
 //!   `super` calls), methods with unusual names, static members and blocks, `this` in static members, hoisting,
 //!   default exports, and every kind of decorator. TypeScript 5 lists exported functions first and TypeScript 7 in

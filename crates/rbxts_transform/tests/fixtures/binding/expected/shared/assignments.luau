@@ -75,6 +75,7 @@ local function assignments()
 	objRest = _rest
 	-- LuaTuple calls
 	a, b = luaTuple()
+	local _
 	_, b = luaTuple()
 	local _index = getIndex() + 1
 	target.p, list[_index] = luaTuple()

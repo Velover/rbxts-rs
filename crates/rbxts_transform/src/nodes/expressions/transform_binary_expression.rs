@@ -51,7 +51,11 @@ fn transform_optimized_array_assignment_pattern(
     let mut binding_prereqs = Prereqs::new();
     for &element in assignment_pattern.elements() {
         if element.kind() == Kind::OmittedExpression {
-            writes.push(Expr::TemporaryIdentifier(temp_id("")));
+            // rbxts-rs: fixes roblox-ts never declaring a hole's temporary: `[, q, , p] = tup()` wrote the globals `_`
+            // and `_1`. It is declared with the pattern's other temporaries (`local _, _1`).
+            let hole = temp_id("");
+            variables.push(AnyIdentifier::Temporary(hole.clone()));
+            writes.push(Expr::TemporaryIdentifier(hole));
             continue;
         }
         // callers only select this optimization for patterns without spread elements
