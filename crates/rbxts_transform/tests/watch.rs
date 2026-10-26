@@ -239,6 +239,15 @@ fn plugin_diagnostic_duplicates_rebuild_as_clean_builds() {
     run_script("plugindiag", "plugindiag-errors", "plugindiag-errors-inc", &["stamp", "probe"], true);
 }
 
+/// A tsconfig without `types` (`autotypes.script.json`): every package of the type roots is in the program, as in
+/// TypeScript 5, and a package appearing, changing, turning `"typings": null` or going is a change the watcher and the
+/// incremental state see.
+#[test]
+fn automatic_type_packages_rebuild_as_clean_builds() {
+    run_fixture("autotypes", "autotypes", &[], false);
+    run_fixture("autotypes", "autotypes-inc", &[], true);
+}
+
 #[test]
 fn watch_rebuilds_equal_clean_builds_without_plugins() {
     run_basic("plain", &[], false);

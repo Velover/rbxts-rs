@@ -417,6 +417,22 @@ pub fn diagnostic_texts(report: &CompileReport, root: &Path) -> Vec<String> {
 }
 
 
+/// `path` made absolute (against the working directory), with its `.` and `..` components resolved.
+fn normalized_absolute(path: &Path) -> Result<PathBuf, String> {
+    let absolute = std::path::absolute(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut out = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    Ok(out)
+}
+
 /// Runs the script; the results of the initial build (step 0) and of every step.
 ///
 /// The clean build of a step runs in a copy of `work/` (`clean-<n>/`) when plugins are registered, since their
@@ -425,8 +441,10 @@ pub fn diagnostic_texts(report: &CompileReport, root: &Path) -> Vec<String> {
 /// and tsconfig, not the project folder with its outputs); without either it runs in `work/` itself with its outDir moved
 /// to `clean-<n>/out` (no copy, and packages resolve the same), and the two output trees are compared.
 pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResult>, String> {
-    remove_tree(&options.scratch);
-    let work = options.scratch.join("work");
+    // absolute and normalized, as the builds' file names must be (a relative `--scratch` would reach tsrs as it is)
+    let scratch = normalized_absolute(&options.scratch)?;
+    remove_tree(&scratch);
+    let work = scratch.join("work");
     std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
     let node_modules = options.node_modules.clone().unwrap_or_else(|| options.source.join("node_modules"));
     let copy_sources = |from: &Path, to: &Path| -> Result<(), String> {
@@ -496,7 +514,6 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
     let mut last_committed = session.committed_states();
     for (index, step) in all_steps.iter().enumerate() {
         let seed = if options.incremental { last_committed.clone() } else { session.committed_states() };
-        let before = outputs_of(snapshot(&work));
         let touched = match apply(&work, &step.actions) {
             Ok(touched) => touched,
             Err(e) => {
@@ -505,6 +522,9 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
                 return Ok(results);
             }
         };
+        // the outputs as the step's edits left them (a hand-deleted or hand-edited output included): what a
+        // failing build must leave unchanged
+        let before = outputs_of(snapshot(&work));
         let start = std::time::Instant::now();
         if options.incremental {
             session = BuildSession::new(compile_options(&work, None), &plugin_options, false);
@@ -543,7 +563,7 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
             continue;
         }
         // the clean build of the same sources, seeded with the state the watcher's build started from
-        let clean = options.scratch.join(format!("clean-{index}"));
+        let clean = scratch.join(format!("clean-{index}"));
         let start = std::time::Instant::now();
         let (clean_report, clean_root, clean_tree) = if in_copy {
             copy_sources(&work, &clean)?;
@@ -787,4 +807,16 @@ fn link_original_packages(from: &Path, to: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_relative_scratch_becomes_absolute_and_normalized() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(normalized_absolute(Path::new("a/./b/../c")).unwrap(), cwd.join("a").join("c"));
+        assert_eq!(normalized_absolute(Path::new("../x")).unwrap(), cwd.parent().unwrap().join("x"));
+    }
 }
