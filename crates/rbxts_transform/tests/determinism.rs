@@ -178,8 +178,10 @@ fn differences(
 /// A project whose diagnostics roblox-ts reports once per compilation (`addDiagnosticWithCache`): an `any` export
 /// used in five modules; an `any` member of a generic interface read through two instantiations from two files in
 /// another folder (the validator's case: whether a checker answers with the declared symbol or an instantiated
-/// one depends on what it checked before); and an enum and a namespace merged in one file (roblox-ts requires
-/// `moduleDetection: force`, so merged declarations never span files). Its configs are `exprs`'s.
+/// one depends on what it checked before); `any` properties read through a union's synthetic property, a mapped
+/// type's property and a tuple element next to their sources (stock roblox-ts 3.0.0 reports 9 there, `z.ts`); and an
+/// enum and a namespace merged in one file (roblox-ts requires `moduleDetection: force`, so merged declarations never
+/// span files). Its configs are `exprs`'s.
 fn once_fixture(configs: &Path) -> PathBuf {
     let root = std::env::temp_dir().join(format!("rbxts-rs-determinism-once-src-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
@@ -204,6 +206,31 @@ fn once_fixture(configs: &Path) -> PathBuf {
         "import { hn, hs } from \"../x/p\";\nexport const one = hs.value.x;\nexport const two = hn.value.x;\n",
     );
     write("y/r.ts", "import { hs } from \"../x/p\";\nexport const three = hs.value.x;\n");
+    // the validator's `single` case (val-s3par2)
+    write(
+        "z.ts",
+        r#"interface H<T> { r: Record<"a", any>; tup: [any, string]; t: T }
+declare const hs: H<string>;
+declare const hn: H<number>;
+export const z1 = hs.tup[0].x;
+export const z2 = hn.tup[0].x;
+export const z3 = hs.r.a.x;
+export const z4 = hn.r.a.x;
+interface Alpha { value: any; a: 1 }
+interface Beta { value: any; b: 1 }
+declare const u: Alpha | Beta;
+declare const al: Alpha;
+declare const be: Beta;
+export const z5 = u.value.x;
+export const z6 = al.value.x;
+export const z7 = be.value.x;
+interface Src { value: any; n: number }
+declare const ps: Partial<Src>;
+declare const src: Src;
+export const z8 = ps.value.x;
+export const z9 = src.value.x;
+"#,
+    );
     write(
         "g.ts",
         "export enum Merged {\n\tA = 1,\n}\nexport enum Merged {\n\tB = 2,\n}\n\
@@ -244,7 +271,7 @@ fn outputs_and_diagnostics_do_not_depend_on_the_checkers() {
         if label == "once" {
             // a failing build: nothing written, each once-per-compilation diagnostic reported once
             let count = |text: &str| reference.1.iter().filter(|l| l.contains(text)).count();
-            assert_eq!(count("type `any` is not supported"), 2, "{:?}", reference.1);
+            assert_eq!(count("type `any` is not supported"), 2 + 9, "{:?}", reference.1);
             assert_eq!(count("Enum merging is not supported"), 1, "{:?}", reference.1);
             assert_eq!(count("Namespace merging is not supported"), 1, "{:?}", reference.1);
             assert!(!reference.0.keys().any(|p| p.ends_with(".luau")), "{:?}", reference.0.keys());

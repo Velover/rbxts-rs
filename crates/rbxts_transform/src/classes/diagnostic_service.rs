@@ -9,7 +9,7 @@
 
 use rustc_hash::FxHashSet;
 
-use tsrs_ast::{Diagnostic, Node, SourceFile, Symbol, SymbolFlags};
+use tsrs_ast::{CheckFlags, Diagnostic, Node, SourceFile, Symbol, SymbolFlags};
 use tsrs_core::P;
 use tsrs_diagnostics::Category;
 
@@ -60,18 +60,23 @@ pub enum OnceCache {
 }
 
 /// rbxts-rs: the key of a once-per-compilation diagnostic, the same on every checker and whatever each checker
-/// checked before. A symbol with declarations is keyed by its first declaration and its name, whether it is the
-/// binder's symbol or one a checker made (merged or instantiated: `Transient`, a different object on each checker).
-/// The two must share a key: `instantiateSymbol` answers a property of an instantiation (`Holder<string>.value`) with
+/// checked before. A symbol with declarations is keyed by its first declaration, its name, its declaration count and
+/// the check flags that say what kind of symbol a checker made ([`KIND_FLAGS`]: a mapped type's property, a reverse
+/// mapped one, a union or intersection's synthetic property), whether it is the binder's symbol or one a checker made
+/// (merged or instantiated: `Transient`, a different object on each checker). An instantiation and its declared
+/// symbol must share a key: `instantiateSymbol` answers a property of an instantiation (`Holder<string>.value`) with
 /// the declared symbol when that property's type is already resolved and has no type variables, else with a new
-/// transient one, so which of the two a checker gives depends on what it resolved before. A symbol without
-/// declarations has no identity across checkers: a binder one is its own key, a transient one is reported once per
-/// file.
+/// transient one (`Instantiated`, left out of the key), so which of the two a checker gives depends on what it
+/// resolved before. The kind flags don't depend on history: a checker makes a mapped type's properties and a union's
+/// synthetic properties anew for each such type, never from what it resolved earlier. A symbol without declarations
+/// has no identity across checkers: a binder one is its own key, a transient one is reported once per file.
 ///
-/// Against stock roblox-ts (one checker, keyed by symbol object): the same, except that two distinct symbols with
-/// one first declaration and name report once here, where stock may report each. That needs a property whose type
-/// does depend on the instantiation (`value: T` with `T = any` in two instantiations), or a mapped type's property
-/// next to its source property; and stock's own answer there depends on its checker's history too.
+/// Against stock roblox-ts (one checker, keyed by symbol object): the same, and stock reports a union's
+/// (`(Alpha | Beta).value`) or a mapped type's (`Partial<Src>.value`) property apart from its source's, as here.
+/// Two distinct symbols of one kind with the same declarations still share a key here, where stock reports each:
+/// `Partial<Src>.value` next to `Readonly<Src>.value`, or one union property next to another with the same
+/// declarations. Only the instantiation case (`value: T` with `T = any` in two instantiations of one interface,
+/// each a new symbol or the declared one) depends on stock's checker history.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ReportOnce {
     cache: OnceCache,
@@ -81,15 +86,20 @@ pub struct ReportOnce {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum OnceKey {
     Symbol(P<Symbol>),
-    Declared(P<Node>, &'static str),
+    Declared(P<Node>, &'static str, CheckFlags, usize),
     InFile(P<Symbol>, P<SourceFile>),
 }
+
+/// The check flags in a [`ReportOnce`] key: those of a symbol a checker makes for a mapped type or a union or
+/// intersection, which never depend on what the checker resolved before (unlike `Instantiated`).
+const KIND_FLAGS: CheckFlags = CheckFlags::Mapped.union(CheckFlags::ReverseMapped).union(CheckFlags::Synthetic);
 
 impl ReportOnce {
     /// The key of `symbol` in `cache`, reported in `file`.
     pub fn new(cache: OnceCache, symbol: P<Symbol>, file: P<SourceFile>) -> ReportOnce {
         let key = if let Some(&declaration) = symbol.declarations().first() {
-            OnceKey::Declared(declaration, symbol.name())
+            let kind = symbol.check_flags() & KIND_FLAGS;
+            OnceKey::Declared(declaration, symbol.name(), kind, symbol.declarations().len())
         } else if !symbol.flags().intersects(SymbolFlags::Transient) {
             OnceKey::Symbol(symbol)
         } else {
