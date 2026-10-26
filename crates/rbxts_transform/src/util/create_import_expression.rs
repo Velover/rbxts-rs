@@ -263,17 +263,26 @@ pub fn get_import_parts_of_file(
 ) -> Vec<Expr> {
     let module_file_name = module_file.get().file_name().to_owned();
     let virtual_path = state.guess_virtual_path(&module_file_name).unwrap_or_else(|| module_file_name.clone());
-    // rbxts-rs: project references (`data.projectReferencePaths`) are not ported yet
+    let reference_path = if state.services.project_reference_paths.is_empty() {
+        None
+    } else {
+        let key = rbxts_project::graph::reference_key(&virtual_path, state.services.use_case_sensitive_file_names);
+        state.services.project_reference_paths.get(&key).cloned()
+    };
 
-    if is_inside_node_modules(&virtual_path) {
+    if reference_path.is_none() && is_inside_node_modules(&virtual_path) {
         let mapped_path = state.services.node_modules_main_for(&virtual_path).map(str::to_owned);
         let module_out_path =
             state.services.path_translator.get_import_path(mapped_path.as_deref().unwrap_or(&virtual_path), true);
         get_node_modules_import_parts(state, source_file, module_specifier, &module_out_path, &module_file_name)
     } else {
-        let mut module_out_path = state.services.path_translator.get_import_path(&virtual_path, false);
+        let is_reference = reference_path.is_some();
+        let mut module_out_path =
+            reference_path.unwrap_or_else(|| state.services.path_translator.get_import_path(&virtual_path, false));
 
-        if !rbxts_project::setup::is_path_descendant_of(&virtual_path, &state.services.path_translator.root_dir) {
+        if !is_reference
+            && !rbxts_project::setup::is_path_descendant_of(&virtual_path, &state.services.path_translator.root_dir)
+        {
             // hand-written declarations and JSON outside the source roots describe files mapped directly by Rojo
             if tsrs_core::tspath::is_declaration_file_name(&virtual_path) {
                 let ext = if state.services.data.options.luau { ".luau" } else { ".lua" };

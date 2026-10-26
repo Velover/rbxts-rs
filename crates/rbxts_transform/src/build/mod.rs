@@ -17,6 +17,7 @@ pub mod outputs;
 pub(crate) mod parallel;
 pub mod parity;
 pub mod plugin_inputs;
+pub(crate) mod references;
 pub mod session;
 pub mod state;
 pub mod transform_order;

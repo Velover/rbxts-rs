@@ -20,8 +20,8 @@
 //! - the include folder is kept whole when it lies under an output root (DESIGN §14: "The include folder is in the
 //!   clean step's keep set"), not only the runtime files it copies ([`crate::project::copy_include`]);
 //! - plugin artifacts and state files of this build are kept;
-//! - declaration assets (project `.d.ts` files of a declaration build) are kept but not written: roblox-ts rewrites
-//!   them (`transformDeclarationFile`, a TypeScript print), which is not ported; rbxts-rs emits no `.d.ts` either;
+//! - declaration assets (project `.d.ts` files of a declaration build) are written only when their printed text
+//!   ([`crate::project::transform_declaration_file`]) changed, like the other assets;
 //! - an output whose spelling differs from the file on disk only in case is renamed to the build's spelling (a
 //!   case-only rename of a source), so the Rojo instance name follows, as in a build into an empty directory.
 
@@ -46,6 +46,9 @@ pub struct ProjectOutputs {
     pub keep_dirs: Vec<String>,
     /// Assets: (input, output), copied when their bytes differ.
     pub assets: Vec<(String, String)>,
+    /// Declaration assets (`.d.ts` files under a root directory of a declaration build): (input, output), whose
+    /// output is the input printed again ([`crate::project::transform_declaration_file`]).
+    pub declaration_assets: Vec<(String, String)>,
     /// Every output path of the build (Luau, declarations, transformed files, assets, declaration assets), which
     /// plugin artifacts may not overwrite.
     pub files: Vec<String>,
@@ -78,6 +81,24 @@ pub struct OutputInputs<'a> {
     pub config_paths: &'a [String],
     /// tsc's own build info (`getTsBuildInfoEmitOutputFilePath`), besides roblox-ts's `.rbxtsc.tsbuildinfo`.
     pub ts_build_info: Option<&'a str>,
+    /// The other projects of a build with project references.
+    pub graph: Option<&'a GraphOutputs>,
+}
+
+/// What a project of a build with project references knows of the graph's outputs (`getProjectOutputs` with the
+/// whole `ProjectGraph`).
+#[derive(Clone, Debug, Default)]
+pub struct GraphOutputs {
+    /// Every project's output roots and the runtime projects' include folders: never assets.
+    pub excluded_roots: Vec<String>,
+    /// Every project's build infos: never assets.
+    pub build_infos: Vec<String>,
+    /// Every tsconfig and extended config, and the Rojo project files: never assets.
+    pub config_paths: Vec<String>,
+    /// Every project's Rojo project files: kept.
+    pub rojo_files: Vec<String>,
+    /// The runtime projects' include folders: kept whole.
+    pub include_paths: Vec<String>,
 }
 
 /// Moves an output path under the override, as the Luau outputs are.
@@ -151,12 +172,16 @@ pub fn get_project_outputs(inputs: &OutputInputs<'_>) -> Result<ProjectOutputs, 
     let mut excluded: Vec<String> = outputs.roots.iter().map(|r| path_key(services, r)).collect();
     excluded.extend(output_roots(services, inputs.options, None).iter().map(|r| path_key(services, r)));
     excluded.push(path_key(services, &include));
-    let config_keys: FxHashSet<String> = inputs.config_paths.iter().map(|p| path_key(services, p)).collect();
+    let graph = inputs.graph.cloned().unwrap_or_default();
+    excluded.extend(graph.excluded_roots.iter().map(|r| path_key(services, r)));
+    let config_keys: FxHashSet<String> =
+        inputs.config_paths.iter().chain(&graph.config_paths).map(|p| path_key(services, p)).collect();
     let build_infos: FxHashSet<String> = translator
         .build_info_output_path
         .iter()
         .map(String::as_str)
         .chain(inputs.ts_build_info)
+        .chain(graph.build_infos.iter().map(String::as_str))
         .map(|p| path_key(services, p))
         .collect();
     let project_dir_key = path_key(services, &services.data.project_path);
@@ -165,6 +190,7 @@ pub fn get_project_outputs(inputs: &OutputInputs<'_>) -> Result<ProjectOutputs, 
     let mut stack: Vec<(String, bool)> =
         root_dirs.iter().map(|d| (d.clone(), std::fs::metadata(d).is_ok_and(|m| m.is_dir()))).collect();
     let mut assets = Vec::new();
+    let mut declaration_assets = Vec::new();
     while let Some((input, is_dir)) = stack.pop() {
         let key = path_key(services, &input);
         if excluded.iter().any(|root| is_descendant_key(&key, root)) {
@@ -203,8 +229,8 @@ pub fn get_project_outputs(inputs: &OutputInputs<'_>) -> Result<ProjectOutputs, 
             if !tsrs_core::tspath::is_declaration_file_name(&input) || !translator.declaration {
                 continue;
             }
-            // rbxts-rs: a declaration asset is kept, not written (`transformDeclarationFile` is not ported)
             add_output(&mut outputs, &output, &input)?;
+            declaration_assets.push((input, output));
             continue;
         }
         add_output(&mut outputs, &output, &input)?;
@@ -212,25 +238,37 @@ pub fn get_project_outputs(inputs: &OutputInputs<'_>) -> Result<ProjectOutputs, 
     }
     assets.sort();
     outputs.assets = assets;
+    declaration_assets.sort();
+    outputs.declaration_assets = declaration_assets;
 
     for build_info in translator.build_info_output_path.iter().map(String::as_str).chain(inputs.ts_build_info) {
         outputs.keep.insert(path_key(services, build_info));
     }
-    for config in services.rojo_resolver.config_files() {
+    for config in services.rojo_resolver.config_files().iter().chain(&graph.rojo_files) {
         outputs.keep.insert(path_key(services, config));
     }
     // the include folder this build writes: under the override when it lies in the outDir
     outputs.keep_dirs.push(effective_include_path(services, inputs.out_dir_override));
+    // the runtime projects' include folders (roblox-ts keeps their runtime files)
+    outputs.keep_dirs.extend(graph.include_paths.iter().cloned());
     Ok(outputs)
 }
 
-/// The assets' bytes, in `outputs.assets` order, read before the commit writes anything.
-pub fn read_assets(outputs: &ProjectOutputs) -> Result<Vec<Vec<u8>>, String> {
-    outputs
-        .assets
-        .iter()
-        .map(|(input, _)| std::fs::read(input).map_err(|e| format!("could not read {input}: {e}")))
-        .collect()
+/// The assets' bytes, in `outputs.assets` order, then the declaration assets' printed texts, in
+/// `outputs.declaration_assets` order: read before the commit writes anything.
+pub fn read_assets(
+    outputs: &ProjectOutputs,
+    paths: &crate::project::transformers::transform_paths::TransformPaths,
+) -> Result<Vec<Vec<u8>>, String> {
+    let read = |input: &String| std::fs::read(input).map_err(|e| format!("could not read {input}: {e}"));
+    let mut bytes: Vec<Vec<u8>> = outputs.assets.iter().map(|(input, _)| read(input)).collect::<Result<_, _>>()?;
+    for (input, _) in &outputs.declaration_assets {
+        let text = String::from_utf8_lossy(&read(input)?).into_owned();
+        bytes.push(
+            crate::project::transform_declaration_file::transform_declaration_file(paths, input, &text).into_bytes(),
+        );
+    }
+    Ok(bytes)
 }
 
 /// Commit step 1 for assets: writes each asset (`bytes` from [`read_assets`]) whose output is missing or differs.
@@ -243,7 +281,8 @@ pub fn sync_assets(
     listing: &Listing,
 ) -> Result<Vec<String>, String> {
     let mut written = Vec::new();
-    for ((_, output), bytes) in outputs.assets.iter().zip(bytes) {
+    let all = outputs.assets.iter().chain(&outputs.declaration_assets);
+    for ((_, output), bytes) in all.zip(bytes) {
         match_case(services, output, listing).map_err(|e| format!("could not rename to {output}: {e}"))?;
         if write_if_changed(Path::new(output), bytes).map_err(|e| format!("could not write {output}: {e}"))? {
             written.push(output.clone());

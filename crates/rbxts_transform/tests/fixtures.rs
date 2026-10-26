@@ -29,6 +29,10 @@
 //!   `super` calls), methods with unusual names, static members and blocks, `this` in static members, hoisting,
 //!   default exports, and every kind of decorator. TypeScript 5 lists exported functions first and TypeScript 7 in
 //!   source order, so the fixture declares its exported functions first.
+//! - `declarations`: a package with `declaration` and `declarationMap`: the `.d.ts` / `.d.ts.map` of each source
+//!   (`paths` specifiers rewritten to relative ones, a `types` reference directive to `@rbxts/types`), a declaration
+//!   file under `src` printed again as an asset, a Luau asset. Checked as a written output tree; its maps are
+//!   TypeScript 7's (see its tsconfig).
 //! - `contextual_this`: function expressions and object literal methods in slots whose signature has a `this`
 //!   parameter (TypeScript 5 gives them its contextual `this`), next to arrows, `this` users and `this: void` slots.
 //! - `exprs`: conditional expressions, `||=` / `&&=` / `??=`, `yield` and `yield*`, `delete`, `await`, tagged
@@ -68,6 +72,9 @@
 //!   are dropped).
 //! - `macros`: every call, identifier, constructor and property-call macro, as values and statements, on optional
 //!   chains and with evaluation-order cases.
+//! - `project_references`: TypeScript project references (a root, `projects/shared` and `projects/common`, both
+//!   `composite` with a `declarationDir`): each project's written output tree (`expected/<outDir>`, build infos
+//!   left out), imports across the reference boundary included.
 //! - `stmts`: enums (non-finite values too), namespaces, `switch`, and `try` / `throw` (roblox-ts tests' specs plus
 //!   hand-written cases). `expected/` is roblox-ts on the TypeScript 7 checker, except the infinities, which rbxts-rs
 //!   writes as `math.huge`, and the `default` before a case in `switches`, which rbxts-rs lowers so that the case
@@ -84,12 +91,19 @@
 //! - `transform_order`: imports, a triple-slash reference, a module augmentation, an ambient module import and a
 //!   module file augmenting that ambient module, whose files roblox-ts transforms in another order than the program's; [`transform_order`] also checks that order
 //!   (`order.txt`, stock roblox-ts's `getChangedSourceFiles`).
+//! - `write_transformed`: `writeTransformedFiles` with a TypeScript transformer that changes nothing (`identity.cjs`,
+//!   claimed by the `transformer` test plugin): each compiled file printed again beside its Luau. Without the
+//!   transformer nothing is printed and old `.transformed.ts` files are cleaned
+//!   ([`write_transformed_without_transformers`]).
+//!
+//! A fixture may name the `rbxts_test_plugins` plugins its builds register in a `plugins.json` (a list of names).
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use rbxts_project::{ProjectOptionLayer, STACK_SIZE};
-use rbxts_transform::{CompileOptions, CompileReport, compile_project};
+use rbxts_plugin::erased::DynPlugin;
+use rbxts_transform::{CompileOptions, CompileReport, PluginOptions, compile_project_with};
 use tsrs_compiler::diagnosticwriter::flatten_diagnostic_message;
 use tsrs_diagnostics::Category;
 
@@ -213,7 +227,12 @@ impl TempProject {
         for entry in std::fs::read_dir(fixture).unwrap() {
             let entry = entry.unwrap();
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with("expected") || name == "links.json" || name == "node_modules" || name == "out" {
+            if name.starts_with("expected")
+                || name == "links.json"
+                || name == "plugins.json"
+                || name == "node_modules"
+                || name == "out"
+            {
                 continue;
             }
             if entry.file_type().unwrap().is_dir() {
@@ -246,21 +265,40 @@ impl Drop for TempProject {
     }
 }
 
-/// Builds the project at `root` (no writes, unless `write`) on a thread with the compiler's stack size.
-fn build(root: &Path, write: bool) -> CompileReport {
+/// The test plugins a fixture names in its `plugins.json` (a list of `rbxts_test_plugins` names), registered for its
+/// builds: a fixture whose tsconfig lists a transform needs the plugin that claims it.
+fn fixture_plugins(fixture: &Path) -> Vec<String> {
+    std::fs::read_to_string(fixture.join("plugins.json"))
+        .ok()
+        .map(|text| serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}/plugins.json: {e}", fixture.display())))
+        .unwrap_or_default()
+}
+
+/// Builds the project at `root` (no writes, unless `write`) with the test plugins `plugins`, on a thread with the
+/// compiler's stack size.
+fn build(root: &Path, write: bool, plugins: &[String]) -> CompileReport {
     let cwd = root.to_string_lossy().into_owned();
+    let plugins: Vec<String> = plugins.to_vec();
     std::thread::Builder::new()
         .stack_size(STACK_SIZE)
         .spawn(move || {
-            compile_project(&CompileOptions {
-                tsconfig: "tsconfig.json".into(),
-                cwd,
-                project_options: ProjectOptionLayer::default(),
-                out_dir_override: None,
-                write_partial: false,
-                no_write: !write,
-                checkers: None,
-            })
+            let plugins: Vec<Box<dyn DynPlugin>> = plugins
+                .iter()
+                .map(|name| rbxts_test_plugins::by_name(name).unwrap_or_else(|| panic!("no test plugin {name}")))
+                .collect();
+            let plugin_options = PluginOptions { plugins: &plugins, ..PluginOptions::default() };
+            compile_project_with(
+                &CompileOptions {
+                    tsconfig: "tsconfig.json".into(),
+                    cwd,
+                    project_options: ProjectOptionLayer::default(),
+                    out_dir_override: None,
+                    write_partial: false,
+                    no_write: !write,
+                    checkers: None,
+                },
+                &plugin_options,
+            )
         })
         .unwrap()
         .join()
@@ -337,31 +375,52 @@ fn compare(report: &CompileReport, root: &Path, expected: &Path) -> Vec<String> 
     failures
 }
 
-/// The build's report, then its written `out` tree against `expected` (both ways), byte for byte: an asset is copied
-/// as it is (line ends included), as stock does.
-fn compare_tree(report: &CompileReport, root: &Path, expected: &Path) -> Vec<String> {
+/// Build infos, which the trees leave out: stock's `.rbxtsc.tsbuildinfo` and rbxts-rs's incremental state differ by
+/// design.
+fn is_build_info(path: &str) -> bool {
+    path.ends_with(".tsbuildinfo") || path.ends_with(".rbxts-rs.buildinfo")
+}
+
+/// The build's report, then its written output trees against `expected` (both ways), byte for byte: an asset is
+/// copied as it is (line ends included), as stock does. `roots`: the output directories compared, relative to the
+/// project; `expected/` is the tree of the only root `out`, else holds one tree per root at the same relative path.
+/// Build infos are left out.
+fn compare_tree(report: &CompileReport, root: &Path, expected: &Path, roots: &[&str]) -> Vec<String> {
     let mut failures = reported(report, root);
-    let out = root.join("out");
+    for &out_root in roots {
+        let expected = if roots == ["out"] { expected.to_owned() } else { expected.join(out_root) };
+        let prefix = if roots == ["out"] { String::new() } else { format!("{out_root}/") };
+        failures.extend(compare_one_tree(&root.join(out_root), &expected, &prefix));
+    }
+    failures
+}
+
+/// One output tree against its expected tree; failures name files with `prefix`.
+fn compare_one_tree(out: &Path, expected: &Path, prefix: &str) -> Vec<String> {
+    let mut failures = Vec::new();
     let mut written = Vec::new();
     if out.is_dir() {
-        collect_files(&out, &out, &mut written);
+        collect_files(out, out, &mut written);
     }
+    written.retain(|path| !is_build_info(path));
     let mut expected_files = Vec::new();
-    collect_files(expected, expected, &mut expected_files);
+    if expected.is_dir() {
+        collect_files(expected, expected, &mut expected_files);
+    }
     for relative in &written {
         let ours = std::fs::read(out.join(relative)).unwrap_or_default();
         let shown = String::from_utf8_lossy(&ours).replace('\r', "\\r");
         match std::fs::read(expected.join(relative)) {
-            Err(_) => failures.push(format!("{relative}: written but not in expected/\n--- ours\n{shown}")),
+            Err(_) => failures.push(format!("{prefix}{relative}: written but not in expected/\n--- ours\n{shown}")),
             Ok(theirs) if theirs != ours => {
-                failures.push(format!("{relative}: differs from expected (byte for byte)\n--- ours\n{shown}"))
+                failures.push(format!("{prefix}{relative}: differs from expected (byte for byte)\n--- ours\n{shown}"))
             }
             Ok(_) => {}
         }
     }
     for relative in expected_files {
         if !written.contains(&relative) {
-            failures.push(format!("{relative}: expected but not written"));
+            failures.push(format!("{prefix}{relative}: expected but not written"));
         }
     }
     failures
@@ -374,17 +433,22 @@ fn compare_tree(report: &CompileReport, root: &Path, expected: &Path) -> Vec<Str
 /// target, `@shared/<package>` for the shared `node_modules`'s `@rbxts/<package>` or a path inside the copy. Without
 /// `links.json`, `node_modules` links to the shared `node_modules`.
 fn check(area: &'static str) {
-    check_in(area, false);
+    check_in(area, None);
 }
 
 /// [`check`], comparing the written output tree instead: every file under the project's `out` (Luau and assets) equals
 /// its `expected/` file byte for byte, and every `expected/` file is written.
 fn check_tree(area: &'static str) {
-    check_in(area, true);
+    check_in(area, Some(&["out"]));
 }
 
-/// [`check`] (`tree` false) or [`check_tree`].
-fn check_in(area: &'static str, tree: bool) {
+/// [`check_tree`] over several output directories (a build with project references): `expected/<root>` per root.
+fn check_trees(area: &'static str, roots: &'static [&'static str]) {
+    check_in(area, Some(roots));
+}
+
+/// [`check`] (`trees` None) or [`check_trees`].
+fn check_in(area: &'static str, trees: Option<&'static [&'static str]>) {
     let node_modules = match node_modules() {
         Ok(path) => path,
         Err(why) => return skip(area, &why),
@@ -427,9 +491,9 @@ fn check_in(area: &'static str, tree: bool) {
             project.link(&link, &target);
         }
         let root = project.root.join(&project_dir);
-        let report = build(&root, tree);
-        let layout_failures = if tree {
-            compare_tree(&report, &root, &fixture.join("expected"))
+        let report = build(&root, trees.is_some(), &fixture_plugins(&fixture));
+        let layout_failures = if let Some(roots) = trees {
+            compare_tree(&report, &root, &fixture.join("expected"), roots)
         } else {
             compare(&report, &root, &fixture.join("expected"))
         };
@@ -506,6 +570,21 @@ fn json() {
 }
 
 #[test]
+fn declarations() {
+    check_tree("declarations");
+}
+
+#[test]
+fn write_transformed() {
+    check_tree("write_transformed");
+}
+
+#[test]
+fn project_references() {
+    check_trees("project_references", &["out", "projects/common/out", "projects/shared/out"]);
+}
+
+#[test]
 fn jsx() {
     check("jsx");
 }
@@ -540,7 +619,7 @@ fn stockfix_jsx_entity() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/error_fixtures/jsx_entity");
     let mut project = TempProject::copy_of(&fixture, "stockfix_jsx_entity");
     project.link("node_modules", &node_modules);
-    let report = build(&project.root, false);
+    let report = build(&project.root, false, &[]);
     let message = "JSX character entity is not a valid code point (above U+10FFFF)!";
     assert_eq!(
         reported(&report, &project.root),
@@ -576,7 +655,7 @@ fn transform_order() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/transform_order");
     let mut project = TempProject::copy_of(&fixture, "transform_order-files");
     project.link("node_modules", &node_modules);
-    let report = build(&project.root, false);
+    let report = build(&project.root, false, &[]);
     let root = format!("{}/", project.root.to_string_lossy().replace('\\', "/"));
     let ours: Vec<String> = report
         .files
@@ -589,4 +668,40 @@ fn transform_order() {
     let expected = std::fs::read_to_string(fixture.join("order.txt")).unwrap();
     let expected: Vec<&str> = expected.lines().filter(|l| !l.is_empty()).collect();
     assert_eq!(ours, expected);
+}
+
+/// `write_transformed` without a TypeScript transformer (its tsconfig's `plugins` entry removed): stock roblox-ts
+/// writes no `.transformed.ts` then, and its clean removes old ones; the Luau is the same.
+#[test]
+fn write_transformed_without_transformers() {
+    let Ok(node_modules) = node_modules() else { return };
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/write_transformed");
+    let mut project = TempProject::copy_of(&fixture, "write_transformed-none");
+    project.link("node_modules", &node_modules);
+    let tsconfig = project.root.join("tsconfig.json");
+    let text = std::fs::read_to_string(&tsconfig).unwrap();
+    let without = text.replace(",\n\t\t\"plugins\": [{ \"transform\": \"./identity.cjs\" }]", "");
+    assert_ne!(text, without, "the fixture's tsconfig lists the transformer");
+    std::fs::write(&tsconfig, without).unwrap();
+    std::fs::create_dir_all(project.root.join("out")).unwrap();
+    std::fs::write(project.root.join("out/stale.transformed.ts"), "export {};\n").unwrap();
+    let report = build(&project.root, true, &[]);
+    let mut failures = reported(&report, &project.root);
+    let mut written = Vec::new();
+    collect_files(&project.root.join("out"), &project.root.join("out"), &mut written);
+    written.sort();
+    let mut expected: Vec<String> = Vec::new();
+    collect_files(&fixture.join("expected"), &fixture.join("expected"), &mut expected);
+    expected.retain(|f| !f.contains(".transformed."));
+    expected.sort();
+    if written != expected {
+        failures.push(format!("written {written:?}, expected {expected:?}"));
+    }
+    for file in &expected {
+        if std::fs::read(project.root.join("out").join(file)).ok() != std::fs::read(fixture.join("expected").join(file)).ok()
+        {
+            failures.push(format!("{file}: differs from expected"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

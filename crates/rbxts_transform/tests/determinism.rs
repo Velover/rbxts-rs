@@ -86,13 +86,15 @@ fn build(
     node_modules: &Path,
     (checkers, assignment): (usize, Option<&str>),
 ) -> (BTreeMap<String, Vec<u8>>, Vec<String>) {
-    let root = std::env::temp_dir().join(format!("rbxts-rs-determinism-{label}-{checkers}-{}", std::process::id()));
+    // one copy path for every config: the incremental state of a composite project (`project_references`) holds
+    // absolute paths, which must be the same for its bytes to be compared
+    let root = std::env::temp_dir().join(format!("rbxts-rs-determinism-{label}-{}", std::process::id()));
     remove_copy(&root);
     std::fs::create_dir_all(&root).unwrap();
     for entry in std::fs::read_dir(fixture).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with("expected") || name == "links.json" {
+        if name.starts_with("expected") || name == "links.json" || name == "plugins.json" {
             continue;
         }
         if entry.file_type().unwrap().is_dir() {
@@ -255,7 +257,14 @@ fn outputs_and_diagnostics_do_not_depend_on_the_checkers() {
     areas.sort();
     for area in areas {
         let name = area.file_name().unwrap().to_string_lossy().into_owned();
-        cases.push((name, area, &[]));
+        // the test plugins a fixture names in its `plugins.json` (see `fixtures.rs`)
+        let plugins: Vec<String> = std::fs::read_to_string(area.join("plugins.json"))
+            .ok()
+            .map(|text| serde_json::from_str(&text).unwrap())
+            .unwrap_or_default();
+        let plugins: &'static [&'static str] =
+            Vec::leak(plugins.into_iter().map(|p| &*String::leak(p)).collect::<Vec<&'static str>>());
+        cases.push((name, area, plugins));
     }
     cases.push((
         "plugins".to_owned(),

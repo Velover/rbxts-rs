@@ -56,6 +56,7 @@ use tsrs_diagnostics::Category;
 use super::checker_groups::{self, GroupPlugins};
 use super::graph::{self, FileFacts, Version};
 use super::outputs::{self, OutputInputs};
+use super::references::GraphContext;
 use super::plugin_inputs::{
     DirRules, DiskInput, EnvSnapshot, FileInputs, FinishRead, InputWatch, RecordedGlob, plain, remove_emptied_dirs,
     remove_queued_dirs,
@@ -75,6 +76,8 @@ use crate::plugins::lifecycle::{
 use crate::plugins::spill::LoadCheck;
 use crate::plugins::{HookKind, PluginHost};
 use crate::project::copy_include::{IncludeCopy, prepare_copy_include};
+use crate::project::emit_declarations::emit_declarations;
+use crate::project::transformers::transform_paths::TransformPaths;
 use crate::shared::diagnostics::{internal_error, text_diagnostic};
 
 /// A program and its project setup, kept for the next build.
@@ -205,6 +208,14 @@ pub struct BuildSession<'p> {
     retransform: FxHashSet<String>,
     /// The invalid `RBXTS_CHECKERS` warning was given: a session gives it once, not on every watch rebuild.
     checkers_warned: bool,
+    /// What the project graph tells this project's builds, in a build with project references (set before each).
+    pub(super) graph: Option<GraphContext>,
+    /// The sessions of the projects the root of a graph references, in build order, by graph key.
+    pub(super) references: Vec<(String, BuildSession<'p>)>,
+    /// A referenced project's session (its graph's root builds it).
+    pub(super) is_reference: bool,
+    /// The config paths of the last project graph made (watched).
+    pub(super) graph_config_paths: Vec<String>,
 }
 
 /// What one build decided, for reports and events.
@@ -253,7 +264,16 @@ impl<'p> BuildSession<'p> {
             finish_ran: false,
             retransform: FxHashSet::default(),
             checkers_warned: false,
+            graph: None,
+            references: Vec::new(),
+            is_reference: false,
+            graph_config_paths: Vec::new(),
         }
+    }
+
+    /// A session for another project of this one's graph, with the same plugins and mode.
+    pub(super) fn child(&self, options: CompileOptions) -> BuildSession<'p> {
+        BuildSession::new(options, self.plugins, self.watch)
     }
 
     /// Starts the first (clean) build from these plugin states instead of `default_state()`: the harness's clean
@@ -473,8 +493,23 @@ impl<'p> BuildSession<'p> {
         Some((&last.services, files, roots.iter().map(|r| nodepath::resolve(&[r])).collect()))
     }
 
-    /// One build. `touched`: the paths a watcher saw change since the last build (empty for the first build).
+    /// One build. `touched`: the paths a watcher saw change since the last build (empty for the first build). A
+    /// tsconfig with project references builds its graph: each referenced project in build order, then this one
+    /// ([`super::references`]).
     pub fn build(&mut self, touched: &[String]) -> (CompileReport, BuildSummary) {
+        if !self.is_reference && rbxts_project::graph::has_references(&self.tsconfig_path()) {
+            return super::references::build_graph(self, touched);
+        }
+        if !self.is_reference {
+            self.graph = None;
+            self.references.clear();
+            self.graph_config_paths.clear();
+        }
+        self.build_project(touched)
+    }
+
+    /// One build of this project alone (with the graph's facts when it is part of one).
+    pub(super) fn build_project(&mut self, touched: &[String]) -> (CompileReport, BuildSummary) {
         let rebuilds = self.rebuilds;
         self.finish_ran = false;
         let committed = self.committed.take();
@@ -492,7 +527,7 @@ impl<'p> BuildSession<'p> {
         (report, summary)
     }
 
-    fn tsconfig_path(&self) -> String {
+    pub(super) fn tsconfig_path(&self) -> String {
         if nodepath::is_absolute(&self.options.tsconfig) {
             self.options.tsconfig.clone()
         } else {
@@ -524,7 +559,16 @@ impl<'p> BuildSession<'p> {
         report.timings.program = project.program_time;
         let start = Instant::now();
         let tsconfig_path = self.tsconfig_path();
-        let setup = match project.setup(&tsconfig_path, &self.options.project_options) {
+        let setup = match &self.graph {
+            Some(graph) => project.setup_with_data(graph.data.clone()),
+            None => project.setup(&tsconfig_path, &self.options.project_options),
+        };
+        let setup = match setup.map(|mut setup| {
+            if let Some(graph) = &self.graph {
+                setup.services.project_reference_paths = graph.reference_paths.clone();
+            }
+            setup
+        }) {
             Ok(setup) => setup,
             Err(error) => {
                 report.fatal = error.messages;
@@ -560,6 +604,10 @@ impl<'p> BuildSession<'p> {
         let mut mapping: Vec<_> = services.node_modules_path_mapping.iter().collect();
         mapping.sort();
         salt.push_str(&format!("{mapping:?}\n"));
+        // createProgramFactory salts with the project reference paths
+        let mut references: Vec<_> = services.project_reference_paths.iter().collect();
+        references.sort();
+        salt.push_str(&format!("{references:?}\n"));
         let mut texts = |paths: &[String]| {
             for path in paths {
                 salt.push_str(path);
@@ -847,6 +895,9 @@ impl<'p> BuildSession<'p> {
                 return (report, summary, committed, Some(loaded));
             }
         };
+        // `--writeTransformedFiles` with a plugin a tsconfig `plugins` entry turns on (`write_transformed_files`)
+        let writes_transformed =
+            services.data.options.write_transformed_files && active.iter().any(|plugin| plugin.entry.is_some());
         let mut to_transform: Vec<P<SourceFile>> = if all {
             files.clone()
         } else {
@@ -864,9 +915,20 @@ impl<'p> BuildSession<'p> {
                     if cached.is_none_or(|c| c.parts.len() != active.len() || c.parts.iter().any(Option::is_none)) {
                         return true;
                     }
-                    // roblox-ts: any source whose output is missing
-                    let out = output_path(services, file.get().file_name(), self.options.out_dir_override.as_deref());
+                    // roblox-ts: any source whose output is missing (its Luau, or a declaration output)
+                    let name = file.get().file_name();
+                    let out_dir_override = self.options.out_dir_override.as_deref();
+                    let out = output_path(services, name, out_dir_override);
                     !listing.contains(&path_key_of(services, &out))
+                        || project.declaration_outputs(name).iter().any(|declaration| {
+                            let declaration = outputs::overridden(services, declaration, out_dir_override);
+                            !listing.contains(&path_key_of(services, &declaration))
+                        })
+                        || (writes_transformed && {
+                            let transformed = services.path_translator.get_output_transformed_path(name);
+                            let transformed = outputs::overridden(services, &transformed, out_dir_override);
+                            !listing.contains(&path_key_of(services, &transformed))
+                        })
                 })
                 .collect()
         };
@@ -1302,6 +1364,43 @@ impl<'p> BuildSession<'p> {
             return (report, summary, committed, Some(loaded));
         }
 
+        // the declarations of the files transformed (compileFiles: emitted before anything is written, so a
+        // declaration error writes nothing)
+        let options = project.program.options();
+        let transform_paths = TransformPaths::new(options, &self.options.cwd);
+        let mut extra_outputs: Vec<(String, String)> = Vec::new();
+        if options.get_emit_declarations() {
+            let emitted: Vec<P<SourceFile>> = to_transform
+                .iter()
+                .zip(&report.files)
+                .filter(|(_, outcome)| outcome.luau.is_some() && outcome.is_clean())
+                .map(|(&file, _)| file)
+                .collect();
+            let (outputs, diagnostics) = emit_declarations(project.program, &ctx, &emitted, &transform_paths);
+            report.diagnostics.extend(diagnostics);
+            let out_dir_override = self.options.out_dir_override.as_deref();
+            extra_outputs = outputs
+                .into_iter()
+                .map(|(path, text)| (outputs::overridden(services, &path, out_dir_override), text))
+                .collect();
+            if report.has_errors() && !self.options.write_partial {
+                return (report, summary, committed, Some(loaded));
+            }
+        }
+        // `--writeTransformedFiles` (`write_transformed_files`): the TypeScript of the files compiled, printed again
+        if run.as_ref().is_some_and(|run| run.active.iter().any(|plugin| plugin.entry.is_some()))
+            && services.data.options.write_transformed_files
+        {
+            let out_dir_override = self.options.out_dir_override.as_deref();
+            for (&file, outcome) in to_transform.iter().zip(&report.files) {
+                if outcome.luau.is_some() && outcome.is_clean() {
+                    let path = services.path_translator.get_output_transformed_path(file.get().file_name());
+                    let path = outputs::overridden(services, &path, out_dir_override);
+                    extra_outputs.push((path, crate::project::write_transformed_files::print_source_file(file)));
+                }
+            }
+        }
+
         // 8. commit
         let start = Instant::now();
         let success = !report.has_errors() && finished;
@@ -1323,7 +1422,7 @@ impl<'p> BuildSession<'p> {
         };
         // the assets' bytes are read before the first write, so a vanished asset fails the build with nothing written
         let asset_bytes = if success && !self.options.no_write {
-            match outputs::read_assets(&project_outputs) {
+            match outputs::read_assets(&project_outputs, &transform_paths) {
                 Ok(bytes) => bytes,
                 Err(message) => {
                     report.fatal.push(message);
@@ -1359,6 +1458,8 @@ impl<'p> BuildSession<'p> {
             if rerender {
                 to_write.extend(rerendered.iter().map(|(p, s)| (p.as_str(), s.as_bytes(), false)));
             }
+            let rerendered_count = to_write.len() - luau.len();
+            to_write.extend(extra_outputs.iter().map(|(p, s)| (p.as_str(), s.as_bytes(), true)));
             let mut results = outputs::write_outputs(services, Some(&listing), &to_write).into_iter();
             let indices: Vec<usize> = luau.iter().map(|&(i, _, _)| i).collect();
             for (i, result) in indices.into_iter().zip(results.by_ref()) {
@@ -1374,7 +1475,7 @@ impl<'p> BuildSession<'p> {
                 }
             }
             if rerender {
-                for ((path, _), result) in rerendered.iter().zip(results) {
+                for ((path, _), result) in rerendered.iter().zip(results.by_ref().take(rerendered_count)) {
                     match result {
                         Ok(true) => summary.written.push(path.clone()),
                         Ok(false) => {}
@@ -1382,6 +1483,13 @@ impl<'p> BuildSession<'p> {
                     }
                 }
                 summary.rerendered = rerendered.iter().map(|(p, _)| p.clone()).collect();
+            }
+            for ((path, _), result) in extra_outputs.iter().zip(results) {
+                match result {
+                    Ok(true) => summary.written.push(path.clone()),
+                    Ok(false) => {}
+                    Err(message) => report.fatal.push(message),
+                }
             }
             if success && report.fatal.is_empty() {
                 let artifacts: Vec<String> = queue.artifacts.iter().map(|(_, p, _)| p.clone()).collect();
@@ -1656,6 +1764,7 @@ impl<'p> BuildSession<'p> {
             out_dir_override,
             config_paths: &loaded.config_paths,
             ts_build_info: ts_build_info.as_deref(),
+            graph: self.graph.as_ref().map(|g| &g.outputs),
         })
     }
 
