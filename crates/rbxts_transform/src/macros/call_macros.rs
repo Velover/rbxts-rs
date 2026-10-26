@@ -75,13 +75,13 @@ fn get_module_tree(state: &mut TransformState<'_>, _: &mut Prereqs, node: P<Node
 }
 
 /// `CALL_MACROS`
-pub const CALL_MACROS: &[(&str, Option<CallMacro>)] = &[
-    ("assert", Some(assert)),
-    ("typeOf", Some(type_of)),
-    ("typeIs", Some(type_is)),
-    ("classIs", Some(class_is)),
-    ("identity", Some(identity)),
-    ("$range", Some(range)),
-    ("$tuple", Some(tuple)),
-    ("$getModuleTree", Some(get_module_tree)),
+pub const CALL_MACROS: &[(&str, CallMacro)] = &[
+    ("assert", assert),
+    ("typeOf", type_of),
+    ("typeIs", type_is),
+    ("classIs", class_is),
+    ("identity", identity),
+    ("$range", range),
+    ("$tuple", tuple),
+    ("$getModuleTree", get_module_tree),
 ];

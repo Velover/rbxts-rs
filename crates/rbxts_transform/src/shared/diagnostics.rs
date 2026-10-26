@@ -271,12 +271,6 @@ pub mod warnings {
     }
 }
 
-/// rbxts-rs: a node kind (or a form of one) the port does not handle yet. An error, so the file is not written,
-/// but the build carries on and reports every file.
-pub fn unsupported(node: P<Node>, kind: &str) -> P<Diagnostic> {
-    at_node(node, new_ad_hoc_message(&format!("not yet supported in rbxts-rs: {kind}")), Category::Error)
-}
-
 /// rbxts-rs: a compiler bug caught while transforming a file (a failed assertion or a panic).
 pub fn internal_error(node: P<Node>, message: &str) -> P<Diagnostic> {
     at_node(node, new_ad_hoc_message(&format!("rbxts-rs internal error: {message}")), Category::Error)

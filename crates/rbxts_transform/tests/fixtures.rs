@@ -246,9 +246,6 @@ fn reported(report: &CompileReport, root: &Path) -> Vec<String> {
     for file in &report.files {
         let name = relative(&file.file_name);
         lines.extend(file.internal_errors.iter().map(|e| format!("internal error {name}: {e}")));
-        if !file.unsupported.is_empty() {
-            lines.push(format!("unsupported {name}: {:?}", file.unsupported));
-        }
     }
     lines
 }

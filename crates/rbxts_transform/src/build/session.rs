@@ -1274,7 +1274,6 @@ impl<'p> BuildSession<'p> {
                     file_name,
                     out_path,
                     diagnostics: transformed.diagnostics,
-                    unsupported: transformed.unsupported,
                     internal_errors: transformed.internal_errors,
                     luau: None,
                     written: false,

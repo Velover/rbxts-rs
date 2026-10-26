@@ -136,8 +136,6 @@ pub struct FileOutcome {
     pub out_path: String,
     /// The transform's diagnostics (roblox-ts's, rbxts-rs's own, and plugins').
     pub diagnostics: Vec<P<Diagnostic>>,
-    /// The kinds reported as not yet supported, in report order (duplicates kept).
-    pub unsupported: Vec<String>,
     /// Internal errors (panics caught while transforming).
     pub internal_errors: Vec<String>,
     /// The rendered Luau, when the file transformed without errors.
@@ -304,7 +302,6 @@ pub(crate) fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
 pub(crate) struct FileTransform {
     pub ast: Option<Vec<Stmt>>,
     pub diagnostics: Vec<P<Diagnostic>>,
-    pub unsupported: Vec<String>,
     pub internal_errors: Vec<String>,
     /// A panic was caught: the checker may be inconsistent, so no further file is transformed.
     pub panicked: bool,
@@ -480,7 +477,6 @@ pub(crate) fn transform_file(
         }
     };
     let diagnostics = std::mem::take(&mut state.diagnostics.diagnostics);
-    let unsupported = std::mem::take(&mut state.diagnostics.unsupported);
     let parts = std::mem::take(&mut state.plugin_file.parts);
     let late_keys = std::mem::take(&mut state.plugin_file.late_keys);
     let load_check = state.plugin_file.load_check.take();
@@ -491,7 +487,6 @@ pub(crate) fn transform_file(
     FileTransform {
         ast,
         diagnostics,
-        unsupported,
         internal_errors,
         panicked,
         parts,

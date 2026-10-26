@@ -688,19 +688,19 @@ fn promise_then(_: &mut TransformState<'_>, _: &mut Prereqs, _: P<Node>, express
     create::method_call(convert_to_indexable_expression(expression), "andThen", args)
 }
 
-type Methods = &'static [(&'static str, Option<PropertyCallMacro>)];
+type Methods = &'static [(&'static str, PropertyCallMacro)];
 
-const MATH_ADD_SUB_MUL: Methods = &[("add", Some(math_add)), ("sub", Some(math_sub)), ("mul", Some(math_mul))];
-const MATH_ADD_SUB: Methods = &[("add", Some(math_add)), ("sub", Some(math_sub))];
+const MATH_ADD_SUB_MUL: Methods = &[("add", math_add), ("sub", math_sub), ("mul", math_mul)];
+const MATH_ADD_SUB: Methods = &[("add", math_add), ("sub", math_sub)];
 const MATH_ALL: Methods = &[
-    ("add", Some(math_add)),
-    ("sub", Some(math_sub)),
-    ("mul", Some(math_mul)),
-    ("div", Some(math_div)),
-    ("idiv", Some(math_idiv)),
+    ("add", math_add),
+    ("sub", math_sub),
+    ("mul", math_mul),
+    ("div", math_div),
+    ("idiv", math_idiv),
 ];
 const MATH_NO_IDIV: Methods =
-    &[("add", Some(math_add)), ("sub", Some(math_sub)), ("mul", Some(math_mul)), ("div", Some(math_div))];
+    &[("add", math_add), ("sub", math_sub), ("mul", math_mul), ("div", math_div)];
 
 /// `PROPERTY_CALL_MACROS`, by interface, in roblox-ts's order.
 pub const PROPERTY_CALL_MACROS: &[(&str, Methods)] = &[
@@ -713,82 +713,82 @@ pub const PROPERTY_CALL_MACROS: &[(&str, Methods)] = &[
     ("Vector3", MATH_ALL),
     ("Vector3int16", MATH_NO_IDIV),
     ("vector", MATH_ALL),
-    ("Number", &[("idiv", Some(math_idiv))]),
+    ("Number", &[("idiv", math_idiv)]),
     (
         "String",
         &[
-            ("size", Some(length)),
-            ("byte", Some(string_byte)),
-            ("find", Some(string_find)),
-            ("format", Some(string_format)),
-            ("gmatch", Some(string_gmatch)),
-            ("gsub", Some(string_gsub)),
-            ("lower", Some(string_lower)),
-            ("match", Some(string_match)),
-            ("rep", Some(string_rep)),
-            ("reverse", Some(string_reverse)),
-            ("split", Some(string_split)),
-            ("sub", Some(string_sub)),
-            ("upper", Some(string_upper)),
+            ("size", length),
+            ("byte", string_byte),
+            ("find", string_find),
+            ("format", string_format),
+            ("gmatch", string_gmatch),
+            ("gsub", string_gsub),
+            ("lower", string_lower),
+            ("match", string_match),
+            ("rep", string_rep),
+            ("reverse", string_reverse),
+            ("split", string_split),
+            ("sub", string_sub),
+            ("upper", string_upper),
         ],
     ),
-    ("ArrayLike", &[("size", Some(length))]),
+    ("ArrayLike", &[("size", length)]),
     (
         "ReadonlyArray",
         &[
-            ("isEmpty", Some(array_is_empty)),
-            ("join", Some(array_join)),
-            ("move", Some(array_move)),
-            ("includes", Some(array_includes)),
-            ("indexOf", Some(array_index_of)),
-            ("every", Some(array_every)),
-            ("some", Some(array_some)),
-            ("forEach", Some(array_for_each)),
-            ("map", Some(array_map)),
-            ("mapFiltered", Some(array_map_filtered)),
-            ("filterUndefined", Some(array_filter_undefined)),
-            ("filter", Some(array_filter)),
-            ("reduce", Some(array_reduce)),
-            ("find", Some(array_find)),
-            ("findIndex", Some(array_find_index)),
+            ("isEmpty", array_is_empty),
+            ("join", array_join),
+            ("move", array_move),
+            ("includes", array_includes),
+            ("indexOf", array_index_of),
+            ("every", array_every),
+            ("some", array_some),
+            ("forEach", array_for_each),
+            ("map", array_map),
+            ("mapFiltered", array_map_filtered),
+            ("filterUndefined", array_filter_undefined),
+            ("filter", array_filter),
+            ("reduce", array_reduce),
+            ("find", array_find),
+            ("findIndex", array_find_index),
         ],
     ),
     (
         "Array",
         &[
-            ("push", Some(array_push)),
-            ("pop", Some(array_pop)),
-            ("shift", Some(array_shift)),
-            ("unshift", Some(array_unshift)),
-            ("insert", Some(array_insert)),
-            ("remove", Some(array_remove)),
-            ("unorderedRemove", Some(array_unordered_remove)),
-            ("sort", Some(array_sort)),
-            ("clear", Some(clear)),
+            ("push", array_push),
+            ("pop", array_pop),
+            ("shift", array_shift),
+            ("unshift", array_unshift),
+            ("insert", array_insert),
+            ("remove", array_remove),
+            ("unorderedRemove", array_unordered_remove),
+            ("sort", array_sort),
+            ("clear", clear),
         ],
     ),
     (
         "ReadonlySet",
         &[
-            ("isEmpty", Some(set_map_is_empty)),
-            ("size", Some(set_map_size)),
-            ("has", Some(set_map_has)),
-            ("forEach", Some(set_for_each)),
+            ("isEmpty", set_map_is_empty),
+            ("size", set_map_size),
+            ("has", set_map_has),
+            ("forEach", set_for_each),
         ],
     ),
-    ("Set", &[("delete", Some(set_map_delete)), ("clear", Some(clear)), ("add", Some(set_add))]),
+    ("Set", &[("delete", set_map_delete), ("clear", clear), ("add", set_add)]),
     (
         "ReadonlyMap",
         &[
-            ("isEmpty", Some(set_map_is_empty)),
-            ("size", Some(set_map_size)),
-            ("has", Some(set_map_has)),
-            ("forEach", Some(map_for_each)),
-            ("get", Some(map_get)),
+            ("isEmpty", set_map_is_empty),
+            ("size", set_map_size),
+            ("has", set_map_has),
+            ("forEach", map_for_each),
+            ("get", map_get),
         ],
     ),
-    ("Map", &[("delete", Some(set_map_delete)), ("clear", Some(clear)), ("set", Some(map_set))]),
-    ("Promise", &[("then", Some(promise_then))]),
+    ("Map", &[("delete", set_map_delete), ("clear", clear), ("set", map_set)]),
+    ("Promise", &[("then", promise_then)]),
 ];
 
 // comment logic

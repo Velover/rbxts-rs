@@ -26,10 +26,7 @@ pub fn transform_new_expression(state: &mut TransformState<'_>, prereqs: &mut Pr
     if let Some(symbol) = get_first_construct_symbol(state, class_expression)
         && let Some(r#macro) = state.macro_manager.get_constructor_macro(symbol)
     {
-        return match r#macro.transform {
-            Some(transform) => transform(state, prereqs, node),
-            None => state.unsupported(node, &format!("constructor macro {}", r#macro.name)),
-        };
+        return (r#macro.transform)(state, prereqs, node);
     }
 
     let mut expression = convert_to_indexable_expression(transform_expression(state, prereqs, class_expression));

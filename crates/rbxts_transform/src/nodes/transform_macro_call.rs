@@ -82,13 +82,6 @@ pub fn transform_macro_call(
         MacroKind::Call(m) => (m.name, m.transform),
         MacroKind::PropertyCall(m) => (m.name, m.transform),
     };
-    let Some(transform) = transform else {
-        let label = match r#macro {
-            MacroKind::Call(_) => format!("call macro {name}"),
-            MacroKind::PropertyCall(_) => format!("property call macro {name}"),
-        };
-        return state.unsupported(node, &label);
-    };
 
     if missing_operand {
         return Expr::None;

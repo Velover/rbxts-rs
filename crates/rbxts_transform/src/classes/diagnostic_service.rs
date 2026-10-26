@@ -18,8 +18,6 @@ use tsrs_diagnostics::Category;
 #[derive(Default)]
 pub struct DiagnosticService {
     pub diagnostics: Vec<P<Diagnostic>>,
-    /// rbxts-rs: the node kinds (or forms) reported as not yet supported, in report order.
-    pub unsupported: Vec<String>,
     /// rbxts-rs: the diagnostics reported once per compilation, with their keys ([`drop_reported_earlier`]).
     pub once: Vec<(ReportOnce, P<Diagnostic>)>,
 }

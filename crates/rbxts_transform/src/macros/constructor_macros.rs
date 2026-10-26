@@ -95,12 +95,12 @@ fn weak_map_constructor(state: &mut TransformState<'_>, prereqs: &mut Prereqs, n
 }
 
 /// `CONSTRUCTOR_MACROS`, by constructor interface.
-pub const CONSTRUCTOR_MACROS: &[(&str, Option<ConstructorMacro>)] = &[
-    ("ArrayConstructor", Some(array_constructor)),
-    ("SetConstructor", Some(set_constructor)),
-    ("MapConstructor", Some(map_constructor)),
-    ("WeakSetConstructor", Some(weak_set_constructor)),
-    ("WeakMapConstructor", Some(weak_map_constructor)),
-    ("ReadonlyMapConstructor", Some(map_constructor)),
-    ("ReadonlySetConstructor", Some(set_constructor)),
+pub const CONSTRUCTOR_MACROS: &[(&str, ConstructorMacro)] = &[
+    ("ArrayConstructor", array_constructor),
+    ("SetConstructor", set_constructor),
+    ("MapConstructor", map_constructor),
+    ("WeakSetConstructor", weak_set_constructor),
+    ("WeakMapConstructor", weak_map_constructor),
+    ("ReadonlyMapConstructor", map_constructor),
+    ("ReadonlySetConstructor", set_constructor),
 ];

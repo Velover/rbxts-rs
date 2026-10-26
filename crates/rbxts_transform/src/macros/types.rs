@@ -1,8 +1,4 @@
 //! `macros/types.ts`: the macro signatures.
-//!
-//! rbxts-rs: a macro table entry's transform is `None` until its area is ported; the macro manager still resolves
-//! every entry's symbol, so a call to an unported macro is reported as unsupported instead of being compiled as an
-//! ordinary call.
 
 use rbxts_luau::Expr;
 use tsrs_ast::Node;
@@ -24,9 +20,9 @@ pub type CallMacro = fn(&mut TransformState<'_>, &mut Prereqs, P<Node>, Expr, Ve
 /// `PropertyCallMacro`: the node is a call whose expression is a property or element access.
 pub type PropertyCallMacro = fn(&mut TransformState<'_>, &mut Prereqs, P<Node>, Expr, Vec<Expr>) -> Expr;
 
-/// A macro table entry: its name (`Array.push`, `typeIs`) and its transform once ported.
+/// A macro table entry: its name (`Array.push`, `typeIs`; plugins see it) and its transform.
 #[derive(Clone, Copy)]
 pub struct Macro<F> {
     pub name: &'static str,
-    pub transform: Option<F>,
+    pub transform: F,
 }

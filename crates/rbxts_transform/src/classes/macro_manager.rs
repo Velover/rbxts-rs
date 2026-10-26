@@ -137,6 +137,17 @@ pub struct MacroManager {
     property_call_macros: FxHashMap<P<Symbol>, Macro<PropertyCallMacro>>,
 }
 
+/// `Class.method`, made once per process (every checker of every build makes a macro manager).
+fn property_call_macro_name(class_name: &'static str, method_name: &'static str) -> &'static str {
+    static NAMES: std::sync::Mutex<Option<FxHashMap<(&'static str, &'static str), &'static str>>> =
+        std::sync::Mutex::new(None);
+    let mut names = NAMES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    names
+        .get_or_insert_with(FxHashMap::default)
+        .entry((class_name, method_name))
+        .or_insert_with(|| Box::leak(format!("{class_name}.{method_name}").into_boxed_str()))
+}
+
 impl MacroManager {
     /// Resolves every macro and well-known symbol. A missing one is roblox-ts's `ProjectError` (outdated
     /// compiler-types).
@@ -187,8 +198,8 @@ impl MacroManager {
                 let method_symbol = method_map.get(method_name).copied().ok_or_else(|| {
                     project_error(format!("MacroManager could not find method for {class_name}.{method_name}"))
                 })?;
-                // rbxts-rs: the name is kept for diagnostics (`Array.push`); roblox-ts only stores the function
-                let name: &'static str = Box::leak(format!("{class_name}.{method_name}").into_boxed_str());
+                // rbxts-rs: the name is kept for plugins (`Array.push`); roblox-ts only stores the function
+                let name = property_call_macro_name(class_name, method_name);
                 manager.property_call_macros.insert(method_symbol, Macro { name, transform });
             }
         }

@@ -62,9 +62,8 @@ change.
 ## Building a project (`rbxts_transform`)
 
 `crates/rbxts_transform` is roblox-ts master's `src/TSTransformer` ported module by module (DESIGN §9b), with the
-build pipeline (`compile_project`: load → setup → check → transform → render → write changed outputs). Node kinds
-not ported yet are errors reading `not yet supported in rbxts-rs: <kind>`; the build reports every file and writes
-nothing unless asked to (`--write-partial`).
+build pipeline (`compile_project`: load → setup → check → transform → render → write changed outputs). A build with
+errors reports every file and writes nothing unless asked to (`--write-partial`).
 
 ```sh
 cd <project>
@@ -73,8 +72,8 @@ cd <project>
 ```
 
 `--out-dir` writes outside the project's `outDir` (Rojo paths still resolve against `outDir`). `--parity` compares
-each output with a reference build's file (identical / differing / unsupported / failed / missing), ranks the
-unsupported kinds and the work areas by the files they block, and with `--report` writes the per-file list.
+each output with a reference build's file (identical / known-fix / stale / differing / failed / missing), and with
+`--report` writes the per-file list.
 References: roblox-ts's tests project (`tsconfig.bench.json`, against the tsrs-backed build in scratchpad
 `tsrs-roblox-ts/exp/out-C-tsrs/out`) and the real project without Flamework (scratchpad `rbxts-rs/refs`); both were
 built with `--optimizedLoops --allowCommentDirectives`.

@@ -15,7 +15,7 @@ use crate::classes::diagnostic_service::DiagnosticService;
 use crate::classes::macro_manager::MacroManager;
 use crate::classes::multi_transform_state::MultiTransformState;
 use crate::shared::constants::PARENT_FIELD;
-use crate::shared::diagnostics::{errors, internal_error, unsupported, warnings};
+use crate::shared::diagnostics::{errors, internal_error, warnings};
 use crate::util::create_get_service::create_get_service;
 use crate::util::expression_chain::property_access_expression_chain;
 use crate::util::get_block_comment_text::get_block_comment_text;
@@ -128,13 +128,6 @@ impl<'a> TransformState<'a> {
         self.diagnostics.add_diagnostic(diagnostic);
     }
 
-    /// rbxts-rs: reports a node kind (or a form of one) the port does not handle yet, and returns `luau.none()` in
-    /// its place. `kind` is the label the parity report groups by.
-    pub fn unsupported(&mut self, node: P<Node>, kind: &str) -> Expr {
-        self.diagnostics.unsupported.push(kind.to_owned());
-        self.diagnostics.add_diagnostic(unsupported(node, kind));
-        Expr::None
-    }
 
     /// rbxts-rs: a compiler bug at `node`; the file is not written.
     pub fn internal_error(&mut self, node: P<Node>, message: &str) {

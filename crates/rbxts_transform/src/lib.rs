@@ -15,8 +15,7 @@
 //! - [`plugins`]: the compiler side of the plugin seam (`rbxts_plugin`'s backends, dispatch, build lifecycle).
 //! - [`project`]: roblox-ts's project build steps around the transform (the include copy).
 //!
-//! Node kinds not ported yet are reported as `not yet supported in rbxts-rs: <kind>` errors (and listed per file in
-//! [`compile::FileOutcome::unsupported`]); the build carries on and reports every file.
+//! A file with errors is not written; the build carries on and reports every file.
 //!
 //! [`TransformState`]: classes::transform_state::TransformState
 //! [`MultiTransformState`]: classes::multi_transform_state::MultiTransformState

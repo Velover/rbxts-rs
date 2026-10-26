@@ -12,4 +12,4 @@ fn promise(state: &mut TransformState<'_>, node: P<Node>) -> Expr {
 }
 
 /// `IDENTIFIER_MACROS`
-pub const IDENTIFIER_MACROS: &[(&str, Option<IdentifierMacro>)] = &[("Promise", Some(promise))];
+pub const IDENTIFIER_MACROS: &[(&str, IdentifierMacro)] = &[("Promise", promise)];

@@ -146,10 +146,7 @@ pub fn transform_identifier(state: &mut TransformState<'_>, node: P<Node>) -> Ex
     }
 
     if let Some(r#macro) = state.macro_manager.get_identifier_macro(state.checker, symbol) {
-        return match r#macro.transform {
-            Some(transform) => transform(state, node),
-            None => state.unsupported(node, &format!("identifier macro {}", r#macro.name)),
-        };
+        return (r#macro.transform)(state, node);
     }
 
     if let Some(construct_symbol) = get_first_construct_symbol(state, node)
