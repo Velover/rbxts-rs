@@ -31,7 +31,8 @@
 //! - `contextual_this`: function expressions and object literal methods in slots whose signature has a `this`
 //!   parameter (TypeScript 5 gives them its contextual `this`), next to arrows, `this` users and `this: void` slots.
 //! - `exprs`: conditional expressions, `||=` / `&&=` / `??=`, `yield` and `yield*`, `delete`, `await`, tagged
-//!   templates, `import()`, mixed edge cases, and a server script importing the modules.
+//!   templates, `import()`, mixed edge cases, and a server script importing the modules. A tagged template's
+//!   cooked backslash is escaped (`'back\\slash'`), where stock roblox-ts writes it bare (the `stockfix` fixture).
 //! - `json`: JSON modules (`resolveJsonModule`): default, namespace, named and dynamic imports, a JSON file outside
 //!   the root dirs (imported at its Rojo-mapped source path), and one nothing imports. The only fixture checked as a
 //!   written output tree ([`check_tree`]): its JSON files are assets, copied as they are (`cfg/crlf.json` keeps its

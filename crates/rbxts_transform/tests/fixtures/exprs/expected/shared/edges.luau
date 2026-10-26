@@ -60,7 +60,7 @@ local function tagEdges(bag)
 	i += 1
 	local r = (if _original > 0 then pick() else tag)({ "héllo ", " 😀 ]] end" }, i)
 	local s = tag({ "a ", "", "" }, "x", bag.x)
-	local t = tag({ 'back\slash "quoted" ', "	'single'" }, s)
+	local t = tag({ 'back\\slash "quoted" ', "	'single'" }, s)
 	return r .. s .. t
 end
 -- logical assignments inside arguments

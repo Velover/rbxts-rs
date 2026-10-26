@@ -107,3 +107,15 @@ pub fn create_string_from_literal(node: P<Node>) -> String {
     }
     out
 }
+
+/// rbxts-rs: a Luau string literal whose value is exactly `value` (plain text, not source text). roblox-ts passes such
+/// values to `luau.string`, whose renderer treats them as source text between delimiters. Text that renders as
+/// itself keeps that spelling; other text is escaped ([`rbxts_plugin::text_literal`]): text with a backslash or a
+/// carriage return (Luau would read an escape or a line end), and text with a leading newline that the renderer
+/// puts in a long bracket (`[[` drops a newline right after it).
+pub fn create_string_from_value(value: &str) -> rbxts_luau::Expr {
+    let long_bracket = value.contains('\n') || (value.contains('"') && value.contains('\''));
+    let renders_as_itself =
+        !value.contains('\\') && !value.contains('\r') && !(long_bracket && value.starts_with('\n'));
+    if renders_as_itself { rbxts_luau::create::string(value) } else { rbxts_plugin::text_literal(value) }
+}
