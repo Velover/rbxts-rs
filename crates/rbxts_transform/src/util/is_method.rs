@@ -84,6 +84,10 @@ fn is_method_declaration(node: P<Node>) -> bool {
 // parameter, and a `function () {}` in a `(this: defined) => void` slot would lose its `self`. Emulate TypeScript 5
 // in exactly that case; with an unannotated parameter, or `this` used, both agree and the signature has it already.
 // Needs the tsrs fork at adadb25 or later, where `Checker::get_contextual_signature` is public.
+// Known limit: overloads that disagree on `this`. TypeScript 5 fixes the contextual `this` once, from the first
+// overload it checks, even when that overload is then rejected; here it is the chosen overload's at transform time.
+// `over(cb: (this: void) => number)` declared before `over(cb: (this: Foo) => void)` gives `function()` on TS5 and
+// `function(self)` here; swapped, TS5 reports TS2769 and rbxts-rs doesn't (val-cthis `edge/src/shared/overload.ts`).
 fn ts5_contextual_this_parameter(state: &mut TransformState<'_>, signature: P<Signature>) -> Option<P<Symbol>> {
     let declaration = signature.declaration()?;
     if !(declaration.kind() == Kind::FunctionExpression || tsrs_ast::is_object_literal_method(declaration))
