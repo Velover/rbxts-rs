@@ -7,9 +7,8 @@ use tsrs_core::P;
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
-use crate::nodes::transform_statement_list::transform_statement_list;
+use crate::nodes::transform_statement_list::transform_body;
 use crate::util::create_truthiness_checks::create_truthiness_checks;
-use crate::util::symbols::get_statements;
 
 /// `transformDoStatement`: `repeat do … end until not condition`. The body sits in a `do` block so its locals are out
 /// of scope in the condition, as in JavaScript.
@@ -17,7 +16,7 @@ pub fn transform_do_statement(state: &mut TransformState<'_>, node: P<Node>) -> 
     let do_statement = node.as_do_statement();
     let (mut expression, statement) = (do_statement.expression, do_statement.statement());
 
-    let statements = transform_statement_list(state, Some(statement), &get_statements(statement));
+    let statements = transform_body(state, statement);
 
     let mut condition_is_inverted_in_luau = true;
     if expression.kind() == Kind::PrefixUnaryExpression {

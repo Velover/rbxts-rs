@@ -14,14 +14,14 @@ use crate::nodes::binding::transform_binding_name::transform_binding_name;
 use crate::nodes::binding::transform_object_assignment_pattern::transform_object_assignment_pattern;
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::transform_initializer::transform_initializer;
-use crate::nodes::transform_statement_list::transform_statement_list;
+use crate::nodes::transform_statement_list::transform_body;
 use crate::nodes::transform_writable::transform_writable_expression;
 use crate::shared::diagnostics::errors;
 use crate::util::array_binding_pattern_contains_hoists::array_like_expression_contains_spread;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
 use crate::util::ensure_transform_order::ensure_transform_order;
 use crate::util::get_literal_number_value::get_literal_number_value;
-use crate::util::symbols::{get_statements, validate_identifier};
+use crate::util::symbols::validate_identifier;
 use crate::util::traversal::skip_downwards;
 use crate::util::types::{
     get_first_defined_symbol, is_array_type, is_definitely_type, is_generator_type,
@@ -530,7 +530,7 @@ pub fn transform_for_of_range_macro(state: &mut TransformState<'_>, node: P<Node
         (range.next().expect("$range has a start"), range.next().expect("$range has an end"), range.next());
     result.extend(range_prereqs.statements);
 
-    statements.extend(transform_statement_list(state, Some(for_of.statement), &get_statements(for_of.statement)));
+    statements.extend(transform_body(state, for_of.statement));
 
     let step_node = arguments.get(2).map(|&a| skip_downwards(a));
     let step_is_negation = step_node.is_some_and(|s| {
@@ -574,7 +574,7 @@ pub fn transform_for_of_statement(state: &mut TransformState<'_>, node: P<Node>)
     let exp = transform_expression(state, &mut exp_prereqs, for_of.expression);
 
     let exp_type = state.get_type(for_of.expression);
-    let statements = transform_statement_list(state, Some(for_of.statement), &get_statements(for_of.statement));
+    let statements = transform_body(state, for_of.statement);
 
     let loop_builder = get_loop_builder(state, for_of.expression, exp_type);
     let mut loop_prereqs = Prereqs::new();

@@ -128,7 +128,7 @@ fn transform_case_clause_body(
     let non_empty_statements: Vec<P<Node>> =
         clause_body.iter().copied().filter(|s| s.kind() != Kind::EmptyStatement).collect();
     let mut statements = match non_empty_statements.as_slice() {
-        [first] if first.kind() == Kind::Block => transform_statement_list(state, Some(*first), first.statements()),
+        [first] if first.kind() == Kind::Block => crate::nodes::transform_statement_list::transform_body(state, *first),
         _ => transform_statement_list(state, Some(node), clause_body),
     };
 

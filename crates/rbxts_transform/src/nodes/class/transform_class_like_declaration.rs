@@ -172,7 +172,12 @@ fn transform_static_declarations(
     for &declaration in static_declarations {
         if declaration.kind() == Kind::ClassStaticBlockDeclaration {
             let body = declaration.as_class_static_block_declaration().body;
-            statements.extend(transform_block(state, body));
+            // rbxts-rs: the block is a statement a TS transformer sees (TypeScript's `isStatement`), lowered here rather
+            // than through `transformStatement`: offered to the plugins' statement hooks first (DESIGN §11.5)
+            match crate::plugins::dispatch::claim_statement(state, body) {
+                Some(claimed) => statements.extend(claimed),
+                None => statements.extend(transform_block(state, body)),
+            }
         } else {
             let mut property_prereqs = Prereqs::new();
             let property = transform_property_declaration(state, &mut property_prereqs, declaration, internal_name);

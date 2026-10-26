@@ -12,14 +12,13 @@ use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::expressions::transform_identifier::transform_identifier_defined;
 use crate::nodes::statements::transform_expression_statement::transform_expression_statement_inner;
 use crate::nodes::statements::transform_variable_statement::{is_var_declaration, transform_variable_declaration};
-use crate::nodes::transform_statement_list::transform_statement_list;
+use crate::nodes::transform_statement_list::transform_body;
 use crate::shared::diagnostics::errors;
 use crate::util::create_truthiness_checks::create_truthiness_checks;
 use crate::util::get_constant_integer::get_constant_integer;
 use crate::util::get_declared_variables::get_declared_variables;
 use crate::util::get_literal_number_value::get_literal_number_value;
 use crate::util::offset::offset;
-use crate::util::symbols::get_statements;
 use crate::util::traversal::{get_ancestor, is_ancestor_of, skip_downwards, source_file_of};
 
 fn add_finalizers_to_if_statement(node: &mut IfStatement, finalizers: &[Stmt]) {
@@ -232,7 +231,7 @@ fn transform_for_statement_fallback(state: &mut TransformState<'_>, node: P<Node
         condition_exp = create::bool(true);
     }
 
-    while_statements.extend(transform_statement_list(state, Some(statement), &get_statements(statement)));
+    while_statements.extend(transform_body(state, statement));
 
     if !while_statements.is_empty() && !finalizer_statements.is_empty() {
         add_finalizers(&mut while_statements, &finalizer_statements);
@@ -442,7 +441,7 @@ fn transform_for_statement_optimized(state: &mut TransformState<'_>, node: P<Nod
         }
     }
 
-    let statements = transform_statement_list(state, Some(statement), &get_statements(statement));
+    let statements = transform_body(state, statement);
 
     if operator == Kind::LessThanToken {
         end = offset(end, -1.0);

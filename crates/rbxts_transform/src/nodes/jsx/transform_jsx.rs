@@ -44,7 +44,7 @@ pub fn transform_jsx(
 ) -> Expr {
     let create_element_expression = transform_jsx_factory_entity(state, node);
 
-    let mut tag_name_exp = transform_jsx_tag_name(state, tag_name);
+    let mut tag_name_exp = transform_jsx_tag_name(state, prereqs, tag_name);
 
     // rbxts-rs: fixes roblox-ts running the attributes' and the children's prerequisites before reading what came
     // before them: `<frame Size={size}>{holder?.bump()}</frame>` built `{ Size = size }` after `bump()` changed

@@ -7,9 +7,8 @@ use tsrs_core::P;
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
-use crate::nodes::transform_statement_list::transform_statement_list;
+use crate::nodes::transform_statement_list::transform_body;
 use crate::util::create_truthiness_checks::create_truthiness_checks;
-use crate::util::symbols::get_statements;
 
 /// `transformWhileStatement`: a condition with prerequisites moves into the loop as `if not condition then break end`.
 pub fn transform_while_statement(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stmt> {
@@ -31,7 +30,7 @@ pub fn transform_while_statement(state: &mut TransformState<'_>, node: P<Node>) 
         condition_exp = create::bool(true);
     }
 
-    while_statements.extend(transform_statement_list(state, Some(statement), &get_statements(statement)));
+    while_statements.extend(transform_body(state, statement));
 
     vec![create::while_stmt(condition_exp, while_statements)]
 }

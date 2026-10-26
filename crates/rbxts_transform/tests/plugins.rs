@@ -18,7 +18,11 @@
 //! `insert_before_statement` in every statement position, `hoist_spillable_named` (spilled too), the `import_named`
 //! `name_1` fallback and import order, `file_identifier_texts`, TS5 numeric literal text, the header comment above
 //! plugin imports, a leading plugin comment above its statement's comments, and `ts5_properties_of_type`
-//! (`seam*.ts`).
+//! (`seam*.ts`). From the seam's last round (`plugin_fixtures/seamrest`, with a Lune runtime check): optional and `super`
+//! calls with their short-circuit and `self`, every link and call of a chain for the expression hooks, asked once,
+//! block bodies, `else if`, static blocks and `declare` statements for the statement hooks, dotted JSX tags; a hoist of
+//! what its statement declares refused; `classify_symbol` diagnostics the same for any checker count; and
+//! `decline-all` and the identity plugins changing no output of the area fixtures.
 //!
 //! Like `tests/fixtures.rs`, the fixture is copied to a temporary directory with a `node_modules` junction
 //! (`RBXTS_RS_FIXTURE_NODE_MODULES`, else the roblox-ts tests project's); without one the tests are skipped.
@@ -1038,6 +1042,40 @@ fn every_ts_nocheck_pragma_is_reported() {
     };
     assert_eq!(count("twice.ts"), 2, "{errors:?}");
     assert_eq!(count("overridden.ts"), 1, "{errors:?}");
+}
+
+/// The offers S2 left out and the seam's last additions, against the `seamrest` fixture (`probe` and `probe-exprcall`):
+/// optional method calls and non-method optional calls, `super.m()` / `super.m?.()` and a `super` callee's key, every
+/// access and call inside a chain for the expression hooks, an expression hook asked once per node, block bodies,
+/// `else if`, a static block and `declare` statements for the statement hooks, and dotted JSX tags. The expected Luau is
+/// hand-checked; `runtime/check.luau` runs it with Lune (`lune` on the PATH, skipped and said so without it): claimed
+/// optional calls and links keep short-circuiting, receivers and bases are evaluated once, `super` calls keep `self`.
+#[test]
+fn every_chain_link_super_call_and_body_is_offered_and_keeps_its_semantics() {
+    let Some(project) = Project::of("seamrest", "seamrest") else { return };
+    let report = project.build(&["probe", "probe-exprcall"], |_| {});
+    assert!(report.fatal.is_empty(), "{:?}", report.fatal);
+    assert_eq!(errors(&report), Vec::<String>::new());
+    // asked once per node: the call hook compiling each call itself does not ask the expression hook again
+    assert_eq!(
+        diagnostics(&report),
+        vec![
+            "warning askonce.ts: probe-exprcall: asked about probeAskOnce",
+            "warning askonce.ts: probe-exprcall: asked about probeAskOnce",
+            "warning askonce.ts: probe-exprcall: asked about probeAskOnce",
+        ]
+    );
+    assert_expected_of("seamrest", &report, &[]);
+    let fixture = fixture_dir_of("seamrest");
+    match std::process::Command::new("lune").args(["run", "runtime/check.luau"]).current_dir(&fixture).output() {
+        Err(e) => eprintln!("seamrest: the Lune runtime check skipped: lune: {e}"),
+        Ok(output) => assert!(
+            output.status.success() && String::from_utf8_lossy(&output.stdout).starts_with("ok "),
+            "runtime/check.luau:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    }
 }
 
 /// Offering a node and getting a clean decline changes nothing: over the area fixtures, `decline-all` (offered every

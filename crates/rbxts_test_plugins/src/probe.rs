@@ -192,6 +192,8 @@ const KEY: Tag = Tag(107);
 const ATTRS: Tag = Tag(108);
 const ATTRSREAD: Tag = Tag(109);
 const EXPRBIN: Tag = Tag(110);
+const EXPRACC: Tag = Tag(111);
+const BODY: Tag = Tag(112);
 
 fn op(tag: Tag) -> &'static str {
     OPS.get(tag.0 as usize).copied().unwrap_or("?")
@@ -668,6 +670,8 @@ impl PluginInstance for ProbeInstance {
             interest.expressions(Kind::NewExpression, EXPRCALL);
             interest.expressions(Kind::BinaryExpression, EXPRBIN);
             interest.expressions(Kind::PostfixUnaryExpression, EXPRBIN);
+            interest.expressions(Kind::PropertyAccessExpression, EXPRACC);
+            interest.expressions(Kind::ElementAccessExpression, EXPRACC);
             interest.statements(Kind::ExpressionStatement, STMTSELF);
             return;
         }
@@ -684,6 +688,9 @@ impl PluginInstance for ProbeInstance {
         interest.classes(ClassFilter::Decorated);
         interest.expressions(Kind::VoidExpression, VOID);
         interest.statements(Kind::DebuggerStatement, DEBUGGER);
+        interest.statements(Kind::Block, BODY);
+        interest.statements(Kind::IfStatement, BODY);
+        interest.statements(Kind::VariableStatement, BODY);
         interest.accesses_by_marker("__probeKey", KEY);
         interest.assignments_by_receiver_symbol();
     }
@@ -763,6 +770,23 @@ impl PluginInstance for ProbeInstance {
             let statement = matches!(value, LuauExpr::Nil);
             return Ok(Claim::Take(if statement { value } else { create::call(create::id("exprWrap"), vec![value]) }));
         }
+        if tag == EXPRACC {
+            // accesses named `probeAcc…` (a dotted JSX tag too): lowered by the hook (on the base compiled already,
+            // inside a chain) and wrapped; `probeAccTake…` is taken without lowering it (its base's value is dropped)
+            let name = match node.kind() {
+                Kind::PropertyAccessExpression => cx.source_text(node.as_property_access_expression().name),
+                _ => cx.source_text(node.as_element_access_expression().argument_expression),
+            };
+            let name = name.trim_matches('"');
+            if name.starts_with("probeAccTake") {
+                return self.claimed(create::id("takenValue"));
+            }
+            if name.starts_with("probeAcc") {
+                let value = cx.compile_expr(node)?;
+                return self.claimed(create::call(create::id("exprWrap"), vec![value]));
+            }
+            return Ok(Claim::Decline);
+        }
         if tag == EXPRCALL
             && let Some(callee) = node.expression()
             && cx.source_text(callee).ends_with(".probeExprBase")
@@ -774,7 +798,7 @@ impl PluginInstance for ProbeInstance {
         }
         if tag == EXPRCALL
             && let Some(callee) = node.expression()
-            && cx.source_text(callee).starts_with("probeAskOnce")
+            && cx.source_text(callee).contains("probeAskOnce")
         {
             cx.warning(node, "probe-exprcall: asked about probeAskOnce");
             return Ok(Claim::Decline);
@@ -816,6 +840,24 @@ impl PluginInstance for ProbeInstance {
         if tag == STMTSELF && cx.source_text(node).starts_with("probeStmtSelf") {
             cx.compile_expr(node)?;
             return Ok(Claim::Decline);
+        }
+        if tag == BODY {
+            // a block whose first statement is `"probeBlock";`, an `if` (an `else if` too) on `probeElseIf`, a
+            // `declare` statement naming `probeDeclared`: replaced by a `print` naming what it was
+            let what = match node.kind() {
+                Kind::Block => node
+                    .statements()
+                    .first()
+                    .is_some_and(|s| cx.source_text(*s) == "\"probeBlock\";")
+                    .then(|| format!("a block of {} statements", node.statements().len())),
+                Kind::IfStatement => (cx.source_text(node.as_if_statement().expression) == "probeElseIf")
+                    .then(|| "an if statement".to_owned()),
+                _ => cx.source_text(node).contains("probeDeclared").then(|| "a declare statement".to_owned()),
+            };
+            let Some(what) = what else { return Ok(Claim::Decline) };
+            self.claims.set(self.claims.get() + 1);
+            let print = create::call(create::id("print"), vec![text_literal(&format!("probe: {what}"))]);
+            return Ok(Claim::Take(vec![create::call_statement(print)]));
         }
         if tag != DEBUGGER {
             return Ok(Claim::Decline);
