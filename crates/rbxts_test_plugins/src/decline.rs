@@ -29,10 +29,13 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 /// `decline-all` (`audit` false) or `decline-audit`; `inert` registers nothing at all (a plugin build's baseline).
 pub struct DeclineAll {
+    /// Record what it was offered (`decline-audit`).
     pub audit: bool,
+    /// Register nothing (`inert`).
     pub inert: bool,
 }
 
+/// What setup decided: the mode, the property names and the expression and statement kinds to register.
 pub struct DeclineShared {
     audit: bool,
     inert: bool,
@@ -52,6 +55,7 @@ enum Offer {
     Class,
 }
 
+/// The per-checker instance (with what it was offered, for the audit).
 pub struct DeclineInstance {
     shared: Arc<DeclineShared>,
     offered: RefCell<FxHashMap<P<Node>, Vec<Offer>>>,
