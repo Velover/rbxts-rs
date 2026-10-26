@@ -72,6 +72,9 @@ pub struct ProjectNode {
     pub own_rojo: bool,
     /// See [`crate::ProjectServices::project_reference_paths`].
     pub reference_paths: HashMap<String, String>,
+    /// The values of `reference_paths` in roblox-ts's `Map` order (a key's first insertion, its last value): the
+    /// order `validateReferenceRojoPaths` checks them in, which decides the error reported.
+    pub reference_path_order: Vec<String>,
 }
 
 impl ProjectNode {
@@ -254,6 +257,7 @@ impl ProjectGraph {
                 tsc_build_info_path,
                 own_rojo,
                 reference_paths: HashMap::new(),
+                reference_path_order: Vec::new(),
             });
         }
 
@@ -322,22 +326,28 @@ impl ProjectGraph {
         Ok(())
     }
 
-    /// The keys of the projects `start` references, transitively, each once: dependencies before their dependents.
-    fn reachable(&self, start: &[String]) -> Vec<String> {
-        fn visit(graph: &ProjectGraph, key: &str, seen: &mut HashSet<String>, out: &mut Vec<String>) {
+    /// The keys of the projects `start` references, transitively, each once: dependencies before their dependents
+    /// (`mapReferencePaths`'s walk), or with `pre_order` each before its dependencies (`validateReferenceRojoPaths`'s).
+    fn reachable(&self, start: &[String], pre_order: bool) -> Vec<String> {
+        fn visit(graph: &ProjectGraph, key: &str, pre: bool, seen: &mut HashSet<String>, out: &mut Vec<String>) {
             if !seen.insert(key.to_owned()) {
                 return;
             }
             let Some(node) = graph.node(key) else { return };
-            for dependency in &node.dependencies {
-                visit(graph, dependency, seen, out);
+            if pre {
+                out.push(key.to_owned());
             }
-            out.push(key.to_owned());
+            for dependency in &node.dependencies {
+                visit(graph, dependency, pre, seen, out);
+            }
+            if !pre {
+                out.push(key.to_owned());
+            }
         }
         let mut seen = HashSet::new();
         let mut out = Vec::new();
         for key in start {
-            visit(self, key, &mut seen, &mut out);
+            visit(self, key, pre_order, &mut seen, &mut out);
         }
         out
     }
@@ -359,27 +369,37 @@ impl ProjectGraph {
     fn map_reference_paths(&mut self, case_sensitive: bool) {
         let mut all = Vec::with_capacity(self.nodes.len());
         for project in &self.nodes {
-            let mut paths = HashMap::new();
-            for key in self.reachable(&project.dependencies) {
+            // a `Map`: a key keeps the place of its first `set`
+            let mut entries: Vec<(String, String)> = Vec::new();
+            let mut at: HashMap<String, usize> = HashMap::new();
+            let mut set = |key: String, value: String| match at.get(&key) {
+                Some(&index) => entries[index].1 = value,
+                None => {
+                    at.insert(key.clone(), entries.len());
+                    entries.push((key, value));
+                }
+            };
+            for key in self.reachable(&project.dependencies, false) {
                 let Some(reference) = self.node(&key) else { continue };
                 let Some(translator) = &reference.path_translator else { continue };
                 for file_name in Self::reference_files(reference, translator) {
                     let output_path = translator.get_import_path(file_name, false);
+                    set(reference_key(file_name, case_sensitive), output_path.clone());
                     if !tspath::is_declaration_file_name(file_name) && !file_name.ends_with(".json") {
                         let declaration = tsrs_tsoptions::outputpaths::get_output_declaration_file_name_worker(
                             file_name,
                             &reference.options,
                             &*reference.config,
                         );
-                        paths.insert(reference_key(&declaration, case_sensitive), output_path.clone());
+                        set(reference_key(&declaration, case_sensitive), output_path);
                     }
-                    paths.insert(reference_key(file_name, case_sensitive), output_path);
                 }
             }
-            all.push(paths);
+            all.push(entries);
         }
-        for (node, paths) in self.nodes.iter_mut().zip(all) {
-            node.reference_paths = paths;
+        for (node, entries) in self.nodes.iter_mut().zip(all) {
+            node.reference_path_order = entries.iter().map(|(_, value)| value.clone()).collect();
+            node.reference_paths = entries.into_iter().collect();
         }
     }
 
@@ -408,7 +428,7 @@ impl ProjectGraph {
                 continue;
             }
             let references: Vec<String> = self
-                .reachable(&project.dependencies)
+                .reachable(&project.dependencies, true)
                 .into_iter()
                 .filter(|k| self.node(k).is_some_and(|n| n.path_translator.is_some()))
                 .collect();
@@ -438,7 +458,7 @@ impl ProjectGraph {
                 if !project.dependencies.contains(&reference_key) && !paths.iter().any(|p| consumer_path(p).is_some()) {
                     continue;
                 }
-                for path in reference.reference_paths.values() {
+                for path in &reference.reference_path_order {
                     if !paths.contains(path) {
                         paths.push(path.clone());
                     }
@@ -508,8 +528,11 @@ impl ProjectGraph {
                         .into());
                     }
                 }
-                owners.retain(|(r, _)| *r != root);
-                owners.push((root, index));
+                // a `Map`: setting a root again keeps its place
+                match owners.iter_mut().find(|(r, _)| *r == root) {
+                    Some(owner) => owner.1 = index,
+                    None => owners.push((root, index)),
+                }
             }
             for build_info in project.build_infos() {
                 let build_info_key = key(&build_info);
