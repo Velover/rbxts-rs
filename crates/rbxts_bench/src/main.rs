@@ -15,6 +15,7 @@
 //! rbxts-bench project-parity <dump.json> [--runs N] [--max-diffs N]
 
 mod build;
+mod divergences;
 mod luau_parity;
 mod project_parity;
 mod watch_parity;

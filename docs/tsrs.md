@@ -41,8 +41,11 @@ Pin the version and update on purpose, never automatically. tsrs is pre-1.0, so 
    - the real project with Flamework off, 605 files.
 
    Use `merge\parity.sh` and `merge\parity-{tests,real}-main.txt` in the scratchpad's `batch\rbxts-rs` folder, plus
-   `cargo test --workspace` for the fixtures and plugin tests. Any differing file is a behaviour change. Find the
-   tsrs commit that caused it, then either adapt rbxts-rs (with a `// rbxts-rs:` note) or report it upstream.
+   `cargo test --workspace` for the fixtures and plugin tests. Some files differ from stock on purpose, where
+   rbxts-rs fixes a roblox-ts bug. `rbxts-bench build --parity REF --divergences crates/rbxts_bench/parity/divergences.json
+   --corpus {roblox-ts-tests,real-noplugin}` reports those as `known-fix` while their output is unchanged (see
+   `crates/rbxts_bench/src/divergences.rs`). Any other differing file, or a `stale` one, is a behaviour change. Find
+   the tsrs commit that caused it, then either adapt rbxts-rs (with a `// rbxts-rs:` note) or report it upstream.
 5. **Re-measure** `rbxts-bench load` and a full build (see `bench/RESULTS.md`), so a performance regression doesn't
    slip in.
 6. **Process:** as with every change, a worker does the update and a fresh validator re-runs parity before it merges.

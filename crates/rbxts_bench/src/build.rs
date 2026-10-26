@@ -8,6 +8,12 @@
 //! - failed: other errors (roblox-ts diagnostics, internal errors);
 //! - missing: a reference file no project file produced, or an output the reference does not have.
 //!
+//! With `--divergences FILE --corpus NAME` (the manifest `parity/divergences.json`, see [`crate::divergences`]), two
+//! more classes: `known-fix`, a differing file whose output is the one the manifest lists, with the rbxts-rs fixes
+//! of roblox-ts bugs that explain it (it passes); and `stale`, a listed file that is identical to the reference
+//! again (it fails: a fix no longer shows there). `--record-divergences FIX` writes the run's differing files into the
+//! manifest under the fix `FIX`, after they were checked by hand.
+//!
 //! The unsupported-kind histogram counts, per kind, the files it appears in, the files where it is the only
 //! unsupported kind ("sole blocker"), and its occurrences.
 
@@ -16,11 +22,13 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use rbxts_project::{ProjectOptionLayer, nodepath};
+
+use crate::divergences::{self, Divergences};
 use rbxts_transform::{CompileOptions, CompileReport, PluginOptions, compile_project_with};
 use tsrs_compiler::diagnosticwriter::flatten_diagnostic_message;
 use tsrs_diagnostics::Category;
 
-pub const USAGE: &str = "usage: rbxts-bench build [-p tsconfig.json] [--out-dir DIR] [--optimizedLoops] [--allowCommentDirectives]\n                         [--write-partial] [--no-write] [--parity REF_DIR] [--report FILE] [--show N] [--json]\n                         [--plugin NAME]... [--timings] [--ignore-unknown-plugins] [--claims-all] [--checkers N]\n  --plugin NAME: register a test plugin (rbxts_test_plugins), in claim order; --timings: plugin hook times;\n  --ignore-unknown-plugins: a tsconfig plugins entry no registered plugin claims is not an error;\n  --claims-all: ask every matching plugin and report double claims (as RBXTS_PLUGIN_CLAIMS=all);\n  --checkers N: type checkers, each checking and transforming its files on a thread (default: rbxtsc's)";
+pub const USAGE: &str = "usage: rbxts-bench build [-p tsconfig.json] [--out-dir DIR] [--optimizedLoops] [--allowCommentDirectives]\n                         [--write-partial] [--no-write] [--parity REF_DIR] [--report FILE] [--show N] [--json]\n                         [--divergences FILE --corpus NAME [--record-divergences FIX]]\n  --divergences, --corpus: files that differ from the reference by known fixes of roblox-ts bugs pass as known-fix;\n  --record-divergences FIX: add this run's other differing files to the manifest under FIX (after checking them);\n                         [--plugin NAME]... [--timings] [--ignore-unknown-plugins] [--claims-all] [--checkers N]\n  --plugin NAME: register a test plugin (rbxts_test_plugins), in claim order; --timings: plugin hook times;\n  --ignore-unknown-plugins: a tsconfig plugins entry no registered plugin claims is not an error;\n  --claims-all: ask every matching plugin and report double claims (as RBXTS_PLUGIN_CLAIMS=all);\n  --checkers N: type checkers, each checking and transforming its files on a thread (default: rbxtsc's)";
 
 struct Args {
     tsconfig: String,
@@ -37,6 +45,9 @@ struct Args {
     ignore_unknown_plugins: bool,
     claims_all: bool,
     checkers: Option<usize>,
+    divergences: Option<String>,
+    corpus: Option<String>,
+    record_divergences: Option<String>,
 }
 
 fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -56,6 +67,9 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
         ignore_unknown_plugins: false,
         claims_all: false,
         checkers: None,
+        divergences: None,
+        corpus: None,
+        record_divergences: None,
     };
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -76,9 +90,21 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--ignore-unknown-plugins" => out.ignore_unknown_plugins = true,
             "--claims-all" => out.claims_all = true,
             "--checkers" => out.checkers = Some(crate::watch_parity::parse_checkers(&value()?)?),
+            "--divergences" => out.divergences = Some(value()?),
+            "--corpus" => out.corpus = Some(value()?),
+            "--record-divergences" => out.record_divergences = Some(value()?),
             "-h" | "--help" => return Err(USAGE.into()),
             _ => return Err(format!("unknown argument {arg}\n{USAGE}")),
         }
+    }
+    if out.divergences.is_some() != out.corpus.is_some() {
+        return Err(format!("--divergences and --corpus go together\n{USAGE}"));
+    }
+    if out.divergences.is_some() && out.parity.is_none() {
+        return Err(format!("--divergences needs --parity\n{USAGE}"));
+    }
+    if out.record_divergences.is_some() && out.divergences.is_none() {
+        return Err(format!("--record-divergences needs --divergences and --corpus\n{USAGE}"));
     }
     Ok(out)
 }
@@ -86,6 +112,10 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Class {
     Identical,
+    /// Differing, by the fixes the divergence manifest lists for exactly this output.
+    KnownFix,
+    /// Listed in the divergence manifest, but identical to the reference.
+    Stale,
     Differing,
     Unsupported,
     Failed,
@@ -96,6 +126,8 @@ impl Class {
     fn label(self) -> &'static str {
         match self {
             Class::Identical => "identical",
+            Class::KnownFix => "known-fix",
+            Class::Stale => "stale",
             Class::Differing => "differing",
             Class::Unsupported => "unsupported",
             Class::Failed => "failed",
@@ -108,6 +140,8 @@ struct FileParity {
     relative: String,
     class: Class,
     detail: String,
+    /// The output of a differing file (for recording divergences).
+    output: Option<String>,
     /// The T2 work areas of the file's unsupported kinds.
     areas: BTreeSet<&'static str>,
 }
@@ -228,6 +262,7 @@ fn parity(
     report: &CompileReport,
     out_dir: &str,
     reference_dir: &str,
+    divergences: Option<&Divergences>,
 ) -> (Vec<FileParity>, BTreeMap<String, KindStats>) {
     let mut results = Vec::new();
     let mut produced = BTreeSet::new();
@@ -248,6 +283,7 @@ fn parity(
         for kind in &outcome.unsupported {
             kinds.entry(kind.clone()).or_default().occurrences += 1;
         }
+        let mut output = None;
         let (class, detail) = if !unsupported.is_empty() {
             (Class::Unsupported, unsupported.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "))
         } else if !outcome.is_clean() {
@@ -259,15 +295,29 @@ fn parity(
                 .unwrap_or_default();
             (Class::Failed, first)
         } else {
+            let listed = divergences.and_then(|d| d.get(&relative));
             match (&outcome.luau, &reference) {
-                (Some(ours), Some(reference)) if ours == reference => (Class::Identical, String::new()),
-                (Some(ours), Some(reference)) => (Class::Differing, first_difference(ours, reference)),
+                (Some(ours), Some(reference)) if ours == reference => match listed {
+                    Some(entry) => (Class::Stale, format!("listed for {}, but identical", entry.fixes.join(", "))),
+                    None => (Class::Identical, String::new()),
+                },
+                (Some(ours), Some(_)) if listed.is_some_and(|e| e.output == divergences::hash(ours)) => {
+                    (Class::KnownFix, listed.expect("listed").fixes.join(", "))
+                }
+                (Some(ours), Some(reference)) => {
+                    output = Some(ours.clone());
+                    let first = first_difference(ours, reference);
+                    match listed {
+                        Some(entry) => (Class::Differing, format!("{first} (listed for {}, another output)", entry.fixes.join(", "))),
+                        None => (Class::Differing, first),
+                    }
+                }
                 (Some(_), None) => (Class::Missing, "not in the reference".to_owned()),
                 (None, _) => (Class::Failed, "no output".to_owned()),
             }
         };
         let areas = unsupported.iter().map(|k| area(k)).collect();
-        results.push(FileParity { relative, class, detail, areas });
+        results.push(FileParity { relative, class, detail, output, areas });
     }
     let mut reference_files = BTreeSet::new();
     collect_files(Path::new(reference_dir), Path::new(reference_dir), &mut reference_files);
@@ -276,6 +326,7 @@ fn parity(
             relative: relative.clone(),
             class: Class::Missing,
             detail: "no project file produced it".to_owned(),
+            output: None,
             areas: BTreeSet::new(),
         });
     }
@@ -423,18 +474,40 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
     let mut status = i32::from(report.has_errors());
     if let Some(reference_dir) = &args.parity {
         let out_dir = report.out_dir.clone();
-        let (results, kinds) = parity(&report, &out_dir, reference_dir);
+        let mut divergences = match (&args.divergences, &args.corpus) {
+            (Some(file), Some(corpus)) => match Divergences::load(file, corpus) {
+                Ok(d) => Some(d),
+                Err(e) => {
+                    eprintln!("rbxts-bench build: {e}");
+                    return 2;
+                }
+            },
+            _ => None,
+        };
+        let (results, kinds) = parity(&report, &out_dir, reference_dir, divergences.as_ref());
         let mut counts: BTreeMap<Class, usize> = BTreeMap::new();
         for r in &results {
             *counts.entry(r.class).or_default() += 1;
         }
         let mut text = String::new();
         let summary: Vec<String> =
-            [Class::Identical, Class::Differing, Class::Unsupported, Class::Failed, Class::Missing]
+            [Class::Identical, Class::KnownFix, Class::Stale, Class::Differing, Class::Unsupported, Class::Failed, Class::Missing]
                 .iter()
+                .filter(|c| divergences.is_some() || !matches!(c, Class::KnownFix | Class::Stale))
                 .map(|c| format!("{} {}", c.label(), counts.get(c).copied().unwrap_or(0)))
                 .collect();
         let _ = writeln!(text, "parity vs {reference_dir}: {}", summary.join(", "));
+        if let Some(d) = &divergences {
+            let mut by_fix: BTreeMap<&str, usize> = BTreeMap::new();
+            for r in results.iter().filter(|r| r.class == Class::KnownFix) {
+                for fix in r.detail.split(", ") {
+                    *by_fix.entry(fix).or_default() += 1;
+                }
+            }
+            for (fix, files) in by_fix {
+                let _ = writeln!(text, "  known fix {fix}: {files} files ({})", d.describe(fix).unwrap_or("not described"));
+            }
+        }
         let mut ranked: Vec<(&String, &KindStats)> = kinds.iter().collect();
         ranked.sort_by(|a, b| b.1.files.cmp(&a.1.files).then(b.1.sole.cmp(&a.1.sole)).then(a.0.cmp(b.0)));
         let _ = writeln!(text, "unsupported kinds (files using it / files where it is the only one / occurrences):");
@@ -449,7 +522,7 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
         }
         let mut shown = 0;
         for r in &results {
-            if matches!(r.class, Class::Differing | Class::Failed | Class::Missing) && shown < args.show {
+            if matches!(r.class, Class::Differing | Class::Stale | Class::Failed | Class::Missing) && shown < args.show {
                 let _ = writeln!(text, "{:<11} {}  {}", r.class.label(), r.relative, r.detail);
                 shown += 1;
             }
@@ -460,7 +533,27 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
         {
             eprintln!("rbxts-bench build: could not write {report_path}: {e}");
         }
-        if counts.get(&Class::Identical).copied().unwrap_or(0) != results.len() {
+        if let (Some(d), Some(fix)) = (&mut divergences, &args.record_divergences) {
+            let differing: Vec<(String, String)> = results
+                .iter()
+                .filter_map(|r| r.output.as_ref().map(|o| (r.relative.clone(), o.clone())))
+                .collect();
+            let identical: Vec<String> =
+                results.iter().filter(|r| r.class == Class::Stale).map(|r| r.relative.clone()).collect();
+            match d.record(fix, &differing, &identical) {
+                Ok(changes) => {
+                    for change in changes {
+                        println!("divergences: {change}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("rbxts-bench build: {e}");
+                    return 2;
+                }
+            }
+        }
+        let passing = counts.get(&Class::Identical).copied().unwrap_or(0) + counts.get(&Class::KnownFix).copied().unwrap_or(0);
+        if passing != results.len() {
             status = status.max(1);
         }
     }
