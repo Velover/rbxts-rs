@@ -161,7 +161,11 @@ fn array_join(
 ) -> Expr {
     let args = arguments_with_defaults(state, node, args, vec![globals::strings::comma_space()]);
     let receiver = node.expression().and_then(|e| e.expression()).expect("a property call has a receiver");
+    // rbxts-rs: fixes roblox-ts reading the receiver's type with `undefined` in it on an optional chain (`parts?.join()`
+    // on `Array<boolean> | undefined`): the index type of that union is unknown, so the `tostring` loop was skipped and
+    // `table.concat` failed on the values. The receiver is not nil where the macro runs.
     let receiver_type = state.get_type(receiver);
+    let receiver_type = state.checker.get_non_nullable_type(receiver_type);
     // rbxts-rs: TypeScript 7's getIndexTypeOfType takes the key type instead of `IndexKind.Number`
     let number_type = state.checker.get_number_type();
     let index_type = state.checker.get_index_type_of_type_exported(receiver_type, number_type);
