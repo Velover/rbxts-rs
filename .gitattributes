@@ -1,3 +1,5 @@
 # Check out every text file with LF: parity fixtures and expected outputs are compared byte for byte, and the
 # machine default core.autocrlf=true would turn them into CRLF in a fresh checkout.
 * text=auto eol=lf
+# The json fixture's CRLF asset: copied as it is, so committed and checked out with its CRLF line ends.
+crates/rbxts_transform/tests/fixtures/json/**/crlf.json -text

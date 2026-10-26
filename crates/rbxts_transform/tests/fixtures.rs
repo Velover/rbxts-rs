@@ -34,7 +34,8 @@
 //!   templates, `import()`, mixed edge cases, and a server script importing the modules.
 //! - `json`: JSON modules (`resolveJsonModule`): default, namespace, named and dynamic imports, a JSON file outside
 //!   the root dirs (imported at its Rojo-mapped source path), and one nothing imports. The only fixture checked as a
-//!   written output tree ([`check_tree`]): its JSON files are assets, copied as they are.
+//!   written output tree ([`check_tree`]): its JSON files are assets, copied as they are (`cfg/crlf.json` keeps its
+//!   CRLF line ends; `.gitattributes` keeps them in the checkout).
 //! - `jsx`: JSX elements, attributes (string, boolean, namespaced, with prerequisites), spread props (first, later,
 //!   possibly undefined, conditional), fragments, keyed, conditional, mapped and spread children, JSX text whitespace
 //!   and entities, `@jsx` / `@jsxFrag` pragmas, and the JSX factory import kept alive when only JSX uses it.
@@ -303,7 +304,8 @@ fn compare(report: &CompileReport, root: &Path, expected: &Path) -> Vec<String> 
             failures.push(format!("{relative}: produced but not in expected/\n--- ours\n{luau}"));
             continue;
         };
-        let expected = expected.replace("\r\n", "\n");
+        // exact, line ends included: the renderer writes `\n` as roblox-ts does, and `.gitattributes` checks every
+        // `expected/` file out with LF whatever `core.autocrlf` says, so nothing needs normalising
         if *luau != expected {
             let line = luau
                 .lines()
@@ -323,7 +325,8 @@ fn compare(report: &CompileReport, root: &Path, expected: &Path) -> Vec<String> 
     failures
 }
 
-/// The build's report, then its written `out` tree against `expected` (both ways, line ends aside).
+/// The build's report, then its written `out` tree against `expected` (both ways), byte for byte: an asset is copied
+/// as it is (line ends included), as stock does.
 fn compare_tree(report: &CompileReport, root: &Path, expected: &Path) -> Vec<String> {
     let mut failures = reported(report, root);
     let out = root.join("out");
@@ -333,13 +336,13 @@ fn compare_tree(report: &CompileReport, root: &Path, expected: &Path) -> Vec<Str
     }
     let mut expected_files = Vec::new();
     collect_files(expected, expected, &mut expected_files);
-    let read = |path: &Path| std::fs::read_to_string(path).map(|text| text.replace("\r\n", "\n"));
     for relative in &written {
-        let ours = read(&out.join(relative)).unwrap_or_default();
-        match read(&expected.join(relative)) {
-            Err(_) => failures.push(format!("{relative}: written but not in expected/\n--- ours\n{ours}")),
+        let ours = std::fs::read(out.join(relative)).unwrap_or_default();
+        let shown = String::from_utf8_lossy(&ours).replace('\r', "\\r");
+        match std::fs::read(expected.join(relative)) {
+            Err(_) => failures.push(format!("{relative}: written but not in expected/\n--- ours\n{shown}")),
             Ok(theirs) if theirs != ours => {
-                failures.push(format!("{relative}: differs from expected\n--- ours\n{ours}"))
+                failures.push(format!("{relative}: differs from expected (byte for byte)\n--- ours\n{shown}"))
             }
             Ok(_) => {}
         }
@@ -363,7 +366,7 @@ fn check(area: &'static str) {
 }
 
 /// [`check`], comparing the written output tree instead: every file under the project's `out` (Luau and assets) equals
-/// its `expected/` file, line ends aside, and every `expected/` file is written.
+/// its `expected/` file byte for byte, and every `expected/` file is written.
 fn check_tree(area: &'static str) {
     check_in(area, true);
 }
