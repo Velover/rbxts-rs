@@ -44,6 +44,7 @@ pub fn fixture() -> &'static Program {
             cwd: dir.to_owned(),
             checkers: 1,
             lazy_dts: false,
+        regions: false,
         })
         .unwrap_or_else(|_| panic!("the fixture tsconfig loads"));
         project.program as *const Program as usize

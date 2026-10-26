@@ -172,6 +172,7 @@ fn run(args: &Args) -> i32 {
         cwd,
         checkers: args.checkers,
         lazy_dts: args.lazy_dts,
+    regions: false,
     }) {
         Ok(p) => p,
         Err(diags) => {

@@ -1,5 +1,6 @@
 //! The two traits a plugin implements (DESIGN §11.1, §11.2, §14).
 
+use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::sync::Arc;
 
 use tsrs_ast::{Diagnostic, Node, Symbol};
@@ -24,6 +25,57 @@ use crate::{
 /// made from. A `Shared` made by a build that does not commit (errors or `Fatal`) is dropped, and the next build
 /// runs `setup` again on the committed state. (A `Shared` kept from an earlier committed build stays kept when a
 /// later build fails: it still matches the committed state.)
+///
+/// **No program handles between builds (the compiler's contract).** `Shared`, `State` and `FilePart` outlive the
+/// program they were made with: a watch session frees each build's program once the next build has replaced it,
+/// with its checkers and everything allocated while one was held (the types, symbols, signatures and diagnostics
+/// they made, and the nodes and diagnostics a transform made). So none of them may hold a program handle: no
+/// `P<Node>`, `P<Symbol>`, `P<Type>`, `P<Signature>`, `P<Diagnostic>`, `P<SourceFile>`, `&'static Program` or
+/// `&'static str` borrowed from source text or a checker; and no [`FileIndex`], which is renumbered every build.
+/// Keep owned data: strings, numbers, paths (a file is keyed by `cx.file().path`). Handles belong in the
+/// [`PluginInstance`], which lives for one build. The types enforce most of it: the three types must be
+/// `UnwindSafe + RefUnwindSafe` (the compiler catches a panic in a hook and goes on with them), which the handles to
+/// tsrs's objects are not, as those objects have interior mutability: a `P<…>` field, or a collection of them, does
+/// not compile. Borrowed source text (`&'static str`) passes the bound and is the plugin's to avoid. Wrapping a value
+/// in [`std::panic::AssertUnwindSafe`] silences the bound: only for a value that holds no handle (an `Arc<dyn Fn>`).
+///
+/// ```compile_fail
+/// use std::sync::Arc;
+/// use rbxts_plugin::ts::{Node, P};
+/// use rbxts_plugin::*;
+///
+/// struct Keeper;
+/// struct KeeperInstance;
+/// // a node kept in a file part: it would outlive its program
+/// struct KeptPart(P<Node>);
+///
+/// impl Plugin for Keeper {
+///     type Shared = ();
+///     type State = ();
+///     type FilePart = KeptPart;
+///     type Instance = KeeperInstance;
+///     fn info(&self) -> PluginInfo {
+///         PluginInfo { name: "keeper", version: "0", tsconfig_transform: None }
+///     }
+///     fn setup(&self, _: &mut SetupCx<'_>, _: &mut ()) -> Result<Arc<()>, Fatal> {
+///         Ok(Arc::new(()))
+///     }
+///     fn instance(&self, _: Arc<()>, _: CheckerInfo) -> KeeperInstance {
+///         KeeperInstance
+///     }
+///     fn finish(&self, _: &(), _: &mut (), _: &[(FileIndex, &KeptPart)], _: &mut FinishCx<'_>) -> Result<(), Fatal> {
+///         Ok(())
+///     }
+/// }
+///
+/// impl PluginInstance for KeeperInstance {
+///     type FilePart = KeptPart;
+///     fn interest(&self, _: &mut Interest) {}
+///     fn end_file(&self, _: &mut Cx<'_>) -> PResult<KeptPart> {
+///         unimplemented!()
+///     }
+/// }
+/// ```
 pub trait Plugin: Send + Sync + 'static {
     /// Read-only state for the transform: config, env, ids decided up front. Made by `setup`; kept across watch
     /// rebuilds until a build input changes or `rebuild_start` asks for a new one, and only together with the
@@ -33,7 +85,10 @@ pub trait Plugin: Send + Sync + 'static {
     /// plugin persists belongs in [`Plugin::State`], reloaded with [`SetupCx::read_persisted`] when `setup` starts
     /// from [`crate::StateOrigin::Fresh`]. `setup` may read that file through [`SetupCx::read_input`] (Flamework's
     /// candidate scan stops at its own `flamework.build`), but then only whether it exists may matter.
-    type Shared: Send + Sync + 'static;
+    ///
+    /// A kept `Shared` outlives the program `setup` saw, so it holds **no handles** either: see "No program handles
+    /// between builds" above.
+    type Shared: Send + Sync + UnwindSafe + RefUnwindSafe + 'static;
     /// Persistent state across builds (Flamework: the id table, salt, seed, mode), owned by the compiler.
     ///
     /// The compiler hands a working copy of the last committed state to `setup` and `finish` (a clone, so a
@@ -44,15 +99,17 @@ pub trait Plugin: Send + Sync + 'static {
     /// from disk between rebuilds (DESIGN §14).
     ///
     /// It outlives the program it was made with, so it holds **no handles** (`P<…>`, `&'static` program or
-    /// source text) **and no [`FileIndex`]**: key per-file data by the file's path (`cx.file().path`).
-    type State: Clone + Default + Send + 'static;
+    /// source text) **and no [`FileIndex`]**: key per-file data by the file's path (`cx.file().path`). See "No
+    /// program handles between builds" above.
+    type State: Clone + Default + Send + UnwindSafe + RefUnwindSafe + 'static;
     /// What one file contributes to cross-file results. The compiler keeps each file's part from its last
     /// successful transform (by normalised path) and hands the parts of all current files to `finish`.
     ///
     /// Cached parts outlive the program that made them (watch rebuilds free replaced programs, DESIGN §14), so a
     /// part holds **no handles** (`P<Node>`, `P<Symbol>`, `P<Type>`, `&'static` program or source text) **and no
-    /// [`FileIndex`]**, which is renumbered every build. Owned strings, numbers and paths only.
-    type FilePart: Send + 'static;
+    /// [`FileIndex`]**, which is renumbered every build. Owned strings, numbers and paths only. See "No program
+    /// handles between builds" above.
+    type FilePart: Send + UnwindSafe + RefUnwindSafe + 'static;
     /// The per-checker instance.
     type Instance: PluginInstance<FilePart = Self::FilePart>;
 
@@ -171,7 +228,7 @@ pub trait Plugin: Send + Sync + 'static {
 /// (`compile_*`, prereqs, capture, hoists, root insertions) only in claim hooks and `class`.
 pub trait PluginInstance: 'static {
     /// The plugin's [`Plugin::FilePart`].
-    type FilePart: Send + 'static;
+    type FilePart: Send + UnwindSafe + RefUnwindSafe + 'static;
 
     /// Registers the nodes this instance wants. Called once, right after the instance is made.
     fn interest(&self, interest: &mut Interest);

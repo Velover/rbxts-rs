@@ -71,7 +71,7 @@ fn collect(check_first: bool) -> Vec<(String, String)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/property_order");
     let tsconfig = dir.join("tsconfig.json").to_string_lossy().replace('\\', "/");
     let cwd = dir.to_string_lossy().replace('\\', "/");
-    let project = rbxts_project::load(&LoadOptions { tsconfig, cwd, checkers: 1, lazy_dts: false })
+    let project = rbxts_project::load(&LoadOptions { tsconfig, cwd, checkers: 1, lazy_dts: false, regions: false })
         .unwrap_or_else(|d| panic!("the fixture's tsconfig: {} diagnostics", d.len()));
     let ctx = Context::background();
     project.program.bind_source_files();

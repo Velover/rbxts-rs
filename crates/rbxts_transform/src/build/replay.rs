@@ -138,7 +138,7 @@ mod tests {
         std::fs::write(dir.path().join("b.ts"), "export const b = 2;\n").unwrap();
         let cwd = dir.path().to_string_lossy().replace('\\', "/");
         let options =
-            rbxts_project::LoadOptions { tsconfig: "tsconfig.json".into(), cwd: cwd.clone(), checkers: 1, lazy_dts: false };
+            rbxts_project::LoadOptions { tsconfig: "tsconfig.json".into(), cwd: cwd.clone(), checkers: 1, lazy_dts: false, regions: false };
         let project = rbxts_project::load(&options).ok().expect("the project loads");
         let program = project.program;
         let a = program.get_source_file(&format!("{cwd}/a.ts")).expect("a.ts");

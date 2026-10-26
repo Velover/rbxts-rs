@@ -2,10 +2,9 @@
 //! out the same `SourceFile` for a file whose modification time, size and parse options are unchanged, as roblox-ts's
 //! program factory does (an unchanged file is the same object in the next program) and as tsrs's own watcher does.
 //!
-//! A program is loaded again for every build (module resolution must be redone: a package installed since the
-//! last build changes it), so this cache is what keeps a rebuild cheap. The files are never freed: freeing a
-//! program needs tsrs's `free_program`, an `unsafe fn` (rbxts-rs has no `unsafe`). The watcher restarts its process
-//! past a memory limit instead (DESIGN §14 "Memory").
+//! The files outlive the programs that use them: a watch session frees each program once a later one replaces it
+//! ([`crate::Project::free`]), and the files, bound before any checker existed, go on in the next program. A file's
+//! older versions are never freed (a kept diagnostic may still name one).
 
 use std::collections::HashMap;
 use std::fmt::Display;

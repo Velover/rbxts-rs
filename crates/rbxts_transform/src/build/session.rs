@@ -287,11 +287,14 @@ pub(super) struct Replay {
 }
 
 impl Replay {
+    /// The report's diagnostics, copied out of the program's checker regions (`detach`): a project's program is freed
+    /// once a later build of it replaces it, and a skipped project replays them after that.
     pub(super) fn of(report: &CompileReport) -> Replay {
         let mut diagnostics = report.diagnostics.clone();
         for file in &report.files {
             diagnostics.extend(file.diagnostics.iter().copied());
         }
+        let (diagnostics, _) = detach(diagnostics, Vec::new());
         Replay { diagnostics, warnings: report.warnings.clone() }
     }
 
@@ -610,6 +613,9 @@ impl<'p> BuildSession<'p> {
     /// One build. `touched`: the paths a watcher saw change since the last build (empty for the first build). A
     /// tsconfig with project references builds its graph: each referenced project in build order, then this one
     /// ([`super::references`]).
+    ///
+    /// The report's diagnostics live until the session's next build: a watch session frees the program they were
+    /// made in once a later build replaces it.
     pub fn build(&mut self, touched: &[String]) -> (CompileReport, BuildSummary) {
         if !self.is_reference && rbxts_project::graph::has_references(&self.tsconfig_path()) {
             return super::references::build_graph(self, touched);
@@ -628,17 +634,38 @@ impl<'p> BuildSession<'p> {
         self.finish_ran = false;
         let committed = self.committed.take();
         let last = self.last.take();
-        let (mut report, mut summary, mut committed, mut last) = self.run(touched, committed, last);
+        // the programs this build replaces: the last build's, and the first run's when the build starts over
+        let mut replaced: Vec<Project> = Vec::new();
+        let (mut report, mut summary, mut committed, mut last) = self.run(touched, committed, last, &mut replaced);
         if !self.retransform.is_empty() {
             // cached files whose late strings changed value with no Luau kept to render again (their parts came from
             // the incremental state): the build starts over once, transforming them
             self.rebuilds = rebuilds;
-            (report, summary, committed, last) = self.run(&[], committed, last);
+            (report, summary, committed, last) = self.run(&[], committed, last, &mut replaced);
             self.retransform.clear();
         }
         self.committed = committed;
         self.last = last;
+        self.free_replaced(replaced);
         (report, summary)
+    }
+
+    /// Frees the programs a watch build replaced (the memory of a long watch stays flat). A session that does not
+    /// watch keeps them (its programs have no regions to give back: one build, or the harness's clean builds).
+    fn free_replaced(&self, replaced: Vec<Project>) {
+        if !self.watch {
+            return;
+        }
+        for project in replaced {
+            // SAFETY: nothing reads the replaced program or what was made under its checkers again. The session
+            // keeps no handle into it: the committed state holds copies of the diagnostics it keeps (`detach`), the
+            // project setup and file facts are owned data, and the parsed files are the source cache's (bound before
+            // any checker existed: `LoadOptions::regions`). The plugins' `Shared`, `State` and file parts hold no
+            // program handles (the `rbxts_plugin` contract), and their instances lived for one build. Its checkers are
+            // released: the build that used them is over. The caller's report of the build before this one is no
+            // longer used (a report lives until the session's next build, `BuildSession::build`).
+            unsafe { project.free() };
+        }
     }
 
     /// Whether this project of a build with project references is dirty (roblox-ts's `ProjectBuild.build`):
@@ -707,6 +734,7 @@ impl<'p> BuildSession<'p> {
                 cwd: self.options.cwd.clone(),
                 checkers: self.options.checker_count(),
                 lazy_dts: false,
+                regions: self.watch,
             },
             Some(&self.cache),
             self.reads.clone(),
@@ -794,6 +822,7 @@ impl<'p> BuildSession<'p> {
         touched: &[String],
         mut committed: Option<Committed>,
         last: Option<Loaded>,
+        replaced: &mut Vec<Project>,
     ) -> (CompileReport, BuildSummary, Option<Committed>, Option<Loaded>) {
         let mut report = CompileReport::default();
         let mut summary = BuildSummary::default();
@@ -805,7 +834,14 @@ impl<'p> BuildSession<'p> {
         let parses_before = self.cache.parses();
 
         // 1. load the program, over the source cache
-        let loaded = self.load(&mut report, last.map(|l| l.versions).unwrap_or_default());
+        let versions = match last {
+            Some(Loaded { project, versions, .. }) => {
+                replaced.push(project);
+                versions
+            }
+            None => FxHashMap::default(),
+        };
+        let loaded = self.load(&mut report, versions);
         let Some(loaded) = loaded else {
             summary.parsed = self.cache.parses() - parses_before;
             return (report, summary, committed, None);
@@ -1946,6 +1982,12 @@ impl<'p> BuildSession<'p> {
                     let encoded = records.remove(&key).map(|record| record.parts);
                     let diagnostics = diagnostics_by_file.remove(&file).unwrap_or_default();
                     let plugin_diagnostics = plugin_by_file.remove(&file).unwrap_or_default();
+                    // a watch session frees this program once a later build replaces it
+                    let (diagnostics, plugin_diagnostics) = if self.watch {
+                        detach(diagnostics, plugin_diagnostics)
+                    } else {
+                        (diagnostics, plugin_diagnostics)
+                    };
                     CommittedFile {
                         facts,
                         parts,
@@ -2197,6 +2239,19 @@ impl<'p> BuildSession<'p> {
         }
         keys
     }
+}
+
+/// Copies diagnostics out of the program that made them, into the thread's arena (which outlives every program),
+/// `plugin` mapped onto the same copies (`plugin` is a sublist of `diagnostics`, compared by identity). What a
+/// committed file keeps outlives its program, which a watch session frees once a later build replaces it: the
+/// transform's diagnostics were made while a checker was held, in that checker's region.
+fn detach(diagnostics: Vec<P<Diagnostic>>, plugin: Vec<P<Diagnostic>>) -> (Vec<P<Diagnostic>>, Vec<P<Diagnostic>>) {
+    use tsrs_ast::DiagnosticExt;
+    let mut copies: FxHashMap<P<Diagnostic>, P<Diagnostic>> = FxHashMap::default();
+    let mut copy = |d: P<Diagnostic>| *copies.entry(d).or_insert_with(|| d.copy_deep());
+    let diagnostics = diagnostics.into_iter().map(&mut copy).collect();
+    let plugin = plugin.into_iter().map(&mut copy).collect();
+    (diagnostics, plugin)
 }
 
 /// A path's comparison key.

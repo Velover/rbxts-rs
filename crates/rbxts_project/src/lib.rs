@@ -47,6 +47,11 @@ pub struct LoadOptions {
     pub checkers: usize,
     /// Parse and bind declaration-file members on first use. Only valid while no declaration file is type-checked.
     pub lazy_dts: bool,
+    /// The program will be freed ([`Project::free`]) once a newer one replaces it (watch mode): its checkers allocate
+    /// in regions of their own and put their diagnostics in others (tsrs's `checker_regions` and
+    /// `checker_diagnostic_regions`), which the free gives back, and its files are bound before any checker exists
+    /// (a checker binding them would bind them in its region, while the parsed files outlive the program).
+    pub regions: bool,
 }
 
 /// A loaded project: its parsed tsconfig and its tsrs program, with the time each took.
@@ -144,7 +149,13 @@ pub fn load_cached(
     }
     let compiler_host = new_host(&cwd, &fs, cache);
     let start = Instant::now();
-    let program = new_program(ProgramOptions::new(config, compiler_host));
+    let mut program_options = ProgramOptions::new(config, compiler_host);
+    program_options.checker_regions = opts.regions;
+    program_options.checker_diagnostic_regions = opts.regions;
+    let program = new_program(program_options);
+    if opts.regions {
+        program.bind_source_files();
+    }
     let program_time = start.elapsed();
 
     Ok(Project {
@@ -222,6 +233,23 @@ impl IncludeMatcher {
 }
 
 impl Project {
+    /// Frees the program with its checkers (their regions, with everything they allocated: types, symbols they made,
+    /// diagnostics, and whatever was allocated while one was held, such as a transform's nodes and diagnostics) and its
+    /// file-loader data. The parsed files, the tsconfig and the config parse stay (they are shared with later
+    /// programs). A program loaded without [`LoadOptions::regions`] gives back only its own structures.
+    ///
+    /// # Safety
+    ///
+    /// Nothing uses the program or anything made while one of its checkers was held any more: no checker of it is
+    /// held, and no diagnostic, type, symbol, signature or node made by its checkers or under them is read again (the
+    /// caller copies the diagnostics it keeps: `DiagnosticExt::copy_deep`). No other program shares its data (a program
+    /// from `load` never does).
+    pub unsafe fn free(self) {
+        // SAFETY: the caller's contract, which includes `free_unshared_program`'s: `load_cached` made the program with
+        // `new_program`, and nothing else shares its processed files.
+        unsafe { tsrs_compiler::free_unshared_program(self.program) };
+    }
+
     /// What [`IncludeMatcher`] checks, for this project's tsconfig.
     pub fn include_matcher(&self) -> IncludeMatcher {
         IncludeMatcher(self.config)

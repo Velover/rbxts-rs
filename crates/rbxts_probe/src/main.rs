@@ -53,7 +53,7 @@ fn line_of(file: &SourceFile, pos: u32) -> usize {
 
 fn jsdoc_links(tsconfig: String, filter: &str) -> i32 {
     let cwd = std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
-    let project = match rbxts_project::load(&LoadOptions { tsconfig, cwd, checkers: 1, lazy_dts: false }) {
+    let project = match rbxts_project::load(&LoadOptions { tsconfig, cwd, checkers: 1, lazy_dts: false, regions: false }) {
         Ok(p) => p,
         Err(diags) => {
             eprintln!("tsconfig could not be used ({} diagnostics)", diags.len());

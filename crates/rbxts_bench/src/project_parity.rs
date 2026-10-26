@@ -297,6 +297,7 @@ pub fn compare_dump(dump: &Value, max_diffs: usize, timing_runs: usize) -> Repor
             cwd: cwd.clone(),
             checkers: 1,
             lazy_dts: true,
+        regions: false,
         }) {
             Ok(project) => {
                 let got = match project.setup(tsconfig, &cli_overrides_of(dump)) {
@@ -325,6 +326,7 @@ pub fn compare_dump(dump: &Value, max_diffs: usize, timing_runs: usize) -> Repor
             cwd: cwd.clone(),
             checkers: 1,
             lazy_dts: true,
+        regions: false,
         }) {
             Ok(p) => p,
             Err(diags) => {

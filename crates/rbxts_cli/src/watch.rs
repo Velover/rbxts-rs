@@ -56,10 +56,12 @@
 //!   keeps running.
 //! - **`--events json`:** one JSON line per build on stdout: `{"event":"build-start","gen":N,"changes":[…]}` and
 //!   `{"event":"build-end","gen":N,"ok":…,"errors":N,"written":[…],"deleted":[…]}`.
-//! - **Memory.** Programs are never freed (tsrs's `free_program` is `unsafe`), so the watcher restarts its process
-//!   past a working-set limit (`RBXTS_WATCH_MEMORY_LIMIT_MB`, default 2048; 0 turns it off): a small supervisor
-//!   process runs the watcher as a child and starts a new one when it exits with [`RESTART_EXIT_CODE`]. The new
-//!   watcher's first build is a clean one, or an incremental one for an `incremental` project.
+//! - **Memory.** Each rebuild frees the program it replaced, with its checkers and what they made
+//!   ([`BuildSession`]), so the working set stays near one build's. As a safety net for what is still kept (each
+//!   edited file's older parsed versions, a plugin that leaks), the watcher restarts its process past a working-set
+//!   limit (`RBXTS_WATCH_MEMORY_LIMIT_MB`, default 2048; 0 turns it off): a small supervisor process runs the watcher
+//!   as a child and starts a new one when it exits with [`RESTART_EXIT_CODE`]. The new watcher's first build is a
+//!   clean one, or an incremental one for an `incremental` project.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -341,16 +343,31 @@ fn package_entry_counts(path: &str, name: &str) -> bool {
 }
 
 /// This watcher's writes and deletions, by path key: the version written, or None for a path it deleted.
-type Own = FxHashMap<String, Option<Version>>;
+type Own = FxHashMap<String, OwnWrite>;
 
-/// Whether an event leaves `path` as this watcher's last build left it: written with the same text, or deleted and
+/// What this watcher's last build left at a path.
+#[derive(Clone, Copy)]
+enum OwnWrite {
+    /// An output with the stamp of the bytes the build wrote ([`BuildSession::committed_outputs`], made from those
+    /// bytes): never read back after the commit, where a hand edit landing first would pass for the build's write.
+    Output(rbxts_transform::build::outputs::Stamp),
+    /// Another file the build wrote (an artifact, a state file, the incremental state), with its text as read after.
+    Text(Version),
+    /// Deleted.
+    Gone,
+}
+
+/// Whether an event leaves `path` as this watcher's last build left it: written with the same bytes, or deleted and
 /// still gone.
 fn is_own(path: &str, path_key: &str, own: &Own) -> bool {
     match own.get(path_key) {
-        Some(Some(version)) => {
+        Some(OwnWrite::Output(stamp)) => {
+            stamp.check(path, rbxts_transform::build::outputs::Found::at(path)).is_some()
+        }
+        Some(OwnWrite::Text(version)) => {
             std::fs::read(path).is_ok_and(|bytes| Version::of(&String::from_utf8_lossy(&bytes)) == *version)
         }
-        Some(None) => std::fs::symlink_metadata(path).is_err(),
+        Some(OwnWrite::Gone) => std::fs::symlink_metadata(path).is_err(),
         None => false,
     }
 }
@@ -1369,13 +1386,18 @@ fn rebuild(
     }
     // this build's own writes are known before the new watches look for changes
     if let Ok((_, summary)) = &result {
+        let stamps: FxHashMap<String, rbxts_transform::build::outputs::Stamp> =
+            session.committed_outputs().into_iter().map(|(path, stamp)| (key(&path), stamp)).collect();
         for path in &summary.written {
-            if let Ok(bytes) = std::fs::read(path) {
-                own.insert(key(path), Some(Version::of(&String::from_utf8_lossy(&bytes))));
+            let k = key(path);
+            if let Some(stamp) = stamps.get(&k) {
+                own.insert(k, OwnWrite::Output(*stamp));
+            } else if let Ok(bytes) = std::fs::read(path) {
+                own.insert(k, OwnWrite::Text(Version::of(&String::from_utf8_lossy(&bytes))));
             }
         }
         for path in &summary.deleted {
-            own.insert(key(path), None);
+            own.insert(key(path), OwnWrite::Gone);
         }
     }
     let start = std::time::Instant::now();

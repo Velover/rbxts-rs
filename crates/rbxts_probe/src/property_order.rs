@@ -76,7 +76,7 @@ fn visit(checker: &mut Checker, file: &'static SourceFile, rel: &str, node: P<No
 pub fn run(opts: &Options) -> i32 {
     let cwd = std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
     let project =
-        match rbxts_project::load(&LoadOptions { tsconfig: opts.tsconfig.clone(), cwd, checkers: 1, lazy_dts: false }) {
+        match rbxts_project::load(&LoadOptions { tsconfig: opts.tsconfig.clone(), cwd, checkers: 1, lazy_dts: false, regions: false }) {
             Ok(p) => p,
             Err(diags) => {
                 eprintln!("tsconfig could not be used ({} diagnostics)", diags.len());
