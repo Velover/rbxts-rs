@@ -4,7 +4,10 @@ return {
 			new = function(x, y)
 				return { X = x, Y = y }
 			end,
+			zero = { X = 0, Y = 0 },
 		},
+		CFrame = { identity = "CFrame.identity" },
+		Enum = { AutomaticSize = { Y = "AutomaticSize.Y" } },
 		UDim2 = {
 			new = function(xs, xo, ys, yo)
 				return { xs, xo, ys, yo }
@@ -42,5 +45,19 @@ return {
 			end,
 		},
 		{ call = "shadowed", expect = { { Size = 1 }, 3 } },
+		{
+			call = "constants",
+			expect = function(element)
+				local p = element.props
+				return p.AutomaticSize == "AutomaticSize.Y" and p.AnchorPoint.X == 0 and p.CFrame == "CFrame.identity"
+			end,
+		},
+		{ call = "shadowedEnum", expect = { { AutomaticSize = 1 }, 2 } },
+		{
+			call = "aliasedEnum",
+			expect = function(element)
+				return element.props.AutomaticSize == "AutomaticSize.Y"
+			end,
+		},
 	},
 }

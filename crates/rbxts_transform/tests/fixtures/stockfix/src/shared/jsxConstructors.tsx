@@ -1,7 +1,8 @@
 // The capture of `jsxQuirks`' `attributesBeforeChildren` is left out when the later prerequisites can't change what
-// was read first: a Roblox datatype constructor (`new Vector2(…)`, `UDim2.fromScale(…)`) only allocates. A user's
-// call or `Instance.new` in the same place still captures. (The fixture's tsconfig sets `preserveSymlinks`, so the
-// linked `@rbxts/types` counts as `@rbxts/types` and its globals are recognised.)
+// was read first: a Roblox datatype constructor (`new Vector2(…)`, `UDim2.fromScale(…)`) only allocates, and an Enum
+// item or a datatype constant (`Enum.AutomaticSize.Y`, `Vector2.zero`) is a constant. A user's call or `Instance.new`
+// in the same place still captures. (The fixture's tsconfig sets `preserveSymlinks`, so the linked `@rbxts/types`
+// counts as `@rbxts/types` and its globals are recognised.)
 import React from "shared/react";
 
 const box = { size: 1 };
@@ -52,4 +53,30 @@ export function shadowed() {
 	box.size = 1;
 	const element = <frame Size={box.size}>{unset ?? UDim2.fromScale(1, 2)}</frame>;
 	return [element.props, box.size];
+}
+
+// Enum items and datatype constants are constants: no capture before the children's call
+export function constants() {
+	return (
+		<frame AutomaticSize={Enum.AutomaticSize.Y} AnchorPoint={Vector2.zero} CFrame={CFrame.identity}>
+			{unset ?? resize()}
+		</frame>
+	);
+}
+
+// a local `Enum` is the user's table, which the children's call changes: captured
+export function shadowedEnum() {
+	const Enum = { AutomaticSize: { Y: 1 } };
+	const grow = () => {
+		Enum.AutomaticSize.Y = 2;
+		return 0;
+	};
+	const element = <frame AutomaticSize={Enum.AutomaticSize.Y}>{unset ?? grow()}</frame>;
+	return [element.props, Enum.AutomaticSize.Y];
+}
+
+// an Enum item reached through a variable is only that variable's member: captured
+export function aliasedEnum() {
+	const items = Enum.AutomaticSize;
+	return <frame AutomaticSize={items.Y}>{unset ?? resize()}</frame>;
 }

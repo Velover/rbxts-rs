@@ -110,6 +110,7 @@ const CONSTANT: u8 = 1;
 const PRIMITIVE: u8 = 2;
 const STABLE_LOOKUP: u8 = 4;
 const PURE_CONSTRUCTOR: u8 = 8;
+const ROBLOX_CONSTANT: u8 = 16;
 
 /// The facts on one node. Empty by default; cheap to clone.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -184,6 +185,17 @@ impl Facts {
     /// rbxts-rs: marks a Roblox datatype constructor call.
     pub fn set_pure_constructor(&mut self) {
         self.flags |= PURE_CONSTRUCTOR;
+    }
+
+    /// rbxts-rs: the lookup is a Roblox constant (`Enum.AutomaticSize.Y`, `Vector2.zero`): reading it has no effect.
+    /// Only the JSX ordering reads it, as for [`Facts::is_pure_constructor`].
+    pub fn is_roblox_constant(&self) -> bool {
+        self.flags & ROBLOX_CONSTANT != 0
+    }
+
+    /// rbxts-rs: marks a Roblox constant lookup.
+    pub fn set_roblox_constant(&mut self) {
+        self.flags |= ROBLOX_CONSTANT;
     }
 
     /// The `BINDING` mark of `markBinding`.

@@ -1,9 +1,10 @@
 -- Compiled with roblox-ts v3.0.0
 local TS = require(game:GetService("ReplicatedStorage"):WaitForChild("include"):WaitForChild("RuntimeLib"))
 -- The capture of `jsxQuirks`' `attributesBeforeChildren` is left out when the later prerequisites can't change what
--- was read first: a Roblox datatype constructor (`new Vector2(…)`, `UDim2.fromScale(…)`) only allocates. A user's
--- call or `Instance.new` in the same place still captures. (The fixture's tsconfig sets `preserveSymlinks`, so the
--- linked `@rbxts/types` counts as `@rbxts/types` and its globals are recognised.)
+-- was read first: a Roblox datatype constructor (`new Vector2(…)`, `UDim2.fromScale(…)`) only allocates, and an Enum
+-- item or a datatype constant (`Enum.AutomaticSize.Y`, `Vector2.zero`) is a constant. A user's call or `Instance.new`
+-- in the same place still captures. (The fixture's tsconfig sets `preserveSymlinks`, so the linked `@rbxts/types`
+-- counts as `@rbxts/types` and its globals are recognised.)
 local React = TS.import(script, game:GetService("ReplicatedStorage"), "shared", "react")
 local box = {
 	size = 1,
@@ -80,10 +81,58 @@ local function shadowed()
 	local element = React.createElement("frame", _attributes, _condition)
 	return { element.props, box.size }
 end
+-- Enum items and datatype constants are constants: no capture before the children's call
+local function constants()
+	local _condition = unset
+	if _condition == nil then
+		_condition = resize()
+	end
+	return React.createElement("frame", {
+		AutomaticSize = Enum.AutomaticSize.Y,
+		AnchorPoint = Vector2.zero,
+		CFrame = CFrame.identity,
+	}, _condition)
+end
+-- a local `Enum` is the user's table, which the children's call changes: captured
+local function shadowedEnum()
+	local Enum = {
+		AutomaticSize = {
+			Y = 1,
+		},
+	}
+	local grow = function()
+		Enum.AutomaticSize.Y = 2
+		return 0
+	end
+	local _attributes = {
+		AutomaticSize = Enum.AutomaticSize.Y,
+	}
+	local _condition = unset
+	if _condition == nil then
+		_condition = grow()
+	end
+	local element = React.createElement("frame", _attributes, _condition)
+	return { element.props, Enum.AutomaticSize.Y }
+end
+-- an Enum item reached through a variable is only that variable's member: captured
+local function aliasedEnum()
+	local items = Enum.AutomaticSize
+	local _attributes = {
+		AutomaticSize = items.Y,
+	}
+	local _condition = unset
+	if _condition == nil then
+		_condition = resize()
+	end
+	return React.createElement("frame", _attributes, _condition)
+end
 return {
 	pureChild = pureChild,
 	userCallChild = userCallChild,
 	instanceChild = instanceChild,
 	pureAttributes = pureAttributes,
 	shadowed = shadowed,
+	constants = constants,
+	shadowedEnum = shadowedEnum,
+	aliasedEnum = aliasedEnum,
 }

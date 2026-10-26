@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use rbxts_luau::{Effects, Expr};
-use tsrs_ast::{Kind, Node};
+use tsrs_ast::{Kind, ModifierFlags, Node};
 use tsrs_core::P;
 
 use super::facts::{mark_constant_reference, mark_stable_lookup, set_call_effects};
@@ -150,5 +150,46 @@ pub fn try_mark_pure_constructor(
     }
     if let Some(facts) = call.facts_mut() {
         facts.set_pure_constructor();
+    }
+}
+
+/// rbxts-rs: every declaration of `name`'s symbol is a `readonly` property of an `@rbxts/types` interface
+/// (`Vector2Constructor.zero`, `CFrameConstructor.identity`).
+fn is_readonly_rbxts_property(state: &mut TransformState<'_>, name: P<Node>) -> bool {
+    let Some(symbol) = state.checker.get_symbol_at_location_exported(name) else { return false };
+    let declarations = symbol.declarations();
+    !declarations.is_empty()
+        && declarations.iter().all(|&d| {
+            d.kind() == Kind::PropertySignature
+                && tsrs_ast::has_syntactic_modifier(d, ModifierFlags::Readonly)
+                && is_in_rbxts_types(state, d)
+        })
+}
+
+/// rbxts-rs: marks `expression` (the Luau lookup of the property access `node`) as a Roblox constant when it is an
+/// Enum item, `Enum.X.Y` with `Enum` the `@rbxts/types` global (not a user's variable or shadow) and `X`, `Y`
+/// declared there, or a datatype constant, `X.name` with `X` one of [`PURE_DATATYPES`]'s `@rbxts/types` globals
+/// and `name` a `readonly` property declared there (`Vector2.zero`).
+pub fn try_mark_roblox_constant(state: &mut TransformState<'_>, node: P<Node>, expression: &mut Expr) {
+    if node.kind() != Kind::PropertyAccessExpression || !matches!(expression, Expr::PropertyAccess(_)) {
+        return;
+    }
+    let access = node.as_property_access_expression();
+    let receiver = access.expression;
+    let constant = if receiver.kind() == Kind::PropertyAccessExpression {
+        let inner = receiver.as_property_access_expression();
+        inner.expression.kind() == Kind::Identifier
+            && inner.expression.text() == "Enum"
+            && is_declared_in_rbxts_types(state, inner.expression)
+            && is_declared_in_rbxts_types(state, inner.name)
+            && is_declared_in_rbxts_types(state, access.name)
+    } else {
+        receiver.kind() == Kind::Identifier
+            && PURE_DATATYPES.contains(&receiver.text())
+            && is_declared_in_rbxts_types(state, receiver)
+            && is_readonly_rbxts_property(state, access.name)
+    };
+    if constant && let Some(facts) = expression.facts_mut() {
+        facts.set_roblox_constant();
     }
 }

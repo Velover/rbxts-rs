@@ -245,6 +245,10 @@ fn accumulate(node: LuauNode<'_>, result: &mut Effects, pure_constructors: bool)
             }
             return;
         }
+        if pure_constructors && let Expr::PropertyAccess(access) = e && access.facts.is_roblox_constant() {
+            // an Enum item or a datatype constant: a global's immutable member
+            return;
+        }
         // creating a closure does not execute its body
         if matches!(e, Expr::Function(_)) {
             result.allocates = true;
@@ -289,7 +293,8 @@ pub fn get_effects_of_statements(statements: &[Stmt]) -> Effects {
 }
 
 /// rbxts-rs: [`get_effects`] for the JSX ordering (`transform_jsx`), where a Roblox datatype constructor
-/// (`UDim2.fromScale(…)`, marked by `try_mark_pure_constructor`) only allocates. roblox-ts's own uses of
+/// (`UDim2.fromScale(…)`, marked by `try_mark_pure_constructor`) only allocates, and an Enum item or a datatype
+/// constant (`Enum.AutomaticSize.Y`, `Vector2.zero`, marked by `try_mark_roblox_constant`) has no effect. roblox-ts's own uses of
 /// `getEffects` keep treating it as an unknown call, so their output stays stock's.
 pub fn get_jsx_effects(node: &Expr) -> Effects {
     if is_constant_reference(node) || node.is_simple_primitive() || node.is_none() {

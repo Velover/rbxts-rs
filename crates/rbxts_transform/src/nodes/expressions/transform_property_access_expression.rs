@@ -10,7 +10,7 @@ use crate::nodes::transform_optional_chain::transform_optional_chain;
 use crate::plugins::backend::keyed_access;
 use crate::util::add_index_diagnostics::add_index_diagnostics;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
-use crate::util::evaluation::builtins::try_mark_builtin_member;
+use crate::util::evaluation::builtins::{try_mark_builtin_member, try_mark_roblox_constant};
 use crate::util::get_constant_value_literal::get_constant_value_literal;
 use crate::util::traversal::skip_upwards;
 use crate::util::validate_not_any::validate_not_any_type;
@@ -52,6 +52,8 @@ pub fn transform_property_access_expression_inner(
     }
     let mut property = create::property(convert_to_indexable_expression(expression), name);
     try_mark_builtin_member(state, node, &mut property);
+    // rbxts-rs: `Enum.AutomaticSize.Y`, `Vector2.zero`, for the JSX ordering (`try_mark_roblox_constant`)
+    try_mark_roblox_constant(state, node, &mut property);
     property
 }
 

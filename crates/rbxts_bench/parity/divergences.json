@@ -10,7 +10,7 @@
     "for-of-order": "for-of: the target per iteration, a nested pattern's default first, the iterable's prerequisites before the builder's.",
     "jsx-tag": "JSX tag names follow TypeScript's isIntrinsicJsxName (`<_Inner />` is the component).",
     "jsx-attribute-string": "JSX attribute strings have no escapes and decode HTML entities.",
-    "jsx-order": "JSX: the tag and the attribute table are captured when later prerequisites (attributes', children's) could change them (a Roblox datatype constructor cannot).",
+    "jsx-order": "JSX: the tag and the attribute table are captured when later prerequisites (attributes', children's) could change them (a Roblox datatype constructor, Enum item or datatype constant cannot).",
     "jsx-entity": "A JSX entity past U+10FFFF is an error, not a crash.",
     "luatuple-holes": "Holes in an optimized LuaTuple / array assignment declare their temporaries (`local _`) instead of writing globals.",
     "optional-chain-key": "An optional element call's key prerequisites run inside the receiver's nil check."
@@ -19,23 +19,11 @@
     "real-noplugin": {
       "hash_paths": true,
       "files": {
-        "06fb39e62314c19a": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "ee5147ad380d8663"
-        },
         "08de7afeb8fcccca": {
           "fixes": [
             "jsx-order"
           ],
           "output": "a7e9495814c292ab"
-        },
-        "2dc56fb265a7f833": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "556577066e2c14f5"
         },
         "33d0aa5fa45431e9": {
           "fixes": [
@@ -43,29 +31,11 @@
           ],
           "output": "2882129c4b966be5"
         },
-        "34b33f2bb4cc59b5": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "3c290f86220a66c6"
-        },
-        "3d6dbe571bb55bfc": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "d59c40c6a5a0a84e"
-        },
-        "46e2ce354c5705ab": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "407b9dba23a15b68"
-        },
         "55fb5056c35919a3": {
           "fixes": [
             "jsx-order"
           ],
-          "output": "f503015e3ec8b85f"
+          "output": "5962ae51e869b787"
         },
         "6458d74c56dea1d6": {
           "fixes": [
@@ -73,23 +43,11 @@
           ],
           "output": "58311f87387a518d"
         },
-        "65ec5ffb1601f746": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "17565009bbac53fa"
-        },
         "6695dd89175ec4bc": {
           "fixes": [
             "jsx-order"
           ],
-          "output": "d5d87eeb8442de11"
-        },
-        "731ba53c81e2247b": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "1f1c1a5564045cd1"
+          "output": "64695eb17b2f6cfc"
         },
         "79cc43937b0ef88e": {
           "fixes": [
@@ -101,13 +59,7 @@
           "fixes": [
             "jsx-order"
           ],
-          "output": "cc9d6eb9e34f1a80"
-        },
-        "823308842da5b94d": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "5dca9dc9a49aab44"
+          "output": "655edd8bf43d3837"
         },
         "8758444b8cd3ab72": {
           "fixes": [
@@ -137,37 +89,13 @@
           "fixes": [
             "jsx-order"
           ],
-          "output": "c1f81132651a987a"
+          "output": "8d512bf75bb91097"
         },
         "c489bd7d6475d6c1": {
           "fixes": [
             "luatuple-holes"
           ],
           "output": "a81272fdf2704b94"
-        },
-        "c4bd39e9286ca313": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "ad696ddc680efdd5"
-        },
-        "c6e48a96b436f4b7": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "901650d25e649f0b"
-        },
-        "c97610a98f25a7f7": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "c7b6df66a6bd01f2"
-        },
-        "d692ae55f4352e1e": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "c5062ab5be8a0203"
         },
         "f10f09e3d94135da": {
           "fixes": [

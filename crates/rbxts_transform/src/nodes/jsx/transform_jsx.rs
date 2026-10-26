@@ -50,8 +50,9 @@ pub fn transform_jsx(
     // before them: `<frame Size={size}>{holder?.bump()}</frame>` built `{ Size = size }` after `bump()` changed
     // `size`. JavaScript evaluates the tag, then the attributes, then the children; a value is captured when later
     // prerequisites could change it. Roblox datatype constructors (`UDim2.fromScale(1, 1)`, `new Vector2(0, 1)`)
-    // count as allocations here (`get_jsx_effects`), so they force no capture; any other call (`Instance.new`, the
-    // user's own) still does.
+    // count as allocations here and Enum items and datatype constants (`Enum.AutomaticSize.Y`, `Vector2.zero`) as
+    // constants (`get_jsx_effects`), so they force no capture; any other call (`Instance.new`, the user's own) or
+    // property read still does.
     let mut attributes_ptr: Option<MapPointer> = None;
     if !attributes.properties().is_empty() {
         let mut ptr = create_map_pointer("attributes");
