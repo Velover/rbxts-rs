@@ -78,6 +78,15 @@ References: roblox-ts's tests project (`tsconfig.bench.json`, against the tsrs-b
 `tsrs-roblox-ts/exp/out-C-tsrs/out`) and the real project without Flamework (scratchpad `rbxts-rs/refs`); both were
 built with `--optimizedLoops --allowCommentDirectives`.
 
+**Linked `node_modules` (workspaces, junctions).** As stock roblox-ts does, rbxts-rs tells Roblox types apart by the
+real path of their declaration file: it must lie under the project's `node_modules/@rbxts/types`. When that folder
+(or `node_modules` itself) is a link to somewhere else, as in a pnpm or a monorepo workspace, nothing counts as a
+Roblox type: possibly-undefined arguments of Roblox calls are not wrapped in parentheses, the Roblox-type
+`instanceof` error is not reported, and the evaluation-order analysis no longer knows Roblox builtins such as
+`string.char` and method calls like `game:FindFirstChild`, so it moves them into temporaries. To get the usual output
+in such a layout, set `"preserveSymlinks": true` in the tsconfig (the linked path then counts), as stock needs too
+(`util/types.rs` `is_in_rbxts_types`, a roblox-ts bug kept for parity).
+
 Hand-written transform fixtures live in `crates/rbxts_transform/tests/fixtures/<area>`: a roblox-ts project without
 `node_modules` (`src`, `tsconfig.json`, `default.project.json`) and `expected/`, stock roblox-ts's output for it
 (`node roblox-ts-test/probe/rbxts-driver.cjs <roblox-ts checkout> tsconfig.json --backend ts5`, from the fixture with a
