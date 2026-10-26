@@ -65,6 +65,20 @@ struct OsHost {
     cwd: String,
 }
 
+impl OsHost {
+    /// The host for `cwd`: one per directory for the process (tsrs's resolution host must be `'static`, and this
+    /// one keeps no state, so every build's resolvers share it instead of leaking one each).
+    fn interned(cwd: &str) -> &'static OsHost {
+        static HOSTS: std::sync::Mutex<Option<std::collections::HashMap<String, &'static OsHost>>> =
+            std::sync::Mutex::new(None);
+        let mut hosts = HOSTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        hosts
+            .get_or_insert_with(std::collections::HashMap::new)
+            .entry(cwd.to_owned())
+            .or_insert_with(|| Box::leak(Box::new(OsHost { cwd: cwd.to_owned() })))
+    }
+}
+
 impl ResolutionHost for OsHost {
     fn fs(&self) -> &dyn tsrs_vfs::FS {
         tsrs_vfs::osvfs::fs()
@@ -94,8 +108,7 @@ pub struct ModuleResolver {
 impl ModuleResolver {
     /// `cwd` is the directory relative options resolve against (the program's current directory).
     pub fn new(options: P<CompilerOptions>, cwd: &str) -> Self {
-        // one host per resolver, which lives as long as the build
-        let host: &'static OsHost = Box::leak(Box::new(OsHost { cwd: tspath::normalize_path(cwd) }));
+        let host = OsHost::interned(&tspath::normalize_path(cwd));
         ModuleResolver { resolver: new_resolver(ResolverOptions::new(host, options)) }
     }
 

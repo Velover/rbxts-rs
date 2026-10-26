@@ -246,6 +246,20 @@ struct OsResolutionHost {
     cwd: String,
 }
 
+impl OsResolutionHost {
+    /// The host for `cwd`: one per directory for the process (tsrs's resolution host must be `'static`, and this
+    /// one keeps no state, so a watcher's builds share it instead of leaking one per bare-name `extends`).
+    fn interned(cwd: &str) -> &'static OsResolutionHost {
+        static HOSTS: std::sync::Mutex<Option<std::collections::HashMap<String, &'static OsResolutionHost>>> =
+            std::sync::Mutex::new(None);
+        let mut hosts = HOSTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        hosts
+            .get_or_insert_with(std::collections::HashMap::new)
+            .entry(cwd.to_owned())
+            .or_insert_with(|| Box::leak(Box::new(OsResolutionHost { cwd: cwd.to_owned() })))
+    }
+}
+
 impl tsrs_module::ResolutionHost for OsResolutionHost {
     fn fs(&self) -> &dyn tsrs_vfs::FS {
         tsrs_vfs::osvfs::fs()
@@ -281,9 +295,7 @@ fn get_extended_config_paths(config_path: &str, extends: Option<&Value>) -> Resu
             }
             Some(resolved)
         } else {
-            let host: &'static OsResolutionHost = Box::leak(Box::new(OsResolutionHost {
-                cwd: tspath::normalize_slashes(nodepath::dirname(config_path)),
-            }));
+            let host = OsResolutionHost::interned(&tspath::normalize_slashes(nodepath::dirname(config_path)));
             let result = tsrs_module::resolve_config(&normalized, &tspath::normalize_slashes(config_path), host);
             result.is_resolved().then(|| result.resolved_file_name.to_string())
         };

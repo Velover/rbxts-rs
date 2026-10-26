@@ -124,6 +124,19 @@ struct ConfigHost {
     cwd: String,
 }
 
+impl ConfigHost {
+    /// The host for `cwd`: one per directory for the process (tsrs's parse host must be `'static`, and this one
+    /// keeps no state of a build, so a watcher's graphs share it instead of leaking one each).
+    fn interned(cwd: &str) -> &'static ConfigHost {
+        static HOSTS: std::sync::Mutex<Option<HashMap<String, &'static ConfigHost>>> = std::sync::Mutex::new(None);
+        let mut hosts = HOSTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        hosts.get_or_insert_with(HashMap::new).entry(cwd.to_owned()).or_insert_with(|| {
+            let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(osvfs::fs()));
+            Box::leak(Box::new(ConfigHost { fs, cwd: cwd.to_owned() }))
+        })
+    }
+}
+
 impl ParseConfigHost for ConfigHost {
     fn fs(&self) -> &dyn FS {
         &*self.fs
@@ -153,9 +166,7 @@ impl ProjectGraph {
     pub fn new(tsconfig_path: &str, overrides: &ProjectOptionLayer, cwd: &str) -> Result<ProjectGraph, GraphError> {
         let case_sensitive = osvfs::fs().use_case_sensitive_file_names();
         let key = |path: &str| reference_key(path, case_sensitive);
-        let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(osvfs::fs()));
-        // one per graph, as `load` leaks one per program
-        let host: &'static ConfigHost = Box::leak(Box::new(ConfigHost { fs, cwd: tspath::normalize_path(cwd) }));
+        let host = ConfigHost::interned(&tspath::normalize_path(cwd));
 
         // the solution builder's build order, parsing each config once (`host.getParsedCommandLine`)
         let mut configs: HashMap<String, (String, P<ParsedCommandLine>)> = HashMap::new();
