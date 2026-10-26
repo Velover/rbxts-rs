@@ -212,7 +212,7 @@ pub(crate) fn run_hook_framed<R>(
     {
         parent.nested_hooks += 1;
     }
-    state.plugin_file.frames.push(HookFrame::default());
+    state.plugin_file.frames.push(HookFrame { node: Some(anchor), ..HookFrame::default() });
     let approved_before = state.plugin_file.approved_count();
     host.enter(Some(plugin), hook);
     let result = {
@@ -741,8 +741,9 @@ impl CxBackend for HookBackend<'_, '_> {
             self.state.plugin_file.main_chunk_locals += stmts.iter().map(declared_locals).sum::<u32>();
         }
         let file = &mut self.state.plugin_file;
+        let position = file.before_statement_position(statement, self.anchor);
         file.before_statement_count += stmts.len();
-        file.before_statement.entry(statement).or_default().extend(stmts);
+        file.before_statement.entry(statement).or_default().push((position, stmts));
     }
 
     fn header(&mut self, stmts: Vec<Stmt>) {

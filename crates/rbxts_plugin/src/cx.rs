@@ -159,10 +159,13 @@ pub trait CxBackend {
     /// - the condition of an `else if`: before that inner `if`, which then becomes `else <statements> if … end end`
     ///   (as roblox-ts lowers the `else { …; if … }` block Flamework's transform makes there).
     ///
-    /// **Order.** Insertions before one statement keep the order they were made in, and that is roblox-ts's lowering
-    /// order, which can differ from TypeScript's visit order: a `for (init; condition; incrementor)` head inserts
-    /// for init, incrementor, condition (TypeScript visits init, condition, incrementor), and in a class a method's
-    /// parameter initializer inserts before a static field initializer.
+    /// **Order.** Insertions before one statement go in TypeScript's visit order, as a TS transform's `prereq`s are
+    /// made, not in roblox-ts's lowering order: by the source position of the outermost running hook's node inside
+    /// the statement, so a `for (init; condition; incrementor)` head's go init, condition, incrementor (roblox-ts
+    /// lowers the incrementor first), and a class's go member by member as written (roblox-ts lowers the
+    /// constructor's field initializers, then the methods, then the static fields). Insertions made under one such
+    /// hook (its own, and those of hooks its `compile_*` calls ran) keep the order they were made in: the plugin
+    /// chose it, as its TS transform's code does.
     ///
     /// **Unplaced.** When the chosen statement is not lowered in a statement list (no such case is known in
     /// roblox-ts's lowerings, but one would drop the statements), the file gets an internal error naming that

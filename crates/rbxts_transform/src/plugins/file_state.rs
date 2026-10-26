@@ -114,10 +114,42 @@ impl EffectMark {
     }
 }
 
+impl PluginFileState {
+    /// The `insert_before_statement` statements for `statement`, in TypeScript's visit order, as Flamework's
+    /// `prereq`s are made: by the source position of the outermost running hook's node inside the statement when
+    /// each was inserted (roblox-ts lowers a `for` head's incrementor before its condition, and a class's methods
+    /// before its static fields, where TypeScript visits in source order), and in insertion order under one such
+    /// hook, whose plugin chose that order as its TS transform's code does.
+    pub fn take_before_statement(&mut self, statement: P<Node>) -> Option<Vec<Stmt>> {
+        let mut insertions = self.before_statement.remove(&statement)?;
+        insertions.sort_by_key(|&(position, _)| position);
+        Some(insertions.into_iter().flat_map(|(_, statements)| statements).collect())
+    }
+
+    /// The position `insert_before_statement` orders an insertion before `statement` by: the start of the outermost
+    /// running hook's node inside `statement` (`anchor`, the inserting hook's, when none is further out).
+    pub fn before_statement_position(&self, statement: P<Node>, anchor: P<Node>) -> u32 {
+        let inside = |node: P<Node>| {
+            let mut current = Some(node);
+            while let Some(n) = current {
+                if n == statement {
+                    return true;
+                }
+                current = n.parent();
+            }
+            false
+        };
+        let node = self.frames.iter().filter_map(|frame| frame.node).find(|&node| inside(node)).unwrap_or(anchor);
+        crate::util::traversal::get_start(node)
+    }
+}
+
 /// One running hook on the frame stack ([`PluginFileState::frames`]). Pushed by every hook call and popped after
 /// it, so a nested hook (reached through the outer hook's `compile_*` calls) never touches the outer hook's state.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HookFrame {
+    /// The hook's node.
+    pub node: Option<P<Node>>,
     /// What the hook did that its node can no longer be declined after: `compile_expr` of the node itself,
     /// `compile_call`, a hoist, a root insertion, a header, an import, a receiver compiled inside a capture.
     pub lowered: Option<&'static str>,
@@ -168,9 +200,9 @@ pub struct PluginFileState {
     /// Temporaries the seam declared at the file's top level before the current statement: hoists, plugin imports,
     /// header and root-insertion locals.
     pub top_level_temps: FxHashSet<u32>,
-    /// `insert_before_statement` statements, by the TS statement they go before; taken when that statement's list
-    /// is lowered.
-    pub before_statement: FxHashMap<P<Node>, Vec<Stmt>>,
+    /// `insert_before_statement` statements, by the TS statement they go before, each insertion with the position
+    /// it is ordered by ([`PluginFileState::take_before_statement`]); taken when that statement's list is lowered.
+    pub before_statement: FxHashMap<P<Node>, Vec<(u32, Vec<Stmt>)>>,
     /// How many statements `insert_before_statement` was given in all (for the decline rule).
     pub before_statement_count: usize,
     /// `comment` texts by the TS statement around the hook's node: one leading the statement's Luau goes above its

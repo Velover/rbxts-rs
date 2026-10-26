@@ -26,3 +26,20 @@ export class Fields {
 
 // a plugin comment leading its statement's Luau goes above the statement's leading comment
 export const p1 = probePrereq(5);
+
+// several insertions before one statement go in TypeScript's visit order (source order), not roblox-ts's lowering
+// order: a `for` head's condition before its incrementor, a class's members as written (a static field before a
+// method's parameter initializer and a later instance field)
+export function loop() {
+	for (let i = probeBefore(0); i < probeBefore(3); i += probeBefore(1)) {
+		print(i);
+	}
+}
+export class Ordered {
+	static first = probeBefore("static first");
+	method(a = probeBefore("parameter")) {
+		return a;
+	}
+	second = probeBefore("instance second");
+	static third = probeBefore("static third");
+}

@@ -1430,7 +1430,7 @@ fn before_statement_slow(
         result.append(&mut state.plugin_file.root_inserts);
     }
     let file = &mut state.plugin_file;
-    if let Some(statements) = file.before_statement.remove(&statement) {
+    if let Some(statements) = file.take_before_statement(statement) {
         result.extend(statements);
     }
     if let Some(texts) = file.statement_comments.remove(&statement) {
@@ -1454,7 +1454,7 @@ fn before_statement_slow(
 #[inline]
 pub fn else_if_before_statement(state: &mut TransformState<'_>, statement: P<Node>, prereqs: &mut Vec<Stmt>) {
     if state.plugins.is_some()
-        && let Some(mut statements) = state.plugin_file.before_statement.remove(&statement)
+        && let Some(mut statements) = state.plugin_file.take_before_statement(statement)
     {
         statements.append(prereqs);
         *prereqs = statements;
