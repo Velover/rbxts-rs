@@ -314,6 +314,27 @@ pub(crate) struct FileTransform {
     pub inputs: crate::build::plugin_inputs::FileInputs,
     /// Its once-per-compilation diagnostics, with their keys (`DiagnosticService::once`).
     pub once: Vec<(ReportOnce, P<Diagnostic>)>,
+    /// What plugins' `classify_symbol` reported while it was transformed (not in `diagnostics`): the build's, once
+    /// each ([`classify_diagnostics`]).
+    pub classify: Vec<P<Diagnostic>>,
+}
+
+/// The diagnostics `classify_symbol` reported in all files, once each and sorted (file, position, message): which
+/// file a checker first asks about a symbol from, and how many checkers ask, depend on the checker count and the
+/// file order, so the build reports them on its own, not in a file's list.
+pub(crate) fn classify_diagnostics(reported: impl IntoIterator<Item = P<Diagnostic>>) -> Vec<P<Diagnostic>> {
+    // (file name, start, end, message)
+    type Key = (String, u32, u32, String);
+    let mut keyed: Vec<(Key, P<Diagnostic>)> = reported
+        .into_iter()
+        .map(|d| {
+            let file = d.file().map(|f| f.file_name().to_owned()).unwrap_or_default();
+            ((file, d.pos().unwrap_or(0), d.end().unwrap_or(0), d.localize()), d)
+        })
+        .collect();
+    keyed.sort_by(|a, b| a.0.cmp(&b.0));
+    keyed.dedup_by(|a, b| a.0 == b.0);
+    keyed.into_iter().map(|(_, d)| d).collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -363,6 +384,7 @@ pub(crate) fn transform_file(
     let load_check = state.plugin_file.load_check.take();
     let inputs = std::mem::take(&mut state.plugin_file.inputs);
     let once = std::mem::take(&mut state.diagnostics.once);
+    let classify = std::mem::take(&mut state.plugin_file.classify_diagnostics);
     FileTransform {
         ast,
         diagnostics,
@@ -374,6 +396,7 @@ pub(crate) fn transform_file(
         load_check,
         inputs,
         once,
+        classify,
     }
 }
 

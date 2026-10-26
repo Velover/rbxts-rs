@@ -251,13 +251,24 @@ pub(crate) fn run_hook_framed<R>(
 }
 
 /// Runs `classify_symbol` (no `PResult`; diagnostics are refused there).
+///
+/// What it reports (the internal errors of refused primitives, anchored at the symbol's declaration) leaves the
+/// file's list for [`PluginFileState::classify_diagnostics`](super::file_state::PluginFileState): each checker asks
+/// about a symbol once, from whichever of its files reaches it first, so the build reports these once per diagnostic,
+/// apart from any file, whatever the checker count.
 pub(crate) fn run_classify(
     state: &mut TransformState<'_>,
     plugin: usize,
     anchor: P<Node>,
     f: impl FnOnce(&dyn DynInstance, &mut Cx<'_>) -> Option<rbxts_plugin::Tag>,
 ) -> Option<rbxts_plugin::Tag> {
-    run_hook(state, None, None, plugin, HookKind::Classify, anchor, |instance, cx| Ok(f(instance, cx))).ok().flatten()
+    let before = state.diagnostics.diagnostics.len();
+    let tag = run_hook(state, None, None, plugin, HookKind::Classify, anchor, |instance, cx| Ok(f(instance, cx)))
+        .ok()
+        .flatten();
+    let reported: Vec<P<Diagnostic>> = state.diagnostics.diagnostics.drain(before..).collect();
+    state.plugin_file.classify_diagnostics.extend(reported);
+    tag
 }
 
 pub(crate) fn has_errors_since(state: &TransformState<'_>, index: usize) -> bool {

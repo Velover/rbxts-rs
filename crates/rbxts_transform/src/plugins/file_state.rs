@@ -170,6 +170,9 @@ pub struct PluginFileState {
     pub runtime_members: usize,
     /// Diagnostics plugins reported for the file, for dropping identical ones.
     pub reported: FxHashSet<String>,
+    /// What `classify_symbol` reported while this file was transformed (refused primitives' internal errors, at the
+    /// symbol's declaration): the build reports each once, apart from the files (`backend::run_classify`).
+    pub classify_diagnostics: Vec<P<tsrs_ast::Diagnostic>>,
     /// The number of Luau comments of the file's header comment (TypeScript's detached comments), which the first
     /// top-level statement emitted ahead of its root insertions; plugin imports go after them.
     pub detached_comments: usize,

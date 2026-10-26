@@ -1186,6 +1186,7 @@ impl<'p> BuildSession<'p> {
             // out; the build then fails)
             let mut done = Vec::with_capacity(to_transform.len());
             let mut once = Vec::with_capacity(to_transform.len());
+            let mut classify = Vec::new();
             for (&file, transformed) in to_transform.iter().zip(transformed.files) {
                 let Some(transformed) = transformed else { continue };
                 let file_name = file.get().file_name().to_owned();
@@ -1195,6 +1196,7 @@ impl<'p> BuildSession<'p> {
                 load_checks.push(transformed.load_check);
                 file_inputs.push(transformed.inputs);
                 once.push(transformed.once);
+                classify.extend(transformed.classify);
                 report.files.push(FileOutcome {
                     file_name,
                     out_path,
@@ -1208,6 +1210,7 @@ impl<'p> BuildSession<'p> {
                 done.push(file);
             }
             drop_reported_earlier(report.files.iter_mut().map(|f| &mut f.diagnostics).zip(once.iter().map(Vec::as_slice)));
+            report.diagnostics.extend(crate::compile::classify_diagnostics(classify));
             report.fatal.extend(transformed.stopped);
             to_transform = done;
             transformed.hook_times

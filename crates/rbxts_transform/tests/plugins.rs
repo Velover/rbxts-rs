@@ -388,6 +388,31 @@ fn refused_primitives_are_internal_errors_naming_the_plugin() {
     );
     assert!(classify.iter().all(|e| !e.starts_with("error failures.ts")), "{classify:?}");
     assert!(!project.out_exists());
+    // each checker asks about a symbol once, from whichever of its files reaches it first: the build reports each of
+    // these once, the same for any checker count (every checker used to report its own)
+    let classify_at = |checkers: usize| -> Vec<String> {
+        let report = project.build_with(&["stamp", "probe-refuse"], Some(checkers), |_| {});
+        report
+            .diagnostics
+            .iter()
+            .filter(|d| flatten_diagnostic_message(**d, "\n").contains("in classify_symbol"))
+            .map(|d| format!("{}:{} {}", d.file().unwrap().file_name(), d.pos().unwrap(), d.localize()))
+            .collect()
+    };
+    let one = classify_at(1);
+    assert!(one.len() > 1, "{one:?}");
+    let mut unique = one.clone();
+    unique.dedup();
+    assert_eq!(unique, one, "reported once each, sorted");
+    for checkers in [2, 4, 8] {
+        assert_eq!(classify_at(checkers), one, "{checkers} checkers");
+    }
+    // none of them is in a file's own list
+    let report = project.build_with(&["stamp", "probe-refuse"], Some(4), |_| {});
+    assert!(
+        report.files.iter().flat_map(|f| &f.diagnostics).all(|d| !d.localize().contains("in classify_symbol")),
+        "classify_symbol's diagnostics are the build's"
+    );
 }
 
 #[test]
