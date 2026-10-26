@@ -183,7 +183,8 @@ fn temporary_identifier_names() {
                 Stmt::Return(ReturnStatement { expressions: vec![exp.clone().into(), inner.into(), var_args()] }),
             ],
         ),
-        // the `in` expression is not walked by the solver: these get the fallback names, which can collide
+        // the `in` expression is not walked by the solver: these get the fallback names, past every name of the tree
+        // (roblox-ts gave `_1`, which read the `local _1` above)
         for_in(
             vec![any_id("_"), any_id("v")],
             call(id("pairs"), vec![map([(for_only2.into(), number(1.0)), (string("k"), for_only.into())])]),
@@ -195,7 +196,7 @@ fn temporary_identifier_names() {
         render_lines(statements),
         "local _exp = 0\nlocal _exp_1 = 1\nlocal _exp_2 = 2\nlocal _, _1 = 3, 4\nlocal _x = 5\nlocal _x_1 = 6\n\
          local _x_1_2 = 7\nlocal function f(_param, _exp_2, ...)\n\tlocal _exp_3 = _param\n\treturn _exp_1, _exp_3, ...\n\
-         end\nfor _, v in pairs({\n\t[_0] = 1,\n\tk = _1,\n}) do\n\tprint(v)\nend\ndo\n\tlocal _exp_3 = 8\n\tprint(_exp_1)\nend\n"
+         end\nfor _, v in pairs({\n\t[_0] = 1,\n\tk = _2,\n}) do\n\tprint(v)\nend\ndo\n\tlocal _exp_3 = 8\n\tprint(_exp_1)\nend\n"
     );
 }
 
@@ -213,6 +214,62 @@ fn temporary_identifier_scopes() {
     assert_eq!(
         render_lines(statements),
         "do\n\tlocal function g(_t_1)\n\tend\n\tlocal _t_1 = 1\n\tlocal _t = _t_1\nend\n"
+    );
+}
+
+#[test]
+fn temporary_names_never_capture_or_hide_the_program_names() {
+    // roblox-ts named every temporary here as the program's own identifier
+    let mut ids = TempIds::new();
+    let flag = ids.temp_id("flag");
+    let g = ids.temp_id("g");
+    let v = ids.temp_id("v");
+    let unrelated = ids.temp_id("w");
+    let k = ids.temp_id("k");
+    let v2 = ids.temp_id("v");
+    let statements = vec![
+        // a declaration inside the temporary's scope that its use would see: `_flag = true` would set the user's
+        do_stmt(vec![
+            local(flag.clone(), Some(Expr::False)),
+            if_stmt(
+                id("x"),
+                vec![
+                    local(any_id("_flag"), Some(string("user"))),
+                    assignment(flag.clone().into(), AssignmentOperator::Assign, Expr::True),
+                ],
+                ElseBody::default(),
+            ),
+            print(vec![flag.into()]),
+        ]),
+        // a use of a global (or of an outer local) inside the temporary's scope: it would read the temporary
+        do_stmt(vec![local(g.clone(), Some(number(1.0))), print(vec![g.into(), id("_g")])]),
+        // a loop variable in scope
+        for_in(
+            vec![any_id("_v")],
+            id("list"),
+            vec![local(v.clone(), Some(number(2.0))), print(vec![v.into(), id("_v")])],
+        ),
+        // a declaration the temporary's uses never see, and a use that refers to that declaration: no collision
+        do_stmt(vec![
+            local(unrelated.clone(), Some(number(3.0))),
+            do_stmt(vec![local(any_id("_w"), Some(number(4.0))), print(vec![id("_w")])]),
+            print(vec![unrelated.into()]),
+        ]),
+        // a local of the same name declared after the temporary's last use, and a loop variable of the same name
+        // after it in the list: neither hides it
+        for_in(
+            vec![k.clone().into(), v2.clone().into()],
+            id("m"),
+            vec![local(any_id("_v"), Some(array(vec![k.into(), v2.into()]))), print(vec![id("_v")])],
+        ),
+        for_in(vec![ids.temp_id("").into(), any_id("_")], id("list"), vec![print(vec![id("_")])]),
+    ];
+    assert_eq!(
+        render_lines(statements),
+        "do\n\tlocal _flag_1 = false\n\tif x then\n\t\tlocal _flag = \"user\"\n\t\t_flag_1 = true\n\tend\n\tprint(_flag_1)\n\
+         end\ndo\n\tlocal _g_1 = 1\n\tprint(_g_1, _g)\nend\nfor _v in list do\n\tlocal _v_1 = 2\n\tprint(_v_1, _v)\nend\n\
+         do\n\tlocal _w = 3\n\tdo\n\t\tlocal _w = 4\n\t\tprint(_w)\n\tend\n\tprint(_w)\nend\n\
+         for _k, _v in m do\n\tlocal _v = { _k, _v }\n\tprint(_v)\nend\nfor _, _ in list do\n\tprint(_)\nend\n"
     );
 }
 

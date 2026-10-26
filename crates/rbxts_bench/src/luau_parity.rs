@@ -441,7 +441,9 @@ mod tests {
     // - edge/literalCalls: a literal that is indexed or called keeps its parentheses (`("abc"):upper()`), where
     //   roblox-ts renders `"abc":upper()`, which does not parse;
     // - edge/precedence: an if-expression left of `or` is parenthesized (`(if a then b else c) or d`), where roblox-ts
-    //   leaves it bare and the `or` joins the `else` branch
+    //   leaves it bare and the `or` joins the `else` branch;
+    // - edge/tempIds: the fallback name of a temporary met only in a `for … in` expression skips the file's `_1`
+    //   (`k = _2`), where roblox-ts's `_1` reads that unrelated local
     fn edge_cases_render_as_roblox_ts_does() {
         let fixture = include_str!("../fixtures/luau-edge-cases.jsonl");
         let mut count = 0;

@@ -11,9 +11,19 @@
 //! scope before the block scope when a function declaration is the first statement of a block, which gives the
 //! same scope tree as pushing the block first.
 //!
-//! Only declared [`Identifier`]s (locals and parameters) and earlier temporary names count as taken, not loop
-//! variables or names used without a declaration. The `in` expression of a generic `for` is not walked (as in
-//! TypeScript); a temporary identifier met only there gets a fallback name `_0`, `_1`, … in render order.
+//! Declared [`Identifier`]s (locals and parameters) and earlier temporary names count as taken. The `in` expression
+//! of a generic `for` is not walked for temporaries (as in TypeScript); a temporary identifier met only there gets a
+//! fallback name `_0`, `_1`, … in render order.
+//!
+//! rbxts-rs: fixes roblox-ts (luau-ast's `solveTempIds` and `RenderState.getTempName`) choosing names that capture
+//! or shadow the program's own identifiers. For a temporary met first in scope S, a name is also taken when:
+//! - an identifier of that name is used in or under S (`for … in` expressions included) and refers to a local,
+//!   parameter or loop variable declared outside S, or to a global: the temporary would capture it;
+//! - a local, parameter or loop variable of that name is declared in a scope between one of the temporary's uses and
+//!   S, before that use: it would hide the temporary from it.
+//!
+//! A fallback name skips every identifier and temporary name of the tree. A name that collides with nothing is the
+//! name roblox-ts gives.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -47,15 +57,24 @@ pub(crate) fn solve_temp_ids(root: Root) -> TempNames {
         declared: FxHashMap::default(),
         temps: Vec::new(),
         unwalked: Vec::new(),
+        uses: Vec::new(),
+        user_declarations: FxHashMap::default(),
+        seq: 0,
     };
     match root {
         Root::Statements(ast) => solver.statements(ast, false),
         Root::Expr(e) => solver.expr(e),
     }
+    // rbxts-rs: where each name would capture a use (see the module doc), and every scope a temporary appears in
+    let captures = solver.captures();
+    let mut appearances: FxHashMap<u32, Vec<(usize, usize)>> = FxHashMap::default();
+    for &(temp, scope, seq) in &solver.temps {
+        appearances.entry(temp.id).or_default().push((scope, seq));
+    }
 
     let mut names = TempNames::default();
     let mut last_try: FxHashMap<(usize, String), u32> = FxHashMap::default();
-    for (temp, scope) in std::mem::take(&mut solver.temps) {
+    for (temp, scope, _) in std::mem::take(&mut solver.temps) {
         if names.names.contains_key(&temp.id) {
             continue;
         }
@@ -63,7 +82,10 @@ pub(crate) fn solve_temp_ids(root: Root) -> TempNames {
         let mut input = format!("_{}", temp.name);
         // TypeScript records the last try under the name it settled on, so this only helps a name that was free
         let mut i = last_try.get(&(scope, input.clone())).copied().unwrap_or(1);
-        while solver.has_id(scope, &input) {
+        while solver.has_id(scope, &input)
+            || captures.get(input.as_str()).is_some_and(|scopes| scopes.contains(scope))
+            || appearances[&temp.id].iter().any(|&(used_in, seq)| solver.hides(used_in, seq, scope, &input))
+        {
             input = format!("_{}{separator}{i}", temp.name);
             i += 1;
         }
@@ -74,17 +96,26 @@ pub(crate) fn solve_temp_ids(root: Root) -> TempNames {
 
     if solver.unwalked.iter().any(|e| {
         let mut unnamed = false;
-        walk_expr(e, &mut |t| unnamed |= !names.names.contains_key(&t.id));
+        walk_expr(e, &mut temporaries(|t: &TemporaryIdentifier| unnamed |= !names.names.contains_key(&t.id)));
         unnamed
     }) {
         // `RenderState.getTempName`'s fallback, in the order the renderer meets them
+        // rbxts-rs: skipping every name of the tree (see the module doc)
+        let taken: FxHashMap<&str, ()> = (solver.declared.keys().map(|n| (n.as_ref(), ())))
+            .chain(solver.uses.iter().map(|&(_, n)| (n, ())))
+            .chain(solver.user_declarations.keys().map(|&n| (n, ())))
+            .collect();
         let mut next = 0;
         let mut fallback = |t: &TemporaryIdentifier| {
-            names.names.entry(t.id).or_insert_with(|| {
+            names.names.entry(t.id).or_insert_with(|| loop {
                 next += 1;
-                format!("_{}", next - 1)
+                let name = format!("_{}", next - 1);
+                if !taken.contains_key(name.as_str()) {
+                    break name;
+                }
             });
         };
+        let mut fallback = temporaries(&mut fallback);
         match root {
             Root::Statements(ast) => walk_statements(ast, &mut fallback),
             Root::Expr(e) => walk_expr(e, &mut fallback),
@@ -112,10 +143,18 @@ struct Solver<'a> {
     /// Declared names (locals, parameters, temporary names given so far) and the scopes they are declared in: one
     /// map for the file rather than a set per scope, since most scopes are blocks that are never asked about.
     declared: FxHashMap<Cow<'a, str>, Declarers>,
-    /// Temporary identifiers in visit order, with the scope each was met in.
-    temps: Vec<(&'a TemporaryIdentifier, usize)>,
+    /// Temporary identifiers in visit order, with the scope each was met in (and, rbxts-rs, when).
+    temps: Vec<(&'a TemporaryIdentifier, usize, usize)>,
     /// `for … in` expressions, which the visit skips.
     unwalked: Vec<&'a Expr>,
+    /// rbxts-rs: the uses of identifiers that start with `_` (the only ones a temporary name can equal), with the
+    /// scope of each.
+    uses: Vec<(usize, &'a str)>,
+    /// rbxts-rs: the locals, parameters and loop variables that start with `_`, with the scope that declares each
+    /// and when the declaration takes effect (after a `local`'s values).
+    user_declarations: FxHashMap<&'a str, Vec<(usize, usize)>>,
+    /// rbxts-rs: a counter that orders temporary appearances and declarations.
+    seq: usize,
 }
 
 impl<'a> Solver<'a> {
@@ -168,6 +207,75 @@ impl<'a> Solver<'a> {
         }
     }
 
+    /// rbxts-rs: records the use of an identifier.
+    fn use_name(&mut self, name: &'a str) {
+        if name.starts_with('_') {
+            self.uses.push((self.current(), name));
+        }
+    }
+
+    /// rbxts-rs: records the declarations of a local, parameter or loop variable list, from now on.
+    fn user_declare(&mut self, ids: &'a [AnyIdentifier]) {
+        let scope = self.current();
+        for id in ids {
+            if let AnyIdentifier::Identifier(id) = id
+                && id.name.starts_with('_')
+            {
+                self.seq += 1;
+                self.user_declarations.entry(&id.name).or_default().push((scope, self.seq));
+            }
+        }
+    }
+
+    /// A temporary identifier met in the current scope.
+    fn temp(&mut self, t: &'a TemporaryIdentifier) {
+        self.seq += 1;
+        self.temps.push((t, self.current(), self.seq));
+    }
+
+    /// rbxts-rs: whether `id` is declared by the program in this scope.
+    fn user_declares(&self, scope: usize, id: &str) -> bool {
+        self.user_declarations.get(id).is_some_and(|d| d.iter().any(|&(s, _)| s == scope))
+    }
+
+    /// rbxts-rs: for each used name, the scopes where a temporary of that name would capture a use: from the use's
+    /// scope up to, not including, the scope that declares the name (all the way up for a global).
+    fn captures(&self) -> FxHashMap<&'a str, Declarers> {
+        let mut captures: FxHashMap<&'a str, Declarers> = FxHashMap::default();
+        for &(used_in, name) in &self.uses {
+            let scopes = captures.entry(name).or_insert(Declarers { first: usize::MAX, more: Vec::new() });
+            let mut scope = Some(used_in);
+            while let Some(s) = scope {
+                if self.user_declares(s, name) || scopes.contains(s) {
+                    break;
+                }
+                if scopes.first == usize::MAX {
+                    scopes.first = s;
+                } else {
+                    scopes.more.push(s);
+                }
+                scope = self.parents[s];
+            }
+        }
+        captures
+    }
+
+    /// rbxts-rs: whether the program declares `id` before `seq` in `scope` or a scope around it below `top`, hiding a
+    /// temporary of scope `top` named `id` from its appearance at `seq`.
+    fn hides(&self, mut scope: usize, seq: usize, top: usize, id: &str) -> bool {
+        let Some(declarations) = self.user_declarations.get(id) else { return false };
+        while scope != top {
+            if declarations.iter().any(|&(s, declared_at)| s == scope && declared_at < seq) {
+                return true;
+            }
+            match self.parents[scope] {
+                Some(parent) => scope = parent,
+                None => return false,
+            }
+        }
+        false
+    }
+
     fn statements(&mut self, statements: &'a [Stmt], is_block: bool) {
         let scoped = is_block && !statements.is_empty();
         if scoped {
@@ -183,7 +291,7 @@ impl<'a> Solver<'a> {
 
     fn any_identifier(&mut self, id: &'a AnyIdentifier) {
         if let AnyIdentifier::Temporary(t) = id {
-            self.temps.push((t, self.current()));
+            self.temp(t);
         }
     }
 
@@ -191,6 +299,7 @@ impl<'a> Solver<'a> {
     fn function(&mut self, name: Option<&'a Expr>, parameters: &'a [AnyIdentifier], statements: &'a [Stmt]) {
         self.push();
         self.register(parameters);
+        self.user_declare(parameters);
         if let Some(name) = name {
             self.expr(name);
         }
@@ -230,6 +339,7 @@ impl<'a> Solver<'a> {
             Stmt::If(node) => self.if_statement(node),
             Stmt::NumericFor(node) => {
                 self.push();
+                self.user_declare(std::slice::from_ref(&node.id));
                 self.any_identifier(&node.id);
                 self.expr(&node.start);
                 self.expr(&node.end);
@@ -240,7 +350,10 @@ impl<'a> Solver<'a> {
                 self.pop();
             }
             Stmt::For(node) => {
+                // rbxts-rs: the names in the `in` expression, which belong to the enclosing scope
+                walk_names_expr(&node.expression, &mut |name| self.use_name(name));
                 self.push();
+                self.user_declare(&node.ids);
                 for id in &node.ids {
                     self.any_identifier(id);
                 }
@@ -256,6 +369,7 @@ impl<'a> Solver<'a> {
                     self.any_identifier(id);
                 }
                 self.exprs(&node.right);
+                self.user_declare(&node.left);
             }
             Stmt::Return(node) => self.exprs(&node.expressions),
         }
@@ -269,7 +383,8 @@ impl<'a> Solver<'a> {
 
     fn expr(&mut self, e: &'a Expr) {
         match e {
-            Expr::TemporaryIdentifier(t) => self.temps.push((t, self.current())),
+            Expr::TemporaryIdentifier(t) => self.temp(t),
+            Expr::Identifier(id) => self.use_name(&id.name),
             Expr::ComputedIndex(node) => {
                 self.expr(&node.expression);
                 self.expr(&node.index);
@@ -320,8 +435,7 @@ impl<'a> Solver<'a> {
                     }
                 }
             }
-            Expr::Identifier(_)
-            | Expr::None
+            Expr::None
             | Expr::Nil
             | Expr::False
             | Expr::True
@@ -335,22 +449,49 @@ impl<'a> Solver<'a> {
 
 // Every temporary identifier the renderer writes, in the order it writes them. TypeScript renders a map field's
 // value before its key, and a numeric for's step only when it is not a literal 1 (which holds no identifiers).
+// rbxts-rs: the walk also reports the named identifiers it meets.
 
-fn walk_statements(statements: &[Stmt], f: &mut impl FnMut(&TemporaryIdentifier)) {
-    for s in statements {
-        walk_statement(s, f);
-    }
+/// What the walk meets.
+enum Found<'t> {
+    Temporary(&'t TemporaryIdentifier),
+    /// A named identifier: declared, a parameter, a loop variable, or used.
+    Name(&'t str),
 }
 
-fn walk_any_identifiers(ids: &[AnyIdentifier], f: &mut impl FnMut(&TemporaryIdentifier)) {
-    for id in ids {
-        if let AnyIdentifier::Temporary(t) = id {
+/// rbxts-rs: every named identifier in an expression, functions in it included.
+fn walk_names_expr<'t>(e: &'t Expr, f: &mut impl FnMut(&'t str)) {
+    walk_expr(e, &mut |found| {
+        if let Found::Name(name) = found {
+            f(name);
+        }
+    });
+}
+
+/// The temporary identifiers only.
+fn temporaries<'t>(mut f: impl FnMut(&'t TemporaryIdentifier)) -> impl FnMut(Found<'t>) {
+    move |found| {
+        if let Found::Temporary(t) = found {
             f(t);
         }
     }
 }
 
-fn walk_statement(s: &Stmt, f: &mut impl FnMut(&TemporaryIdentifier)) {
+fn walk_statements<'t>(statements: &'t [Stmt], f: &mut impl FnMut(Found<'t>)) {
+    for s in statements {
+        walk_statement(s, f);
+    }
+}
+
+fn walk_any_identifiers<'t>(ids: &'t [AnyIdentifier], f: &mut impl FnMut(Found<'t>)) {
+    for id in ids {
+        match id {
+            AnyIdentifier::Temporary(t) => f(Found::Temporary(t)),
+            AnyIdentifier::Identifier(id) => f(Found::Name(&id.name)),
+        }
+    }
+}
+
+fn walk_statement<'t>(s: &'t Stmt, f: &mut impl FnMut(Found<'t>)) {
     match s {
         Stmt::Assignment(node) => {
             walk_exprs(&node.left, f);
@@ -410,15 +551,16 @@ fn walk_statement(s: &Stmt, f: &mut impl FnMut(&TemporaryIdentifier)) {
     }
 }
 
-fn walk_exprs(exprs: &[Expr], f: &mut impl FnMut(&TemporaryIdentifier)) {
+fn walk_exprs<'t>(exprs: &'t [Expr], f: &mut impl FnMut(Found<'t>)) {
     for e in exprs {
         walk_expr(e, f);
     }
 }
 
-fn walk_expr(e: &Expr, f: &mut impl FnMut(&TemporaryIdentifier)) {
+fn walk_expr<'t>(e: &'t Expr, f: &mut impl FnMut(Found<'t>)) {
     match e {
-        Expr::TemporaryIdentifier(t) => f(t),
+        Expr::TemporaryIdentifier(t) => f(Found::Temporary(t)),
+        Expr::Identifier(id) => f(Found::Name(&id.name)),
         Expr::ComputedIndex(node) => {
             walk_expr(&node.expression, f);
             walk_expr(&node.index, f);
@@ -472,8 +614,7 @@ fn walk_expr(e: &Expr, f: &mut impl FnMut(&TemporaryIdentifier)) {
                 }
             }
         }
-        Expr::Identifier(_)
-        | Expr::None
+        Expr::None
         | Expr::Nil
         | Expr::False
         | Expr::True
