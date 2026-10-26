@@ -10,7 +10,7 @@
     "for-of-order": "for-of: the target per iteration, a nested pattern's default first, the iterable's prerequisites before the builder's.",
     "jsx-tag": "JSX tag names follow TypeScript's isIntrinsicJsxName (`<_Inner />` is the component).",
     "jsx-attribute-string": "JSX attribute strings have no escapes and decode HTML entities.",
-    "jsx-order": "JSX: the tag and the attribute table are captured when later prerequisites (attributes', children's) could change them.",
+    "jsx-order": "JSX: the tag and the attribute table are captured when later prerequisites (attributes', children's) could change them (a Roblox datatype constructor cannot).",
     "jsx-entity": "A JSX entity past U+10FFFF is an error, not a crash.",
     "luatuple-holes": "Holes in an optimized LuaTuple / array assignment declare their temporaries (`local _`) instead of writing globals.",
     "optional-chain-key": "An optional element call's key prerequisites run inside the receiver's nil check."
@@ -29,25 +29,13 @@
           "fixes": [
             "jsx-order"
           ],
-          "output": "da020a3c50fbea3f"
-        },
-        "149683e9b6f2d759": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "79866b8a45e1e1fb"
+          "output": "a7e9495814c292ab"
         },
         "2dc56fb265a7f833": {
           "fixes": [
             "jsx-order"
           ],
-          "output": "50eb346fbb31df45"
-        },
-        "339135ed374ee466": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "f68bc87e68ca7d61"
+          "output": "556577066e2c14f5"
         },
         "33d0aa5fa45431e9": {
           "fixes": [
@@ -59,7 +47,7 @@
           "fixes": [
             "jsx-order"
           ],
-          "output": "0df2dde144753713"
+          "output": "3c290f86220a66c6"
         },
         "3d6dbe571bb55bfc": {
           "fixes": [
@@ -71,7 +59,7 @@
           "fixes": [
             "jsx-order"
           ],
-          "output": "c89b5392ee564496"
+          "output": "407b9dba23a15b68"
         },
         "55fb5056c35919a3": {
           "fixes": [
@@ -113,7 +101,7 @@
           "fixes": [
             "jsx-order"
           ],
-          "output": "012f153de52f7175"
+          "output": "cc9d6eb9e34f1a80"
         },
         "823308842da5b94d": {
           "fixes": [
@@ -127,17 +115,11 @@
           ],
           "output": "4abb7d2462ec722f"
         },
-        "91dd6918a417a89a": {
-          "fixes": [
-            "jsx-order"
-          ],
-          "output": "6a35881ed607b795"
-        },
         "9587ae48916a3b84": {
           "fixes": [
             "jsx-order"
           ],
-          "output": "7a651bc778f769cc"
+          "output": "4e48641545733ef2"
         },
         "9d29161ad3259a4b": {
           "fixes": [
@@ -155,7 +137,7 @@
           "fixes": [
             "jsx-order"
           ],
-          "output": "08d3e55d9f0e4912"
+          "output": "c1f81132651a987a"
         },
         "c489bd7d6475d6c1": {
           "fixes": [
@@ -179,19 +161,19 @@
           "fixes": [
             "jsx-order"
           ],
-          "output": "89f00db15be42a8e"
+          "output": "c7b6df66a6bd01f2"
         },
         "d692ae55f4352e1e": {
           "fixes": [
             "jsx-order"
           ],
-          "output": "8a9a3e9a15c9dd4d"
+          "output": "c5062ab5be8a0203"
         },
         "f10f09e3d94135da": {
           "fixes": [
             "jsx-order"
           ],
-          "output": "a91a4562825a8ca3"
+          "output": "5650b8393e10f690"
         },
         "fa0851d582be385b": {
           "fixes": [

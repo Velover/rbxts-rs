@@ -109,6 +109,7 @@ impl Effects {
 const CONSTANT: u8 = 1;
 const PRIMITIVE: u8 = 2;
 const STABLE_LOOKUP: u8 = 4;
+const PURE_CONSTRUCTOR: u8 = 8;
 
 /// The facts on one node. Empty by default; cheap to clone.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -172,6 +173,17 @@ impl Facts {
     /// `markStableLookup`
     pub fn set_stable_lookup(&mut self) {
         self.flags |= STABLE_LOOKUP;
+    }
+
+    /// rbxts-rs: the call is a Roblox datatype constructor (`UDim2.new(…)`, `Color3.fromRGB(…)`): it allocates and
+    /// reads only its arguments. Only the JSX ordering reads it (`rbxts_transform`'s `get_jsx_effects`).
+    pub fn is_pure_constructor(&self) -> bool {
+        self.flags & PURE_CONSTRUCTOR != 0
+    }
+
+    /// rbxts-rs: marks a Roblox datatype constructor call.
+    pub fn set_pure_constructor(&mut self) {
+        self.flags |= PURE_CONSTRUCTOR;
     }
 
     /// The `BINDING` mark of `markBinding`.

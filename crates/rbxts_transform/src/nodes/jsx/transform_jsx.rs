@@ -11,7 +11,7 @@ use crate::nodes::jsx::transform_jsx_children::transform_jsx_children;
 use crate::nodes::jsx::transform_jsx_tag_name::transform_jsx_tag_name;
 use crate::nodes::transform_entity_name::transform_entity_name;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
-use crate::util::evaluation::effects::{effects_commute, get_effects, get_effects_of_statements};
+use crate::util::evaluation::effects::{effects_commute, get_jsx_effects, get_jsx_effects_of_statements};
 use crate::util::pointer::{MapPointer, create_map_pointer, disable_map_inline};
 
 /// The JSX factory as an indexable expression (`React.createElement`): the file's `@jsx` pragma, else the
@@ -25,7 +25,7 @@ pub fn transform_jsx_factory_entity(state: &mut TransformState<'_>, node: P<Node
 
 /// rbxts-rs: `expression` in a temporary when `statements`, which run after it is read in JavaScript, could change it.
 fn capture_before(prereqs: &mut Prereqs, expression: Expr, statements: &[Stmt], name: &str) -> Expr {
-    if effects_commute(&get_effects(&expression), &get_effects_of_statements(statements)) {
+    if effects_commute(&get_jsx_effects(&expression), &get_jsx_effects_of_statements(statements)) {
         expression
     } else {
         prereqs.push_to_var(expression, name)
@@ -49,7 +49,9 @@ pub fn transform_jsx(
     // rbxts-rs: fixes roblox-ts running the attributes' and the children's prerequisites before reading what came
     // before them: `<frame Size={size}>{holder?.bump()}</frame>` built `{ Size = size }` after `bump()` changed
     // `size`. JavaScript evaluates the tag, then the attributes, then the children; a value is captured when later
-    // prerequisites could change it.
+    // prerequisites could change it. Roblox datatype constructors (`UDim2.fromScale(1, 1)`, `new Vector2(0, 1)`)
+    // count as allocations here (`get_jsx_effects`), so they force no capture; any other call (`Instance.new`, the
+    // user's own) still does.
     let mut attributes_ptr: Option<MapPointer> = None;
     if !attributes.properties().is_empty() {
         let mut ptr = create_map_pointer("attributes");
@@ -64,7 +66,7 @@ pub fn transform_jsx(
     let transformed_children = transform_jsx_children(state, &mut children_prereqs, children);
     tag_name_exp = capture_before(prereqs, tag_name_exp, &children_prereqs.statements, "tag");
     if let Some(ptr) = &mut attributes_ptr
-        && !effects_commute(&get_effects(&ptr.value), &get_effects_of_statements(&children_prereqs.statements))
+        && !effects_commute(&get_jsx_effects(&ptr.value), &get_jsx_effects_of_statements(&children_prereqs.statements))
     {
         disable_map_inline(prereqs, ptr);
     }

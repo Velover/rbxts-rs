@@ -8,7 +8,7 @@ use tsrs_core::P;
 
 use super::facts::{mark_constant_reference, mark_stable_lookup, set_call_effects};
 use crate::classes::transform_state::TransformState;
-use crate::util::types::{is_definitely_type, is_in_rbxts_types, is_roblox_type};
+use crate::util::types::{is_array_type, is_definitely_type, is_in_rbxts_types, is_possibly_type, is_roblox_type};
 
 const LIBRARIES: &[&str] = &["math", "string", "table", "bit32", "utf8", "coroutine", "task", "os", "debug", "buffer"];
 const PURE_MATH: &[&str] = &[
@@ -97,5 +97,58 @@ pub fn try_mark_builtin_member(state: &mut TransformState<'_>, node: P<Node>, ex
         } else if name == Some("clamp") {
             set_call_effects(expression, Arc::new(Effects::may_throw()));
         }
+    }
+}
+
+/// rbxts-rs: the Roblox datatypes whose constructors (`new X(…)`, `X.new(…)`, `X.fromRGB(…)`, …) allocate an
+/// immutable value from their arguments and touch no other state. The JSX ordering (`get_jsx_effects`) lets them
+/// commute with later prerequisites; `Instance.new` and every other call stay unknown.
+const PURE_DATATYPES: &[&str] = &[
+    "Axes", "BrickColor", "CFrame", "Color3", "ColorSequence", "ColorSequenceKeypoint", "Faces", "Font",
+    "NumberRange", "NumberSequence", "NumberSequenceKeypoint", "PhysicalProperties", "Ray", "Rect", "Region3",
+    "TweenInfo", "UDim", "UDim2", "Vector2", "Vector3",
+];
+
+/// rbxts-rs: every declaration of `node`'s symbol is in `@rbxts/types` (the globals, not a user's shadow of them).
+fn is_declared_in_rbxts_types(state: &mut TransformState<'_>, node: P<Node>) -> bool {
+    let Some(symbol) = state.checker.get_symbol_at_location_exported(node) else { return false };
+    let declarations = symbol.declarations();
+    !declarations.is_empty() && declarations.iter().all(|&d| is_in_rbxts_types(state, d))
+}
+
+/// rbxts-rs: marks `call` (the Luau call of `receiver.member(arguments)`, or of `new receiver(arguments)` when
+/// `member` is `None`) as a pure datatype constructor when `receiver` is one of [`PURE_DATATYPES`]'s `@rbxts/types`
+/// globals, the member is declared there too and is not `BrickColor.random` (the RNG's state), and no argument is
+/// an array or a spread (`ColorSequence.new(keypoints)` reads the table).
+pub fn try_mark_pure_constructor(
+    state: &mut TransformState<'_>,
+    receiver: P<Node>,
+    member: Option<P<Node>>,
+    arguments: &[P<Node>],
+    call: &mut Expr,
+) {
+    if !matches!(call, Expr::Call(_))
+        || receiver.kind() != Kind::Identifier
+        || !PURE_DATATYPES.contains(&receiver.text())
+        || !is_declared_in_rbxts_types(state, receiver)
+    {
+        return;
+    }
+    if let Some(member) = member
+        && (member.text() == "random" || !is_declared_in_rbxts_types(state, member))
+    {
+        return;
+    }
+    for &argument in arguments {
+        if argument.kind() == Kind::SpreadElement {
+            return;
+        }
+        let t = state.get_type(argument);
+        if is_possibly_type(state, t, &[&is_array_type]) {
+            return;
+        }
+    }
+    if let Some(facts) = call.facts_mut() {
+        facts.set_pure_constructor();
     }
 }

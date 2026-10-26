@@ -76,7 +76,9 @@
 //!   `@ts-expect-error` in enums).
 //! - `stockfix`: the roblox-ts bugs rbxts-rs fixes (each source file names its bug). `expected/` is rbxts-rs's output,
 //!   which differs from stock roblox-ts's exactly by those fixes, and `runtime/check.luau` runs it with Lune (when
-//!   `lune` is on the PATH) against JavaScript's results for the same calls (`runtime/<file>.luau`).
+//!   `lune` is on the PATH) against JavaScript's results for the same calls (`runtime/<file>.luau`). Its tsconfig sets
+//!   `preserveSymlinks`, so the linked `@rbxts/types` counts as `@rbxts/types` (`jsxConstructors` needs its Roblox
+//!   datatype globals recognised); nothing else in the fixture depends on it.
 //!   `tests/error_fixtures/jsx_entity` holds an input stock roblox-ts crashes on, which rbxts-rs reports as errors
 //!   (outside `tests/fixtures`, whose builds must succeed).
 //! - `transform_order`: imports, a triple-slash reference, a module augmentation, an ambient module import and a

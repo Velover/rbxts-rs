@@ -12,6 +12,7 @@
 		"forceConsistentCasingInFileNames": true,
 		"moduleDetection": "force",
 		"strict": true,
+		"preserveSymlinks": true,
 		"target": "ESNext",
 		"typeRoots": ["node_modules/@rbxts"],
 		"types": ["types", "compiler-types"],

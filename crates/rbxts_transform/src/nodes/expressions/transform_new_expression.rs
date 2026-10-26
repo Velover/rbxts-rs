@@ -8,6 +8,7 @@ use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
+use crate::util::evaluation::builtins::try_mark_pure_constructor;
 use crate::util::ensure_transform_order::ensure_transform_order;
 use crate::util::evaluation::effects::{effects_commute, get_effects, get_effects_of_statements};
 use crate::util::types::get_first_construct_symbol;
@@ -40,5 +41,8 @@ pub fn transform_new_expression(state: &mut TransformState<'_>, prereqs: &mut Pr
         expression = prereqs.push_to_var(expression, "class");
     }
     prereqs.push_list(args_prereqs.statements);
-    create::call(create::property(expression, "new"), args)
+    let mut call = create::call(create::property(expression, "new"), args);
+    // rbxts-rs: `new UDim2(…)` and the like, for the JSX ordering (`try_mark_pure_constructor`)
+    try_mark_pure_constructor(state, class_expression, None, node.arguments(), &mut call);
+    call
 }

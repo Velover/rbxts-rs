@@ -229,9 +229,20 @@ pub fn get_intrinsic_effects(node: LuauNode<'_>) -> Effects {
     }
 }
 
-fn accumulate(node: LuauNode<'_>, result: &mut Effects) {
+fn accumulate(node: LuauNode<'_>, result: &mut Effects, pure_constructors: bool) {
     if let LuauNode::Expr(e) = node {
         if is_constant_reference(e) {
+            return;
+        }
+        if pure_constructors
+            && let Expr::Call(call) = e
+            && call.facts.is_pure_constructor()
+        {
+            // the constructor is a constant global's member; only the arguments remain
+            result.allocates = true;
+            for argument in &call.args {
+                accumulate(LuauNode::Expr(argument), result, pure_constructors);
+            }
             return;
         }
         // creating a closure does not execute its body
@@ -252,7 +263,7 @@ fn accumulate(node: LuauNode<'_>, result: &mut Effects) {
     result.writes_heap |= effects.writes_heap;
     result.throws |= effects.throws;
     result.allocates |= effects.allocates;
-    for_each_child(node, &mut |child| accumulate(child, result));
+    for_each_child(node, &mut |child| accumulate(child, result, pure_constructors));
 }
 
 /// `getEffects` of one expression.
@@ -264,7 +275,7 @@ pub fn get_effects(node: &Expr) -> Effects {
         return Effects::allocation();
     }
     let mut result = Effects::none();
-    accumulate(LuauNode::Expr(node), &mut result);
+    accumulate(LuauNode::Expr(node), &mut result, false);
     result
 }
 
@@ -272,7 +283,31 @@ pub fn get_effects(node: &Expr) -> Effects {
 pub fn get_effects_of_statements(statements: &[Stmt]) -> Effects {
     let mut result = Effects::none();
     for s in statements {
-        accumulate(LuauNode::Stmt(s), &mut result);
+        accumulate(LuauNode::Stmt(s), &mut result, false);
+    }
+    result
+}
+
+/// rbxts-rs: [`get_effects`] for the JSX ordering (`transform_jsx`), where a Roblox datatype constructor
+/// (`UDim2.fromScale(…)`, marked by `try_mark_pure_constructor`) only allocates. roblox-ts's own uses of
+/// `getEffects` keep treating it as an unknown call, so their output stays stock's.
+pub fn get_jsx_effects(node: &Expr) -> Effects {
+    if is_constant_reference(node) || node.is_simple_primitive() || node.is_none() {
+        return Effects::none();
+    }
+    if matches!(node, Expr::Function(_)) {
+        return Effects::allocation();
+    }
+    let mut result = Effects::none();
+    accumulate(LuauNode::Expr(node), &mut result, true);
+    result
+}
+
+/// rbxts-rs: [`get_effects_of_statements`] for the JSX ordering (see [`get_jsx_effects`]).
+pub fn get_jsx_effects_of_statements(statements: &[Stmt]) -> Effects {
+    let mut result = Effects::none();
+    for s in statements {
+        accumulate(LuauNode::Stmt(s), &mut result, true);
     }
     result
 }

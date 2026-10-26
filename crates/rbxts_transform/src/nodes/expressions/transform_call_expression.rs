@@ -15,7 +15,7 @@ use crate::plugins::backend::{keyed_access, property_key_of};
 use crate::util::add_one_if_array_type::add_one_if_array_type;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
 use crate::util::ensure_transform_order::ensure_transform_order;
-use crate::util::evaluation::builtins::{is_stable_builtin_member, try_mark_builtin_member};
+use crate::util::evaluation::builtins::{is_stable_builtin_member, try_mark_builtin_member, try_mark_pure_constructor};
 use crate::util::evaluation::effects::{
     effects_commute, get_effects, get_effects_of_statements, is_late_read, join_effects,
 };
@@ -222,7 +222,7 @@ pub fn transform_property_call_expression_inner(
         Some(key) => property_key_of(&key),
         None => PropertyKey::Name(name.to_owned()),
     };
-    let exp = create_ordered_property_call(
+    let mut exp = create_ordered_property_call(
         state,
         prereqs,
         expression,
@@ -232,6 +232,9 @@ pub fn transform_property_call_expression_inner(
         args_prereqs.statements,
         method,
     );
+    // rbxts-rs: `UDim2.fromScale(…)` and the like, for the JSX ordering (`try_mark_pure_constructor`)
+    let access = expression.as_property_access_expression();
+    try_mark_pure_constructor(state, access.expression, Some(access.name), node_arguments, &mut exp);
     wrap_return_if_lua_tuple(state, node, exp)
 }
 
