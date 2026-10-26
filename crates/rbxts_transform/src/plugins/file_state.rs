@@ -210,8 +210,6 @@ pub struct PluginFileState {
     pub statement_comments: FxHashMap<P<Node>, Vec<String>>,
     /// `runtime_member` uses.
     pub runtime_members: usize,
-    /// Diagnostics plugins reported for the file, for dropping identical ones.
-    pub reported: FxHashSet<String>,
     /// What `classify_symbol` reported while this file was transformed (refused primitives' internal errors, at the
     /// symbol's declaration): the build reports each once, apart from the files (`backend::run_classify`).
     pub classify_diagnostics: Vec<P<tsrs_ast::Diagnostic>>,

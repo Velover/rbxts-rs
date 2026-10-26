@@ -129,6 +129,15 @@
 //! taken out of the file's diagnostics; the build reports each such diagnostic once, sorted
 //! (`compile::classify_diagnostics`), whatever the checker count.
 //!
+//! **Plugin diagnostics** (`compile::drop_plugin_duplicates`): each file's list keeps everything its hooks reported;
+//! the build then keeps one of each plugin diagnostic and the diagnostics equal to it (same file, range, code or
+//! source, message text), the copy TypeScript's `sortAndDeduplicateDiagnostics` keeps (more related information
+//! first, then a compiler diagnostic, then file name and order). In watch and incremental builds a transformed file
+//! commits its list as its transform reported it, before the drop, and the drop runs over the transformed files'
+//! lists and the cached lists of the files not transformed again together: the copy kept is a clean build's, also
+//! when the file holding it stops reporting it or is deleted. (A new process of an incremental build reports only
+//! the files it transforms, as roblox-ts's does; their duplicates are dropped among them.)
+//!
 //! **Names.** Temporary identifiers plugins ask for (`temp_id`, `hoist`, `hoist_spillable`, `push_to_var`) are
 //! named so that no identifier of the file, no name `is_usable_local_name` approved, and no plugin import can capture
 //! them (a hoist or import is declared at the top of the file and may be used in any nested function); approved

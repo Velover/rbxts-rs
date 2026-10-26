@@ -323,6 +323,6 @@ declare function probeImportFrom(path: string, name: string): unknown;
 /** A warning at the call with the text of `text`, then the value. */
 /** @probe diagsame */
 declare function probeDiagSame<T>(value: T, text: string): T;
-/** A warning at this declaration. */
+/** A warning at this declaration, with related information when given an argument. */
 /** @probe diagdecl */
-declare function probeDiagDecl(): undefined;
+declare function probeDiagDecl(related?: boolean): undefined;

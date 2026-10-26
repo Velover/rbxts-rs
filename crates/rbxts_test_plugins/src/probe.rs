@@ -49,7 +49,8 @@
 //! - `importafter`: `compile_expr(a)`, then `import_named("./runtime", "other")` (plugin imports are ordered by
 //!   where they were asked for, not when);
 //! - `diagsame`: a warning at the call with the text of its second argument, then `compile_expr(a)`; `diagdecl`: a
-//!   warning at the callee's declaration (each kept once in the build, beside roblox-ts's own and across files);
+//!   warning at the callee's declaration, with related information when it has an argument (each kept once in the
+//!   build, beside roblox-ts's own and across files; the copy with related information is the one kept);
 //! - `importfrom`: `import_named(path, export)` of its two string literal arguments (plugin imports are grouped by
 //!   path, in the order each path was first asked for);
 //! - `boom`: panics in [`Mode::Panic`]; `fail`: an error in [`Mode::Fail`]; `err`: `Err` with no new error in
@@ -642,7 +643,13 @@ impl ProbeInstance {
                 // a warning at the callee's declaration, in another file: once in the build, whichever files ask
                 let symbol = call.symbol.expect("a callee symbol");
                 let declaration = symbol.declarations()[0];
-                cx.warning(declaration, "probe: at the declaration, once in the build");
+                let warning = PluginDiagnostic::warning(declaration, "probe: at the declaration, once in the build");
+                // with an argument, with related information: the copy the build keeps, whichever file reports first
+                let warning = match arg(0) {
+                    Some(node) => warning.with_related(node, "probe: the call with related information"),
+                    None => warning,
+                };
+                cx.report(warning);
                 self.claimed(create::nil())
             }
             "importfrom" => {

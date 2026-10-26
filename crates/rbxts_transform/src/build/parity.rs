@@ -356,7 +356,14 @@ pub fn diagnostic_texts(report: &CompileReport, root: &Path) -> Vec<String> {
             let file = d.file().map(|f| f.get().file_name().to_lowercase()).unwrap_or_default();
             let file = file.strip_prefix(&root).unwrap_or(&file).to_owned();
             let category = format!("{:?}", d.category());
-            format!("{category} {file}:{} TS{}: {}", d.pos().unwrap_or(0), d.code(), flatten_diagnostic_message(d, "\n"))
+            // with its related information: which copy of a plugin diagnostic a build keeps shows
+            let related: String = d
+                .related_information()
+                .iter()
+                .map(|r| format!(" [related {}: {}]", r.pos().unwrap_or(0), flatten_diagnostic_message(*r, "\n")))
+                .collect();
+            let message = flatten_diagnostic_message(d, "\n");
+            format!("{category} {file}:{} TS{}: {message}{related}", d.pos().unwrap_or(0), d.code())
         })
         .chain(report.warnings.iter().map(|w| format!("warning {}", w.replace('\\', "/").to_lowercase().replace(&root, ""))))
         .collect();

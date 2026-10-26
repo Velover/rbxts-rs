@@ -111,8 +111,11 @@ struct CommittedFile {
     /// Per active plugin, the part's encoded bytes (made for the incremental state, or read from it).
     encoded: Option<Vec<Option<Vec<u8>>>>,
     /// Its last transform's diagnostics (warnings: a file with an error never commits), reported again by a
-    /// rebuild that does not transform it, as a clean build would report them (in this process only).
+    /// rebuild that does not transform it, as a clean build would report them (in this process only). As the
+    /// transform reported them, before the build dropped plugin duplicates (`compile::drop_plugin_duplicates`).
     diagnostics: Vec<P<Diagnostic>>,
+    /// Which of `diagnostics` plugins reported.
+    plugin_diagnostics: Vec<P<Diagnostic>>,
 }
 
 impl CommittedFile {
@@ -126,6 +129,7 @@ impl CommittedFile {
             inputs: FileInputs::default(),
             encoded: None,
             diagnostics: Vec::new(),
+            plugin_diagnostics: Vec::new(),
         }
     }
 
@@ -156,7 +160,17 @@ impl CommittedFile {
             Vec::new()
         };
         let encoded = (!parts.is_empty()).then_some(record.parts);
-        CommittedFile { facts, parts, late: record.late, ast: None, load_check: None, inputs, encoded, diagnostics: Vec::new() }
+        CommittedFile {
+            facts,
+            parts,
+            late: record.late,
+            ast: None,
+            load_check: None,
+            inputs,
+            encoded,
+            diagnostics: Vec::new(),
+            plugin_diagnostics: Vec::new(),
+        }
     }
 }
 
@@ -1221,23 +1235,41 @@ impl<'p> BuildSession<'p> {
         report.timings.transform = start.elapsed();
         // the transform diagnostics of the project files not transformed again: their last transform's, so a rebuild
         // reports what a clean build would (a single project's, or a dirty project of a graph whose files all cached)
-        let mut cached = Vec::new();
+        // (file name, diagnostics, plugin diagnostics)
+        let mut cached: Vec<(&str, Vec<P<Diagnostic>>, &[P<Diagnostic>])> = Vec::new();
         if let Some(c) = &committed {
             let transformed: FxHashSet<P<SourceFile>> = to_transform.iter().copied().collect();
             for &file in &files {
                 if !transformed.contains(&file)
                     && let Some(old) = c.files.get(&file.path().to_string())
                 {
-                    cached.extend(old.diagnostics.iter().copied());
+                    cached.push((file.get().file_name(), old.diagnostics.clone(), &old.plugin_diagnostics));
                 }
             }
         }
-        // a plugin diagnostic identical to another diagnostic of the build, once
-        crate::compile::drop_plugin_duplicates(
-            report.files.iter_mut().map(|f| &mut f.diagnostics).zip(plugin_reported.iter().map(Vec::as_slice)),
-            &cached,
-        );
-        report.diagnostics.extend(cached);
+        // what each transformed file reported, committed as it is (a rebuild drops duplicates again, over the cached
+        // files' lists and its own, so it keeps the copy a clean build keeps)
+        let reported: Vec<Vec<P<Diagnostic>>> = report.files.iter().map(|f| f.diagnostics.clone()).collect();
+        // one of each plugin diagnostic in the build
+        {
+            let mut owners: Vec<crate::compile::DiagnosticOwner<'_>> = report
+                .files
+                .iter_mut()
+                .zip(&plugin_reported)
+                .map(|(f, plugin)| crate::compile::DiagnosticOwner {
+                    file: &f.file_name,
+                    diagnostics: &mut f.diagnostics,
+                    plugin,
+                })
+                .collect();
+            owners.extend(cached.iter_mut().map(|(file, diagnostics, plugin)| crate::compile::DiagnosticOwner {
+                file,
+                diagnostics,
+                plugin,
+            }));
+            crate::compile::drop_plugin_duplicates(&mut owners);
+        }
+        report.diagnostics.extend(cached.into_iter().flat_map(|(_, diagnostics, _)| diagnostics));
 
         let any_errors = report.has_errors();
         if any_errors && !self.options.write_partial {
@@ -1688,8 +1720,20 @@ impl<'p> BuildSession<'p> {
             to_transform.iter().copied().zip(load_checks).collect();
         let mut inputs_by_file: FxHashMap<P<SourceFile>, FileInputs> =
             to_transform.iter().copied().zip(file_inputs).collect();
-        let mut diagnostics_by_file: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>> =
-            to_transform.iter().copied().zip(report.files.iter().map(|f| f.diagnostics.clone())).collect();
+        // as the transform reported them (`reported`, before the plugin duplicates were dropped), then what the build
+        // added since (internal errors)
+        let mut diagnostics_by_file: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>> = to_transform
+            .iter()
+            .copied()
+            .zip(report.files.iter().zip(&reported).map(|(f, reported)| {
+                let known: FxHashSet<P<Diagnostic>> = reported.iter().copied().collect();
+                let mut diagnostics = reported.clone();
+                diagnostics.extend(f.diagnostics.iter().copied().filter(|d| !known.contains(d)));
+                diagnostics
+            }))
+            .collect();
+        let mut plugin_by_file: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>> =
+            to_transform.iter().copied().zip(plugin_reported).collect();
         let program_files: FxHashMap<String, P<SourceFile>> =
             project.program.source_files().iter().map(|&f| (f.path().to_string(), f)).collect();
         for (key, facts) in facts {
@@ -1705,7 +1749,8 @@ impl<'p> BuildSession<'p> {
                     let inputs = inputs_by_file.remove(&file).unwrap_or_default();
                     let encoded = records.remove(&key).map(|record| record.parts);
                     let diagnostics = diagnostics_by_file.remove(&file).unwrap_or_default();
-                    CommittedFile { facts, parts, late, ast, load_check, inputs, encoded, diagnostics }
+                    let plugin_diagnostics = plugin_by_file.remove(&file).unwrap_or_default();
+                    CommittedFile { facts, parts, late, ast, load_check, inputs, encoded, diagnostics, plugin_diagnostics }
                 }
                 None => match old_files.remove(&key) {
                     Some(mut old) => {

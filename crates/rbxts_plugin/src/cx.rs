@@ -326,14 +326,15 @@ pub trait CxBackend {
 
     /// Records a diagnostic for this file. Any error fails the build: nothing is written.
     ///
-    /// A diagnostic equal to one already recorded for this file is dropped, as TypeScript's `DiagnosticCollection`
-    /// keeps one of each (`compareDiagnosticsSkipRelatedInformation`). Equal means the same node range, the same
-    /// source (the plugin's [`crate::Plugin::diagnostic_source`] standing in for a `None` source; it renders as the
-    /// code) and the same message text, the hint included as the line under the message. The category and the
-    /// related information are not compared: the first one recorded is kept. The build then drops one equal to a
-    /// compiler diagnostic of any file (roblox-ts's own at the same node), or to one a hook of an earlier file
-    /// recorded (a node in another file, such as a declaration, that several files report at): one of each in the
-    /// build, for any checker count.
+    /// The build keeps one of each, as TypeScript's `sortAndDeduplicateDiagnostics` does. Equal means the same
+    /// node range, the same source (the plugin's [`crate::Plugin::diagnostic_source`] standing in for a `None`
+    /// source; it renders as the code) and the same message text, the hint included as the line under the message;
+    /// the category and the related information are not compared. Of a plugin diagnostic and the diagnostics equal
+    /// to it, reported by this file or any other (another plugin, another file's hook at the same node of a third
+    /// file, roblox-ts itself), the one first in TypeScript 5.9's `compareDiagnostics` order is kept: the one with
+    /// more related information; then a compiler diagnostic before a plugin's, then by file name and report order.
+    /// Watch and incremental builds keep the same copy as a clean build: the choice is made over every file's list,
+    /// the cached lists of files not transformed again included, as each file's own transform reported it.
     fn report(&mut self, diagnostic: PluginDiagnostic);
 
     // --- build inputs (DESIGN §14) ---

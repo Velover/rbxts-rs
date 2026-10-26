@@ -1125,7 +1125,8 @@ fn declining_or_lowering_as_roblox_ts_changes_no_output() {
 
 /// A plugin diagnostic identical to roblox-ts's own at the same node (here its `logTruthyChanges` warning), or to
 /// one another file's hook reported at a node in a third file, is kept once in the build, as TypeScript's
-/// DiagnosticCollection keeps one of each; for any checker count.
+/// DiagnosticCollection keeps one of each; for any checker count. The copy kept is the one TypeScript's
+/// `sortAndDeduplicateDiagnostics` keeps, the one with related information, whichever file reports it first.
 #[test]
 fn a_plugin_diagnostic_is_kept_once_in_the_build() {
     let probe = fixture_dir_of("probe");
@@ -1138,6 +1139,20 @@ fn a_plugin_diagnostic_is_kept_once_in_the_build() {
     for name in ["probe.d.ts", "seamdiag.ts", "seamdiag2.ts"] {
         std::fs::copy(probe.join("src/shared").join(name), project.root.join("src/shared").join(name)).unwrap();
     }
+    // the declaration warning's copy with related information, and the file holding it
+    let kept = |report: &CompileReport| {
+        let holders: Vec<(String, usize)> = report
+            .files
+            .iter()
+            .flat_map(|f| f.diagnostics.iter().map(move |d| (f, d)))
+            .filter(|(_, d)| d.localize().contains("at the declaration"))
+            .map(|(f, d)| {
+                let name = Path::new(&f.file_name).file_name().unwrap().to_string_lossy().into_owned();
+                (name, d.related_information().len())
+            })
+            .collect();
+        holders
+    };
     for checkers in [1, 2] {
         let report = project.build_with(&["stamp", "probe"], Some(checkers), |_| {});
         assert!(report.fatal.is_empty(), "{:?}", report.fatal);
@@ -1149,5 +1164,14 @@ fn a_plugin_diagnostic_is_kept_once_in_the_build() {
             ],
             "{checkers} checkers"
         );
+        // seamdiag.ts reports it first, seamdiag2.ts with related information
+        assert_eq!(kept(&report), vec![("seamdiag2.ts".to_owned(), 1)], "{checkers} checkers");
     }
+    // the other way round: still the copy with related information
+    let first = std::fs::read_to_string(project.root.join("src/shared/seamdiag.ts")).unwrap();
+    project.write("src/shared/seamdiag.ts", &first.replace("probeDiagDecl()", "probeDiagDecl(true)"));
+    let second = std::fs::read_to_string(project.root.join("src/shared/seamdiag2.ts")).unwrap();
+    project.write("src/shared/seamdiag2.ts", &second.replace("probeDiagDecl(true)", "probeDiagDecl()"));
+    let report = project.build_with(&["stamp", "probe"], Some(1), |_| {});
+    assert_eq!(kept(&report), vec![("seamdiag.ts".to_owned(), 1)]);
 }

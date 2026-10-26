@@ -191,6 +191,15 @@ fn a_solution_config_in_the_middle_passes_failures_on() {
     run_fixture_copying("midsolution", "midsolution-inc", &[], true, MIDSOLUTION_COPY);
 }
 
+/// A plugin diagnostic two files report at a node in a third (`plugindiag.script.json`): every watch rebuild and
+/// incremental build reports the copy a clean build keeps, when the file holding it stops reporting it, is deleted,
+/// or comes back, and when the copy with related information moves to the other file.
+#[test]
+fn plugin_diagnostic_duplicates_rebuild_as_clean_builds() {
+    run_fixture("plugindiag", "plugindiag", &["stamp", "probe"], false);
+    run_fixture("plugindiag", "plugindiag-inc", &["stamp", "probe"], true);
+}
+
 #[test]
 fn watch_rebuilds_equal_clean_builds_without_plugins() {
     run_basic("plain", &[], false);

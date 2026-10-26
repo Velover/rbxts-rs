@@ -325,21 +325,6 @@ fn message_text(diagnostic: &PluginDiagnostic) -> String {
     }
 }
 
-/// What makes two plugin diagnostics the same, as TypeScript's `DiagnosticCollection` compares them
-/// (`compareDiagnosticsSkipRelatedInformation`): the file, the start and the length, the code (the source, which
-/// renders in the code slot) and the message text (the hint included). The category and the related information
-/// are not part of it.
-fn diagnostic_key(diagnostic: &PluginDiagnostic, source: Option<&str>) -> String {
-    let (file, range) = node_range(diagnostic.node);
-    format!(
-        "{:?} {} {} {source:?} {:?}",
-        file.map(|f| f.get().file_name()),
-        range.pos(),
-        range.end(),
-        message_text(diagnostic)
-    )
-}
-
 impl HookBackend<'_, '_> {
     fn name(&self) -> &'static str {
         self.host.name(self.plugin)
@@ -960,11 +945,7 @@ impl CxBackend for HookBackend<'_, '_> {
             return;
         }
         self.touch();
-        // one of each, as TypeScript's DiagnosticCollection keeps them
-        let source = diagnostic.source.or(self.host.sources[self.plugin]);
-        if !self.state.plugin_file.reported.insert(diagnostic_key(&diagnostic, source)) {
-            return;
-        }
+        // one of each in the build: `compile::drop_plugin_duplicates`
         let diagnostic = to_diagnostic(&diagnostic, self.host.sources[self.plugin]);
         self.state.plugin_file.plugin_diagnostics.push(diagnostic);
         self.state.add_diagnostic(diagnostic);
