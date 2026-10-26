@@ -1076,6 +1076,17 @@ fn every_ts_nocheck_pragma_is_reported() {
     };
     assert_eq!(count("twice.ts"), 2, "{errors:?}");
     assert_eq!(count("overridden.ts"), 1, "{errors:?}");
+    // each spans its comment (stock's spans run from the comment on for `range.end` characters)
+    let spans: Vec<(u32, u32)> = report
+        .files
+        .iter()
+        .filter(|f| f.file_name.ends_with("twice.ts"))
+        .flat_map(|f| &f.diagnostics)
+        .chain(&report.diagnostics)
+        .filter(|d| d.file().is_some_and(|file| file.file_name().ends_with("twice.ts")))
+        .map(|d| d.loc().map(|loc| (loc.pos().expect_source("a source position"), loc.len().unwrap())).unwrap())
+        .collect();
+    assert_eq!(spans, [(0, 14), (15, 14)], "{errors:?}");
 }
 
 /// The offers S2 left out and the seam's last additions, against the `seamrest` fixture (`probe` and `probe-exprcall`):

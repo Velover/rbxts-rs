@@ -217,6 +217,10 @@ impl CompileReport {
 /// `fileUsesCommentDirectives`: `@ts-ignore`, `@ts-expect-error` and `@ts-nocheck` need `allowCommentDirectives`. One
 /// diagnostic per `@ts-nocheck` pragma (stock's `sourceFile.pragmas.get("ts-nocheck")`), also one a later `@ts-check`
 /// overrides (TypeScript's check directive is the last of the two).
+///
+/// rbxts-rs: each diagnostic spans its comment. Stock's `createDiagnosticWithLocation` gives a range's diagnostic the
+/// length `range.end` (not `end - pos`), so a directive or pragma after the file's first character underlines from
+/// the comment on, past it (to the end of the file when the comment is far enough down): a stock bug, not copied.
 pub(crate) fn comment_directive_diagnostics(file: P<SourceFile>) -> Vec<P<Diagnostic>> {
     let message = || tsrs_diagnostics::new_ad_hoc_message(&errors_text_no_comment_directives());
     let mut diagnostics = Vec::new();
