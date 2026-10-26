@@ -214,8 +214,9 @@ pub trait PluginInstance: 'static {
     ///
     /// **Computed keys.** Element accesses are offered whatever their key. An answer equal to `access.key` leaves
     /// the access as written (`obj[k]` stays `obj[k]`). When a rewritten key replaces a computed argument
-    /// (`obj[k]` with `k: "a"`), the argument is still evaluated for its effects, after the receiver, and its value
-    /// is dropped. A site whose `key` is `None` ([`AccessSite::key`]) can only be declined or failed (`Err`, after
+    /// (`obj[k]` with `k: "a"`), an argument that only reads (an identifier, `this`, a literal, an enum member
+    /// such as `E.A`) is dropped with it; any other is still evaluated once for its effects, after the receiver, and
+    /// its value dropped. A site whose `key` is `None` ([`AccessSite::key`]) can only be declined or failed (`Err`, after
     /// reporting why, as Flamework's "must be accessed directly"): a `Take` there is an internal error naming the
     /// plugin, and the access is lowered as written.
     fn property_key(

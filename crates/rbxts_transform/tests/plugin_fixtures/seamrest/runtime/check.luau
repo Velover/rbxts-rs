@@ -73,6 +73,21 @@ ambient.createElement = function(tag: any)
 end
 ambient.tags = { probeAccTag = function() end, plainTag = function() end }
 ambient.keyedTags = { k_Comp = function() end }
+-- rewritten keys: `k_a` is a field, any other key read is logged
+ambient.dropKeyed = setmetatable({ k_a = 1 }, {
+	__index = function(_, key)
+		record("index", key)
+		return "a"
+	end,
+})
+ambient.getDropKeyed = function()
+	record("getDropKeyed")
+	return ambient.dropKeyed
+end
+ambient.keyName = function()
+	record("keyName")
+	return "a"
+end
 -- a roblox-ts class as `SeamBase` is declared, with the keys `property_key` gives its members (`k_<key>`)
 local SeamBase = {}
 SeamBase.__index = SeamBase
@@ -182,6 +197,11 @@ local cases = {
 	{ "statements", "loopBody", {}, {}, 0, { "print probe: a block of 2 statements", "print probe: a block of 2 statements" } },
 	{ "statements", "caseBody", { 1 }, {}, "other", { "print probe: a block of 2 statements" } },
 	{ "statements", "caseBody", { 2 }, {}, "other", {} },
+	-- rewritten keys: an enum member argument is dropped, a call or a read still runs, after the receiver
+	{ "keys", "enumKey", {}, {}, 1, {} },
+	{ "keys", "callKey", {}, {}, 1, { "getDropKeyed", "keyName" } },
+	{ "keys", "readKey", {}, {}, 1, { "index k_s" } },
+	{ "keys", "writeKey", {}, {}, 2, { "getDropKeyed" } },
 	-- dotted JSX tags
 	{ "tags", "dotted", {}, {}, { tag = ambient.tags.probeAccTag }, { "exprWrap" } },
 	{ "tags", "keyedTag", {}, {}, { tag = ambient.keyedTags.k_Comp }, {} },

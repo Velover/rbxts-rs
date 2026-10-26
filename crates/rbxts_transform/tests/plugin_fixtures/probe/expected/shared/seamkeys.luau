@@ -27,6 +27,33 @@ local c8 = keyedList[0]
 keyName()
 keyed.k_opt = nil
 local c9 = "marked=marked:-;marked=marked:the marked one;maybeMarked=maybeMarked:piped text;keyed=keyed:-"
+-- a rewritten key drops an argument that only reads (an identifier, an enum member); one with effects is still
+-- evaluated, as a call statement when it is a call behind parentheses or a cast
+local SK = {
+	A = "a",
+	M = "m",
+}
+local KeyNS = {}
+do
+	local _container = KeyNS
+	local Inner = {
+		B = "b",
+	}
+	_container.Inner = Inner
+end
+local c10 = keyed.k_a
+local c11 = keyed:k_m(4)
+local _c12 = maybeKeyed
+if _c12 ~= nil then
+	_c12 = _c12.k_b
+end
+local c12 = _c12
+keyed.k_a = 5
+keyName()
+local c13 = keyed.k_a
+local _ = keyed.k_s
+local c14 = keyed.k_a
+local c15 = keyed.k_b
 -- optional chains with a rewritten computed key: the key is evaluated after its receiver, and not at all when an
 -- optional receiver is nil
 local kv = 0
@@ -114,7 +141,7 @@ local _self_3 = getMaybeKeyed()
 local _o9 = _self_3
 if _o9 ~= nil then
 	kv = 1
-	local _ = kv
+	local _1 = kv
 	_o9 = _o9.k_m
 	if _o9 ~= nil then
 		_o9 = _o9(_self_3, val())
@@ -188,6 +215,12 @@ return {
 	c7 = c7,
 	c8 = c8,
 	c9 = c9,
+	c10 = c10,
+	c11 = c11,
+	c12 = c12,
+	c13 = c13,
+	c14 = c14,
+	c15 = c15,
 	o1 = o1,
 	o2 = o2,
 	o3 = o3,

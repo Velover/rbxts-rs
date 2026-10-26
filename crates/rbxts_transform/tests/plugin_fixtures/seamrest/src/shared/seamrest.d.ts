@@ -101,3 +101,14 @@ interface KeyedTags {
 	Comp: () => unknown;
 }
 declare const keyedTags: KeyedTags;
+
+// --- rewritten computed keys ---
+
+interface DropKeyed {
+	readonly __probeKey: true;
+	a: number;
+	s: string;
+}
+declare const dropKeyed: DropKeyed;
+declare function getDropKeyed(): DropKeyed;
+declare function keyName(): string;

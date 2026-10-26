@@ -14,6 +14,18 @@ export const c8 = keyedList[0];
 delete keyed[keyName() as "opt"];
 export const c9 = probeLinks();
 
+// a rewritten key drops an argument that only reads (an identifier, an enum member); one with effects is still
+// evaluated, as a call statement when it is a call behind parentheses or a cast
+enum SK { A = "a", M = "m" }
+namespace KeyNS { export enum Inner { B = "b" } }
+export const c10 = keyed[SK.A];
+export const c11 = keyed[SK.M](4);
+export const c12 = maybeKeyed?.[KeyNS.Inner.B];
+keyed[SK.A] = 5;
+export const c13 = keyed[(keyName() as "a")];
+export const c14 = keyed[keyed.s as "a"];
+export const c15 = keyed[anyKey as "b"];
+
 // optional chains with a rewritten computed key: the key is evaluated after its receiver, and not at all when an
 // optional receiver is nil
 let kv = 0;

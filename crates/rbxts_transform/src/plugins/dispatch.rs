@@ -981,15 +981,64 @@ pub(crate) fn replaced_key_statements(state: &mut TransformState<'_>, access: P<
     let mut prereqs = Prereqs::new();
     let value = crate::nodes::expressions::transform_expression::transform_expression(state, &mut prereqs, argument);
     let mut statements = prereqs.statements;
-    statements.extend(discarded_key_statements(value));
+    statements.extend(discarded_key_statements(state, access, value));
     statements
 }
 
-/// The compiled argument of an element access whose key a plugin rewrote: evaluated as a statement for its
-/// effects, or nothing when it has none.
-pub(crate) fn discarded_key_statements(index: Expr) -> Vec<Stmt> {
+/// The compiled argument `index` of the element access `access` whose key a plugin rewrote: evaluated as a
+/// statement for its effects, or nothing when reading it has none. That is an argument without effects in Luau, or
+/// one that only reads (an identifier, `this`, a literal, an enum member such as `E.A`): Flamework's TS
+/// transformer drops the argument with the key, and reading a name or a member of an enum's table does nothing.
+pub(crate) fn discarded_key_statements(state: &mut TransformState<'_>, access: P<Node>, index: Expr) -> Vec<Stmt> {
     use crate::util::evaluation::effects::{can_discard, get_effects};
+    if access.kind() == Kind::ElementAccessExpression
+        && only_reads(state, access.as_element_access_expression().argument_expression)
+    {
+        return Vec::new();
+    }
+    let mut index = index;
+    while let Expr::Parenthesized(parenthesized) = index {
+        index = parenthesized.expression;
+    }
     if can_discard(&get_effects(&index)) { Vec::new() } else { wrap_expression_statement(index) }
+}
+
+/// Whether evaluating the TS expression `node` only reads: a literal, `this`, an identifier, or a member of an enum
+/// (through namespaces), behind parentheses and casts.
+fn only_reads(state: &mut TransformState<'_>, node: P<Node>) -> bool {
+    use crate::util::expression_might_mutate::is_enum_member_access;
+    let node = skip_downwards(node);
+    match node.kind() {
+        Kind::StringLiteral
+        | Kind::NoSubstitutionTemplateLiteral
+        | Kind::NumericLiteral
+        | Kind::TrueKeyword
+        | Kind::FalseKeyword
+        | Kind::NullKeyword
+        | Kind::ThisKeyword
+        | Kind::Identifier => true,
+        Kind::PropertyAccessExpression | Kind::ElementAccessExpression => {
+            is_enum_member_access(state, node)
+                && reads_namespace_path(state, node.expression().expect("an access has an expression"))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `node` names an enum or a namespace by identifiers and property accesses only (`E`, `NS.E`).
+fn reads_namespace_path(state: &mut TransformState<'_>, node: P<Node>) -> bool {
+    let node = skip_downwards(node);
+    match node.kind() {
+        Kind::Identifier => true,
+        Kind::PropertyAccessExpression => {
+            let name = node.as_property_access_expression().name;
+            let symbol = state.checker.get_symbol_at_location_exported(name);
+            symbol.is_some_and(|s| {
+                state.checker.skip_alias(s).flags().intersects(SymbolFlags::Enum | SymbolFlags::ValueModule)
+            }) && reads_namespace_path(state, node.as_property_access_expression().expression)
+        }
+        _ => false,
+    }
 }
 
 /// Places the statements that evaluate a replaced key ([`replaced_key_statements`], [`discarded_key_statements`])

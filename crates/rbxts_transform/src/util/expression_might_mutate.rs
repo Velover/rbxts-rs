@@ -8,7 +8,8 @@ use crate::classes::transform_state::TransformState;
 use crate::util::symbols::is_symbol_mutable;
 use crate::util::traversal::skip_downwards;
 
-fn is_enum_member_access(state: &mut TransformState<'_>, node: P<Node>) -> bool {
+/// Whether `node` reads a member of a (non-const) enum: `E.A`, `E["A"]`.
+pub(crate) fn is_enum_member_access(state: &mut TransformState<'_>, node: P<Node>) -> bool {
     let member_node = match node.kind() {
         Kind::PropertyAccessExpression => node.as_property_access_expression().name,
         Kind::ElementAccessExpression => node.as_element_access_expression().argument_expression,
