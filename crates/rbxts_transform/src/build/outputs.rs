@@ -10,6 +10,9 @@
 //! directories (outside the output roots and the include path, `node_modules` and `.git`; not a config, a build info
 //! or a deployment `*.project.json` beside the tsconfig; `.ts` / `.tsx` only when they are declaration files of a
 //! declaration build): its output. Then the build infos (roblox-ts's and tsc's own) and every Rojo project file.
+//! In a build with project references ([`GraphOutputs`]), no project takes another's output roots, include folder,
+//! build infos or configs for assets, and the keep set holds every Rojo project file of the graph and every runtime
+//! project's include folder.
 //!
 //! The clean, as roblox-ts's: every root is walked without following links; a directory (not a link) is cleaned
 //! and removed once empty; anything else that is not kept (files, and links to files or directories, which are

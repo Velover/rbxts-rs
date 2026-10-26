@@ -77,8 +77,9 @@ Known, accepted differences from stock roblox-ts on TypeScript 5. None changes a
   path, a relative import or a `paths` alias into a sibling package that is also a linked dependency, goes through
   `node_modules` (`include/node_modules/@scope/pkg`). rbxts-rs's symlink map (`util/symlink_cache.rs`) is built from
   the program's resolutions only, as TypeScript 5's cache starts out, so such an import keeps the package's own path
-  (`packages/pkg`). Not modelled: rbxts-rs runs no declaration diagnostics or declaration emit, and reproducing when
-  the emitter asks for a specifier would mean running it for every file. To get the `node_modules` path in both, import
+  (`packages/pkg`). Not modelled: rbxts-rs runs tsrs's declaration diagnostics and emit, but tsrs's specifier
+  lookups do not reach rbxts-rs's symlink map, and reproducing when the emitter asks for a specifier would mean
+  tracking it for every file. To get the `node_modules` path in both, import
   the package by its name. (Probe: a relative import of a sibling `file:` dependency, with a declaration build.)
 - **`rootDirs` without `rootDir`.** With an `outDir` and no `rootDir`, TypeScript 5 lays the output out under the
   common source directory of the inputs. TypeScript 7 refuses that when the common source directory is not the
@@ -95,4 +96,7 @@ Known, accepted differences from stock roblox-ts on TypeScript 5. None changes a
   (`@rbxts/vide`'s `declare global { namespace JSX }`), which the project does not use: its JSX goes through
   `React.JSX`, and no source names the global `JSX`. A project that relies on a global or an augmentation from a
   package it never imports must name the package in `types` (each entry must exist under a type root, as roblox-ts
-  checks; roblox-ts rejects `"*"`).
+  checks; roblox-ts rejects `"*"`). The same holds for each project of a build with project references: a
+  referenced project without `types` sees no type package, so its declarations of Roblox globals fail to check.
+- **Declaration maps.** TypeScript 7 maps some declarations (constructors, a specifier `transformPaths` rewrites)
+  differently from TypeScript 5: `.d.ts.map` files are not byte-equal to stock roblox-ts's. The `.d.ts` files are.

@@ -105,6 +105,37 @@ diagnostics sorted and deduplicated, as roblox-ts does. One deviation: roblox-ts
 file with an error (its diagnostics service is global), so it reports the transform errors of that file only;
 rbxts-rs transforms and reports every file.
 
+**Project references** (`build::references`, `rbxts_project::graph`): a tsconfig with `references` builds as
+roblox-ts master's `ProjectGraph` and `ProjectBuild` do. The graph walks the references in build order (a cycle is
+error 6202), each project inheriting the root's command-line options, validates them (TS6306 `composite`, TS6310
+`noEmit`, Rojo paths for every runtime project, overlapping output roots) and maps each referenced project's root
+dirs to its Rojo output path, so an import across the boundary names the referenced project's output
+(`util/create_import_expression.rs`). Each project is a `BuildSession` of its own (incremental and watch state
+included), built before the projects that reference it; a project whose references failed is blocked (not built,
+nothing written), and the build reports every project's outcome (`CompileReport.projects`). A solution root (no
+files of its own) only copies the runtime include. The root program reads a referenced project's output
+declarations where module resolution names its sources; the incremental closure and the transform order follow that
+redirect, so an edit in a referenced project reaches its importers. `rbxtsc -w` watches every project of the graph
+and ignores every project's output roots. Deviations: `--out-dir` builds the root project only (roblox-ts would point
+every project at the one directory); every project is rebuilt (its closure only) on each watch event.
+
+**Declarations** (`project/emit_declarations.rs`): a `declaration` or `composite` build checks the declaration
+diagnostics with the others and emits the `.d.ts` (and `.d.ts.map`) of every transformed file through tsrs's
+emitter, then applies roblox-ts's `afterDeclarations` transformers (`/// <reference types="types" />` to
+`@rbxts/types`; `transformPaths` with `baseUrl`/`paths`) as text rewrites, moving the map's mappings with them.
+`.d.ts` files under the root dirs are declaration assets, reprinted as `transformDeclarationFile` does. Declarations
+go through the same all-or-nothing commit as the Luau, and stale ones are removed by the `getProjectOutputs` keep set.
+Declaration maps are TypeScript 7's (its mappings differ from TypeScript 5's for some declarations); the declarations
+themselves equal stock's (fixture `declarations`, compared as the whole output tree).
+
+**`--writeTransformedFiles`** (`project/write_transformed_files.rs`): stock roblox-ts writes each source as its
+TypeScript transformers left it, `<outDir>/<path>.transformed`, and writes nothing when the tsconfig has no
+transformer (the clean still removes stale `.transformed` files). rbxts-rs plugins are not TypeScript transformers and
+change no TypeScript: it writes the TypeScript printer's output of the source (stock's text for a no-op transformer)
+when an active plugin was claimed by a tsconfig `plugins` entry, and nothing otherwise, through the same commit
+(stock writes them before the build's errors stop it). Fixtures `write_transformed` (a no-op transformer, compared with
+stock) and `write_transformed_without_transformers`.
+
 ## Plugins (`rbxts_plugin`, `rbxts_transform::plugins`, `rbxts_cli`)
 
 `crates/rbxts_plugin` is the plugin API (DESIGN §11); `rbxts_transform::plugins` is the compiler side: the backends,
