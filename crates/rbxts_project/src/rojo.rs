@@ -211,6 +211,8 @@ struct Builder {
     search_stack: Vec<(PathBuf, Option<PathBuf>)>,
     /// Project files being read (lowercased), to stop at a `$path` cycle (the same overflow in the package).
     config_stack: Vec<String>,
+    /// The same files as written, for error messages.
+    config_paths: Vec<String>,
 }
 
 /// Whether a directory entry is a file or a directory, following links as `fs.statSync(fs.realpathSync(p))` does.
@@ -436,6 +438,7 @@ impl Builder {
             is_game: false,
             search_stack: Vec::new(),
             config_stack: Vec::new(),
+            config_paths: Vec::new(),
         }
     }
 
@@ -467,10 +470,12 @@ impl Builder {
                     return Err(RojoError(format!("$path cycle through \"{rojo_config_file_path}\"")));
                 }
                 self.config_stack.push(key);
+                self.config_paths.push(rojo_config_file_path.to_owned());
                 let name = config["name"].as_str().unwrap_or_default().to_owned();
                 let result =
                     self.parse_tree(nodepath::dirname(rojo_config_file_path), &name, &config["tree"], do_not_push);
                 self.config_stack.pop();
+                self.config_paths.pop();
                 result
             }
             Err(text) => {
@@ -485,25 +490,31 @@ impl Builder {
             self.rbx_path.push(name.to_owned());
         }
         // Children that are not objects only get past the schema under keys its pattern skips ("" and keys with
-        // line breaks); they mount nothing here.
-        if let Value::Object(tree) = tree {
-            if let Some(path) = tree.get("$path") {
-                let path = match path {
-                    Value::String(s) => Some(s.as_str()),
-                    Value::Object(o) => o.get("optional").and_then(Value::as_str),
-                    _ => None,
-                };
-                // `path.resolve(basePath, undefined)` throws in the package.
-                let path = path.ok_or_else(|| RojoError("a $path object has no \"optional\" string".into()))?;
-                self.parse_path(&nodepath::resolve(&[base_path, path]))?;
-            }
-            if tree.get("$className").and_then(Value::as_str) == Some("DataModel") {
-                self.is_game = true;
-            }
-            for child in js_object_keys(tree) {
-                if !child.starts_with('$') {
-                    self.parse_tree(base_path, child, &tree[child.as_str()], false)?;
-                }
+        // line breaks).
+        // rbxts-rs: fixes the package crashing on them (`null`: a TypeError; a non-empty string: endless recursion
+        // through its characters) or reading them oddly (an array's items mount under their indexes; a number, a
+        // boolean or "" mount nothing): every one is an error now, as a tree entry must be an object.
+        let Value::Object(tree) = tree else {
+            let entry = Value::from(self.rbx_path.clone());
+            let file = self.config_paths.last().map(|p| format!(" in \"{p}\"")).unwrap_or_default();
+            return Err(RojoError(format!("the tree entry {entry}{file} is {tree}, not an object")));
+        };
+        if let Some(path) = tree.get("$path") {
+            let path = match path {
+                Value::String(s) => Some(s.as_str()),
+                Value::Object(o) => o.get("optional").and_then(Value::as_str),
+                _ => None,
+            };
+            // `path.resolve(basePath, undefined)` throws in the package.
+            let path = path.ok_or_else(|| RojoError("a $path object has no \"optional\" string".into()))?;
+            self.parse_path(&nodepath::resolve(&[base_path, path]))?;
+        }
+        if tree.get("$className").and_then(Value::as_str) == Some("DataModel") {
+            self.is_game = true;
+        }
+        for child in js_object_keys(tree) {
+            if !child.starts_with('$') {
+                self.parse_tree(base_path, child, &tree[child.as_str()], false)?;
             }
         }
         if !do_not_push {
@@ -730,6 +741,28 @@ mod tests {
             validate_rojo_config(&json!({"name": "x", "servePort": 34872, "tree": {"$path": {"optional": "a"}}}))
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn tree_entries_that_are_not_objects_are_errors() {
+        // the schema skips "" and keys with line breaks, so only those can hold anything else; the package crashes
+        // on `null` and on a non-empty string, mounts an array's items by index, and ignores the rest
+        for (value, text) in [
+            (json!(null), "null"),
+            (json!("abc"), "\"abc\""),
+            (json!([{"$path": "src"}]), "[{\"$path\":\"src\"}]"),
+            (json!(5), "5"),
+            (json!(false), "false"),
+        ] {
+            let config = json!({"name": "x", "tree": {"$className": "DataModel", "A": {"": value.clone()}}});
+            assert!(validate_rojo_config(&config).is_ok());
+            let Err(error) = RojoResolver::from_tree("/p", &config["tree"]) else { panic!("an error") };
+            assert_eq!(error.0, format!("the tree entry [\"A\",\"\"] is {text}, not an object"));
+        }
+        let config = json!({"name": "x", "tree": {"A\nB": 1}});
+        assert!(validate_rojo_config(&config).is_ok());
+        let Err(error) = RojoResolver::from_tree("/p", &config["tree"]) else { panic!("an error") };
+        assert_eq!(error.0, "the tree entry [\"A\\nB\"] is 1, not an object");
     }
 
     #[test]

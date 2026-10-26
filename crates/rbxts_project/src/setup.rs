@@ -763,12 +763,30 @@ pub fn create_node_modules_path_mapping_recorded(
             let json: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
                 .map_err(|e| ProjectError::new(format!("{pkg_json_path}: {e}")))?;
             // both "types" and "typings" are valid; `??` keeps an empty string
-            let types_path = match (json.get("types"), json.get("typings")) {
-                (Some(v), _) if !v.is_null() => v.as_str().unwrap_or("index.d.ts"),
-                (_, Some(v)) if !v.is_null() => v.as_str().unwrap_or("index.d.ts"),
-                _ => "index.d.ts",
+            let types = match (json.get("types"), json.get("typings")) {
+                (Some(v), _) if !v.is_null() => Some(("types", v)),
+                (_, Some(v)) if !v.is_null() => Some(("typings", v)),
+                _ => None,
             };
-            if let Some(main) = json.get("main").and_then(Value::as_str).filter(|m| !m.is_empty()) {
+            // `if (pkgJson.main)`: JavaScript truthiness
+            let main = json.get("main").filter(|main| match main {
+                Value::Null => false,
+                Value::Bool(b) => *b,
+                Value::Number(n) => n.as_f64() != Some(0.0),
+                Value::String(s) => !s.is_empty(),
+                Value::Array(_) | Value::Object(_) => true,
+            });
+            if let Some(main) = main {
+                // rbxts-rs: fixes roblox-ts crashing (`path.resolve` throws a TypeError) on a `main`, or a `types` /
+                // `typings` beside a `main`, that is not a string: a build error naming the field
+                let not_a_string = |field: &str, value: &Value| {
+                    ProjectError::new(format!("{pkg_json_path}: \"{field}\" must be a string, not {value}"))
+                };
+                let main = main.as_str().ok_or_else(|| not_a_string("main", main))?;
+                let types_path = match types {
+                    None => "index.d.ts",
+                    Some((field, value)) => value.as_str().ok_or_else(|| not_a_string(field, value))?,
+                };
                 mapping.insert(
                     tspath::get_canonical_file_name(
                         &nodepath::resolve(&[&pkg_path, types_path]),
@@ -1060,5 +1078,40 @@ mod tests {
         assert_eq!(find_ancestor_dir(&s(&["E:/p/src/", "E:/p/src"])), "E:\\p\\src\\");
         assert_eq!(find_ancestor_dir(&s(&["E:/p/src/", "E:/p/src-extra"])), "E:\\p\\");
         assert_eq!(find_ancestor_dir(&s(&["E:/p/src/a/", "E:/p/src", "E:/p/test"])), "E:\\p\\");
+    }
+
+    /// The package mapping for one package with this package.json: the mapping's single entry (types → main), or the
+    /// error.
+    fn package_mapping(package_json: &str) -> Result<Vec<(String, String)>, String> {
+        let root = std::env::temp_dir().join(format!("rbxts-rs-package-mapping-{}", std::process::id()));
+        let package = root.join("@rbxts").join("pkg");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(package.join("package.json"), package_json).unwrap();
+        let scope = root.join("@rbxts").to_string_lossy().into_owned();
+        let result = create_node_modules_path_mapping(&[scope], false);
+        std::fs::remove_dir_all(&root).unwrap();
+        let strip = |p: &str| p.rsplit(['/', '\\']).next().unwrap().to_owned();
+        result
+            .map(|m| m.iter().map(|(types, main)| (strip(types), strip(main))).collect())
+            .map_err(|e| e.to_string().rsplit_once("package.json: ").unwrap().1.to_owned())
+    }
+
+    #[test]
+    fn package_fields_that_are_not_strings_are_errors() {
+        // roblox-ts crashes (a TypeError from `path.resolve`) on each of these
+        assert_eq!(package_mapping(r#"{"main": 1}"#), Err(r#""main" must be a string, not 1"#.into()));
+        assert_eq!(package_mapping(r#"{"main": "a.lua", "types": {}}"#), Err(r#""types" must be a string, not {}"#.into()));
+        assert_eq!(
+            package_mapping(r#"{"main": "a.lua", "typings": ["x"]}"#),
+            Err(r#""typings" must be a string, not ["x"]"#.into())
+        );
+        // without a truthy `main`, nothing is read (as in roblox-ts)
+        assert_eq!(package_mapping(r#"{"main": 0, "types": 5}"#), Ok(vec![]));
+        assert_eq!(package_mapping(r#"{"main": "", "types": 5}"#), Ok(vec![]));
+        assert_eq!(
+            package_mapping(r#"{"main": "a.lua", "types": null, "typings": "t.d.ts"}"#),
+            Ok(vec![("t.d.ts".into(), "a.lua".into())])
+        );
+        assert_eq!(package_mapping(r#"{"main": "a.lua"}"#), Ok(vec![("index.d.ts".into(), "a.lua".into())]));
     }
 }
