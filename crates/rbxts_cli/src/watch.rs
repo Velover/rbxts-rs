@@ -40,6 +40,11 @@
 //! - **Plugin inputs** ([`inputs`]): the globs plugins recorded (files', `setup`'s, `finish`'s) and what `finish`
 //!   read are watched too; an event only they may care about starts a rebuild when the session finds an answer
 //!   changed.
+//! - **Plugin state files** (the ones the last commit left): an event on one counts only when the file no longer
+//!   holds what the commit left (deleted, edited), so this watcher's own write starts nothing. A build whose commit
+//!   changed what a plugin's `setup` read of its own state file answered (missing before, there now:
+//!   [`BuildSummary::setup_inputs_changed`]) is followed at once by one more build, which runs that setup again; a
+//!   build started that way never starts another.
 //! - **Debounce.** Trailing, 100 ms as roblox-ts: each event restarts the wait, and the paths of one burst become
 //!   one rebuild. A rename is its two paths (the session sees a deletion and an addition).
 //! - **Errors.** A panic in a rebuild is reported and the session starts over with a clean build; the watcher
@@ -1033,7 +1038,13 @@ fn watch(
 
     let mut watched = Watches { good: minimal_set(&session), failed: None };
     status("Starting compilation in watch mode...");
-    let mut stale = rebuild(&mut session, &mut subscriptions, &mut watched, build, cwd, generation, &[], &mut own);
+    let (mut stale, again) =
+        rebuild(&mut session, &mut subscriptions, &mut watched, build, cwd, generation, &[], &mut own);
+    // the last build's commit changed what a plugin's setup read (its own state file created): one more build at
+    // once, which runs that setup again; a build started that way never starts another (no loop, whatever a plugin
+    // writes)
+    let mut follow_up = !again.is_empty();
+    stale.extend(again);
     loop {
         // paths that changed before their directory was watched (already judged) start a rebuild of their own
         let mut paths: Vec<String> = if stale.is_empty() {
@@ -1068,7 +1079,13 @@ fn watch(
         }
         generation += 1;
         status("File change detected. Starting incremental compilation...");
-        stale = rebuild(&mut session, &mut subscriptions, &mut watched, build, cwd, generation, &paths, &mut own);
+        let again;
+        (stale, again) =
+            rebuild(&mut session, &mut subscriptions, &mut watched, build, cwd, generation, &paths, &mut own);
+        follow_up = !follow_up && !again.is_empty();
+        if follow_up {
+            stale.extend(again);
+        }
         if let Some(limit) = memory_limit()
             && std::env::var(CHILD_ENV).is_ok()
             && memory_stats::memory_stats().is_some_and(|m| m.physical_mem > limit)
@@ -1135,7 +1152,9 @@ fn path_text(path: &Path) -> String {
 
 /// One build of the watch loop, with its report and events. A panic is reported, and the session starts over.
 /// After the build, the watched directories are brought up to date before anything is printed, so a change made
-/// as soon as the build is reported finished is seen.
+/// as soon as the build is reported finished is seen. Returns the paths that changed before their directory was
+/// watched, and the state files whose commit changed what a plugin's setup read
+/// ([`BuildSummary::setup_inputs_changed`]).
 #[allow(clippy::too_many_arguments)]
 fn rebuild(
     session: &mut BuildSession<'_>,
@@ -1146,7 +1165,7 @@ fn rebuild(
     generation: u64,
     paths: &[String],
     own: &mut Own,
-) -> Vec<String> {
+) -> (Vec<String>, Vec<String>) {
     if build.events_json {
         println!("{{\"event\":\"build-start\",\"gen\":{generation},\"changes\":{}}}", json_list(paths));
     }
@@ -1221,7 +1240,7 @@ fn rebuild(
                 );
             }
             status("Found 1 error. Watching for file changes.");
-            return stale;
+            return (stale, Vec::new());
         }
     };
     print_report(&report, cwd, build);
@@ -1230,7 +1249,7 @@ fn rebuild(
         print_end(generation, &report, &summary, errors);
     }
     status(&format!("Found {errors} error{}. Watching for file changes.", if errors == 1 { "" } else { "s" }));
-    stale
+    (stale, summary.setup_inputs_changed)
 }
 
 fn print_end(generation: u64, report: &CompileReport, summary: &BuildSummary, errors: usize) {

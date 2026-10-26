@@ -3,6 +3,10 @@
 //! `child` test). The watcher's own write of the state file and the same bytes written again start nothing; the file
 //! deleted, edited or put back to the bytes before the last commit starts a rebuild in which the plugin starts from
 //! a fresh state and every file is transformed.
+//!
+//! With the `scan` test plugin too (`RBXTS_TEST_CHILD_SCAN`), whose `Shared` depends on whether its own state file
+//! exists (as Flamework's candidate scan): the build whose commit creates that file is followed at once by one more,
+//! and nothing after it.
 
 #![cfg(windows)]
 
@@ -17,14 +21,19 @@ use serde_json::Value;
 const DEFAULT_NODE_MODULES: &str = "E:/Projects/TS/Flamework/roblox-ts-test/roblox-ts/tests/node_modules";
 const CHILD_ARGS: &str = "RBXTS_TEST_CHILD_ARGS";
 const STATE: &str = ".stamp-state";
+const SCAN_ENV: &str = "RBXTS_TEST_CHILD_SCAN";
 
-/// The compiler with `stamp`, when this process was started as one (its arguments in `RBXTS_TEST_CHILD_ARGS`, one
-/// per line); otherwise nothing.
+/// The compiler with `stamp` (and `scan` with `RBXTS_TEST_CHILD_SCAN`), when this process was started as one (its
+/// arguments in `RBXTS_TEST_CHILD_ARGS`, one per line); otherwise nothing.
 #[test]
 fn child() {
     let Ok(args) = std::env::var(CHILD_ARGS) else { return };
     let args: Vec<String> = args.lines().map(str::to_owned).collect();
-    let status = rbxts_cli::Cli::new().erased_plugin(rbxts_test_plugins::by_name("stamp").unwrap()).run_with(args);
+    let mut cli = rbxts_cli::Cli::new().erased_plugin(rbxts_test_plugins::by_name("stamp").unwrap());
+    if std::env::var_os(SCAN_ENV).is_some() {
+        cli = cli.erased_plugin(rbxts_test_plugins::by_name("scan").unwrap());
+    }
+    let status = cli.run_with(args);
     std::process::exit(i32::from(status));
 }
 
@@ -105,7 +114,17 @@ impl Drop for Watcher {
 
 impl Watcher {
     fn start(project: &Project) -> Watcher {
-        let mut child = Command::new(std::env::current_exe().unwrap())
+        Watcher::start_with(project, false)
+    }
+
+    fn start_with(project: &Project, scan: bool) -> Watcher {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        if scan {
+            command.env(SCAN_ENV, "1");
+        } else {
+            command.env_remove(SCAN_ENV);
+        }
+        let mut child = command
             .args(["--exact", "child", "--nocapture", "--test-threads=1"])
             .env(CHILD_ARGS, ["-w", "--events", "json"].join("\n"))
             .env_remove("STAMP_PREFIX")
@@ -131,6 +150,13 @@ impl Watcher {
             }
         });
         Watcher { child, events, lines }
+    }
+
+    /// The next `build-start` event within 60 s.
+    fn next_start(&self) -> Value {
+        let event = self.events.recv_timeout(Duration::from_secs(60)).expect("a build-start within 60 s");
+        assert_eq!(event["event"], "build-start", "{event}");
+        event
     }
 
     /// The next `build-end` event within 60 s; it must have succeeded.
@@ -201,6 +227,52 @@ fn a_state_file_deleted_or_edited_while_watching_starts_its_plugin_fresh() {
     let end = watcher.next_end();
     assert_eq!(end["all"], true, "{end}");
     assert_eq!(project.read(STATE).as_deref(), Some("1"));
+    watcher.assert_quiet(quiet);
+    drop(watcher);
+}
+
+/// `scan`: its setup reads its own state file as a build input and makes another `Shared` while it is missing. The
+/// build whose commit creates it is followed at once by one more (named by the file), which runs setup again, so the
+/// output is the one a build with the file there makes; that one starts nothing, nor does an edit. Deleting the file
+/// does the same again.
+#[test]
+fn a_state_file_the_commit_creates_starts_one_more_build_at_once() {
+    let Some(project) = Project::new("scan") else { return };
+    project.write("src/shared/scan.d.ts", "/** @scan */\ndeclare function scanned(): string;\n");
+    project.write("src/shared/scanned.ts", "export const answer = scanned();\n");
+    project.write("scan-ancestor.txt", "first");
+    let scanned = || project.read("out/shared/scanned.luau").unwrap_or_default();
+    let is_state = |change: &Value| change.as_str().is_some_and(|c| c.replace('\\', "/").ends_with("/scan-state.txt"));
+    let watcher = Watcher::start_with(&project, true);
+    let quiet = Duration::from_millis(2000);
+    // the first build reads the ancestor, the one after it the state file the first created
+    let end = watcher.next_end();
+    assert_eq!(end["all"], true, "{end}");
+    let start = watcher.next_start();
+    let changes = start["changes"].as_array().unwrap();
+    assert!(changes.len() == 1 && is_state(&changes[0]), "{start}");
+    let end = watcher.next_end();
+    assert_eq!(end["all"], true, "{end}");
+    assert!(scanned().contains("\"own\""), "{}", scanned());
+    watcher.assert_quiet(quiet);
+
+    // an edit: the closure, then nothing
+    let d = "src/shared/d.ts";
+    let text = project.read(d).unwrap();
+    project.write(d, &format!("{text}\nexport const scan = 1;\n"));
+    let end = watcher.next_end();
+    assert_eq!(end["all"], false, "{end}");
+    watcher.assert_quiet(quiet);
+
+    // deleted: the plugin starts fresh and reads the ancestor; the commit creates the file again: one more build
+    std::fs::remove_file(project.0.join("scan-state.txt")).unwrap();
+    let end = watcher.next_end();
+    assert_eq!(end["all"], true, "{end}");
+    let start = watcher.next_start();
+    assert!(start["changes"].as_array().unwrap().iter().any(is_state), "{start}");
+    let end = watcher.next_end();
+    assert_eq!(end["all"], true, "{end}");
+    assert!(scanned().contains("\"own\""), "{}", scanned());
     watcher.assert_quiet(quiet);
     drop(watcher);
 }

@@ -22,7 +22,8 @@ use rbxts_plugin::{
 };
 use rbxts_project::{ProjectOptionLayer, STACK_SIZE};
 use rbxts_transform::build::parity::{self, ParityOptions, StepResult};
-use rbxts_transform::{BuildSession, CompileOptions, PluginOptions};
+use rbxts_test_plugins::scan;
+use rbxts_transform::{BuildSession, BuildSummary, CompileOptions, PluginOptions};
 
 const DEFAULT_NODE_MODULES: &str = "E:/Projects/TS/Flamework/roblox-ts-test/roblox-ts/tests/node_modules";
 
@@ -446,8 +447,9 @@ const D_TS_BROKEN: &str =
 /// Watch: a state file the last commit left that is deleted, edited or put back to older bytes makes its plugin
 /// start fresh (it reloads what is on disk, as a new process would) and every file be transformed; the plugin's own
 /// write, and the same bytes written again, change nothing. A plugin that reads its own state file as a build input
-/// (Flamework) does not take its own write for a changed input. A failing build writes nothing, and the next one
-/// still finds the file lost.
+/// (Flamework) does not take its own write for a changed input, once its setup has seen the file there: a build whose
+/// commit created it (its setup read it missing) asks for one more build, which runs that setup again, as a watcher
+/// does at once. A failing build writes nothing, and the next one still finds the file lost.
 #[test]
 fn a_lost_state_file_starts_its_plugin_fresh_in_watch() {
     let Some((copy, root)) = keeper_copy("sfile", false) else { return };
@@ -460,6 +462,10 @@ fn a_lost_state_file_starts_its_plugin_fresh_in_watch() {
     let state = || std::fs::read_to_string(&state_path).ok();
     let setups = || counts.setups.load(Ordering::SeqCst);
     let fresh = || counts.fresh_watch_setups.load(Ordering::SeqCst);
+    let created = |summary: &BuildSummary| {
+        assert_eq!(summary.setup_inputs_changed.len(), 1, "{:?}", summary.setup_inputs_changed);
+        assert!(summary.setup_inputs_changed[0].replace('\\', "/").eq_ignore_ascii_case(&key));
+    };
     big_stack(|| {
         let options =
             PluginOptions { plugins: &plugins, ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
@@ -474,32 +480,47 @@ fn a_lost_state_file_starts_its_plugin_fresh_in_watch() {
             "{:?}",
             session.state_files()
         );
+        // setup read it missing, the commit created it: one more build runs setup again (from the memory state)
+        created(&summary);
+        let (report, summary) = session.build(&summary.setup_inputs_changed);
+        assert!(!report.has_errors());
+        assert!(summary.all);
+        assert!(summary.setup_inputs_changed.is_empty(), "its own write again is not a change");
+        assert_eq!((setups(), fresh()), (2, 0));
+        assert_eq!(state().as_deref(), Some("2"));
 
         // the plugin's own write (setup read the file before the commit wrote it): an edit is the closure only
         write("src/shared/d.ts", D_TS);
         let (report, summary) = session.build(&[path("src/shared/d.ts")]);
         assert!(!report.has_errors());
         assert!(!summary.all, "the plugin's own write is not a changed input");
-        assert!(summary.lost_state_files.is_empty());
-        assert_eq!(setups(), 1, "the Shared is kept");
-        assert_eq!(state().as_deref(), Some("2"));
+        assert!(summary.lost_state_files.is_empty() && summary.setup_inputs_changed.is_empty());
+        assert_eq!(setups(), 2, "the Shared is kept");
+        assert_eq!(state().as_deref(), Some("3"));
 
-        // deleted: fresh (nothing to reload), every file
+        // deleted: fresh (nothing to reload), every file; the commit creates it again, so setup runs once more
         std::fs::remove_file(&state_path).unwrap();
         let (report, summary) = session.build(std::slice::from_ref(&key));
         assert!(!report.has_errors());
         assert!(summary.all);
         assert_eq!(summary.lost_state_files.len(), 1);
         assert_eq!(report.files.len(), report.project_files);
-        assert_eq!((setups(), fresh()), (2, 1));
+        assert_eq!((setups(), fresh()), (3, 1));
         assert_eq!(state().as_deref(), Some("1"));
+        created(&summary);
+        let (report, summary) = session.build(&summary.setup_inputs_changed);
+        assert!(!report.has_errors());
+        assert!(summary.all && summary.lost_state_files.is_empty() && summary.setup_inputs_changed.is_empty());
+        assert_eq!((setups(), fresh()), (4, 1));
+        assert_eq!(state().as_deref(), Some("2"));
 
-        // edited: fresh, reloading the edited value
+        // edited: fresh, reloading the edited value (setup read it there: no build more)
         write(KEEPER_STATE, "41");
         let (report, summary) = session.build(std::slice::from_ref(&key));
         assert!(!report.has_errors());
         assert!(summary.all);
-        assert_eq!((setups(), fresh()), (3, 2));
+        assert!(summary.setup_inputs_changed.is_empty());
+        assert_eq!((setups(), fresh()), (5, 2));
         assert_eq!(state().as_deref(), Some("42"));
 
         // the same bytes again: nothing transformed, the Shared kept
@@ -509,7 +530,7 @@ fn a_lost_state_file_starts_its_plugin_fresh_in_watch() {
         assert!(!summary.all);
         assert!(summary.lost_state_files.is_empty());
         assert_eq!(report.files.len(), 0);
-        assert_eq!(setups(), 3);
+        assert_eq!(setups(), 5);
         assert_eq!(state().as_deref(), Some("43"));
 
         // back to the bytes before the last commit
@@ -517,7 +538,8 @@ fn a_lost_state_file_starts_its_plugin_fresh_in_watch() {
         let (report, summary) = session.build(std::slice::from_ref(&key));
         assert!(!report.has_errors());
         assert!(summary.all);
-        assert_eq!((setups(), fresh()), (4, 3));
+        assert!(summary.setup_inputs_changed.is_empty());
+        assert_eq!((setups(), fresh()), (6, 3));
         assert_eq!(state().as_deref(), Some("43"));
 
         // deleted while a build fails: nothing written, and the next build still finds it lost
@@ -526,6 +548,7 @@ fn a_lost_state_file_starts_its_plugin_fresh_in_watch() {
         let (report, summary) = session.build(&[key.clone(), path("src/shared/d.ts")]);
         assert!(report.has_errors());
         assert_eq!(summary.lost_state_files.len(), 1);
+        assert!(summary.setup_inputs_changed.is_empty(), "a failing build commits nothing");
         assert_eq!(state(), None);
         write("src/shared/d.ts", D_TS);
         let (report, summary) = session.build(&[path("src/shared/d.ts")]);
@@ -533,6 +556,7 @@ fn a_lost_state_file_starts_its_plugin_fresh_in_watch() {
         assert!(summary.all);
         assert_eq!(summary.lost_state_files.len(), 1);
         assert_eq!(state().as_deref(), Some("1"));
+        created(&summary);
     });
     drop(copy);
 }
@@ -581,6 +605,177 @@ fn a_lost_state_file_transforms_everything_in_an_incremental_build() {
         assert_eq!((transformed, summary.all), (0, false));
         assert!(summary.lost_state_files.is_empty());
         assert_eq!(state().as_deref(), Some("43"));
+    });
+    drop(copy);
+}
+
+// --- a Shared that depends on whether the plugin's own state file exists (Flamework's candidate scan) ---
+
+const SCAN_DTS: &str = "/** The call becomes the scan plugin's answer. @scan */\ndeclare function scanned(): string;\n";
+const SCANNED_TS: &str = "export const answer = scanned();\n";
+
+/// A copy of the basic fixture with the `scan` plugin's declaration, a file calling it, and its ancestor file.
+fn scan_copy(label: &str, incremental: bool) -> Option<(Copy, PathBuf)> {
+    let (copy, root) = keeper_copy(label, incremental)?;
+    std::fs::write(root.join("src/shared/scan.d.ts"), SCAN_DTS).unwrap();
+    std::fs::write(root.join("src/shared/scanned.ts"), SCANNED_TS).unwrap();
+    std::fs::write(root.join(scan::ANCESTOR_FILE), "first").unwrap();
+    Some((copy, root))
+}
+
+type Tree = std::collections::BTreeMap<String, Vec<u8>>;
+
+/// Every file under `dir`, by relative path.
+fn tree(dir: &Path) -> Tree {
+    fn walk(dir: &Path, base: &Path, out: &mut Tree) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.map(Result::unwrap) {
+            let path = entry.path();
+            if entry.file_type().unwrap().is_dir() {
+                walk(&path, base, out);
+            } else {
+                let relative = path.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
+                out.insert(relative, std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    let mut out = Tree::new();
+    walk(dir, dir, &mut out);
+    out
+}
+
+/// The outputs of a clean build of a copy of `root`'s sources, seeded with its state file and its ancestor file as
+/// they are now: what a new process builds from what the watcher left.
+fn seeded_clean(root: &Path, options: &PluginOptions<'_>) -> Tree {
+    let clean = root.with_file_name(format!("{}-clean", root.file_name().unwrap().to_string_lossy()));
+    parity::remove_tree(&clean);
+    let copy = Copy(clean.clone());
+    let names = ["src", "tsconfig.json", "default.project.json", "package.json", scan::STATE_FILE, scan::ANCESTOR_FILE];
+    for name in names {
+        let from = root.join(name);
+        if from.is_dir() {
+            parity::copy_tree(&from, &clean.join(name)).unwrap();
+        } else if from.exists() {
+            std::fs::copy(&from, clean.join(name)).unwrap();
+        }
+    }
+    parity::junction(&clean.join("node_modules"), &node_modules().unwrap()).unwrap();
+    let tsconfig = std::fs::read_to_string(clean.join("tsconfig.json")).unwrap();
+    std::fs::write(clean.join("tsconfig.json"), tsconfig.replace("\"incremental\": true,", "")).unwrap();
+    let mut session = keeper_session(&clean, options, false);
+    let (report, summary) = session.build(&[]);
+    assert!(!report.has_errors(), "{:?}", report.fatal);
+    assert_eq!(summary.kind, Some(BuildKind::Clean));
+    let out = tree(&clean.join("out"));
+    drop(copy);
+    out
+}
+
+/// What the scanned file compiled to.
+fn scanned_output(root: &Path) -> String {
+    std::fs::read_to_string(root.join("out/shared/scanned.luau")).unwrap()
+}
+
+/// Watch, with a plugin whose `Shared` depends on whether its own state file exists (`scan`, as Flamework's candidate
+/// scan loads an ancestor `flamework.build` while its own is missing): a build whose commit creates the file its
+/// setup read as missing asks for one more build (`setup_inputs_changed`), and that one runs setup again, so the
+/// outputs equal a clean build seeded with the state file from then on; that build asks for no other (its new bytes
+/// are not a change), nor does an edit. Deleting the file does the same once more; the ancestor changing while the
+/// file is there changes nothing, as in a clean build.
+#[test]
+fn a_state_file_the_commit_creates_runs_setup_again_at_once() {
+    let Some((copy, root)) = scan_copy("scan", false) else { return };
+    let plugins = vec![erase(scan::Scan)];
+    let state_path = root.join(scan::STATE_FILE);
+    let key = state_path.to_string_lossy().replace('\\', "/");
+    let path = |p: &str| root.join(p).to_string_lossy().replace('\\', "/");
+    big_stack(|| {
+        let options =
+            PluginOptions { plugins: &plugins, ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
+        let mut session = keeper_session(&root, &options, true);
+        // as a watcher: a build, then one more at once when it asks
+        let mut build = |touched: &[String]| {
+            let (report, summary) = session.build(touched);
+            assert!(!report.has_errors(), "{:?}", report.fatal);
+            if summary.setup_inputs_changed.is_empty() {
+                return (summary, None);
+            }
+            assert_eq!(summary.setup_inputs_changed.len(), 1, "{:?}", summary.setup_inputs_changed);
+            assert!(summary.setup_inputs_changed[0].replace('\\', "/").eq_ignore_ascii_case(&key));
+            let (report, again) = session.build(&summary.setup_inputs_changed);
+            assert!(!report.has_errors(), "{:?}", report.fatal);
+            assert!(again.all, "setup ran again: every file");
+            assert!(again.setup_inputs_changed.is_empty(), "a build started that way asks for no other");
+            (summary, Some(again))
+        };
+
+        // the first build reads the ancestor; the one after it, the state file the first created
+        let (summary, again) = build(&[]);
+        assert!(summary.all && again.is_some());
+        assert!(scanned_output(&root).contains("\"own\""), "{}", scanned_output(&root));
+        assert_eq!(tree(&root.join("out")), seeded_clean(&root, &options));
+
+        // an edit: the closure, no build more
+        std::fs::write(root.join("src/shared/d.ts"), D_TS).unwrap();
+        let (summary, again) = build(&[path("src/shared/d.ts")]);
+        assert!(!summary.all && again.is_none());
+        assert_eq!(tree(&root.join("out")), seeded_clean(&root, &options));
+
+        // the ancestor changes while the state file is there: setup did not read it
+        std::fs::write(root.join(scan::ANCESTOR_FILE), "second").unwrap();
+        let (summary, again) = build(&[path(scan::ANCESTOR_FILE)]);
+        assert!(!summary.all && again.is_none());
+        assert_eq!(tree(&root.join("out")), seeded_clean(&root, &options));
+
+        // deleted: the plugin starts fresh, reads the ancestor, and the commit creates the file again
+        std::fs::remove_file(&state_path).unwrap();
+        let (summary, again) = build(std::slice::from_ref(&key));
+        assert_eq!(summary.lost_state_files.len(), 1);
+        assert!(again.is_some());
+        assert!(scanned_output(&root).contains("\"own\""));
+        assert_eq!(tree(&root.join("out")), seeded_clean(&root, &options));
+
+        // edited by hand: fresh, but setup reads it there: no build more
+        std::fs::write(&state_path, "41\n").unwrap();
+        let (summary, again) = build(std::slice::from_ref(&key));
+        assert!(summary.all && again.is_none());
+        assert_eq!(tree(&root.join("out")), seeded_clean(&root, &options));
+    });
+    drop(copy);
+}
+
+/// The same in incremental builds (a new session per build): the incremental state keeps what setup read, so the
+/// build after the one that created the state file finds that read changed and transforms everything with a new
+/// setup; the outputs equal a clean build seeded with the state file from then on.
+#[test]
+fn a_state_file_the_commit_creates_reruns_setup_in_the_next_incremental_build() {
+    let Some((copy, root)) = scan_copy("scan-inc", true) else { return };
+    let plugins = vec![erase(scan::Scan)];
+    big_stack(|| {
+        let options =
+            PluginOptions { plugins: &plugins, ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
+        let build = || {
+            let mut session = keeper_session(&root, &options, false);
+            let (report, summary) = session.build(&[]);
+            assert!(!report.has_errors(), "{:?}", report.fatal);
+            summary
+        };
+        let summary = build();
+        assert_eq!(summary.kind, Some(BuildKind::Clean));
+        assert_eq!(summary.setup_inputs_changed.len(), 1);
+        assert!(scanned_output(&root).contains("\"ancestor first\""), "{}", scanned_output(&root));
+
+        let summary = build();
+        assert_eq!(summary.kind, Some(BuildKind::Incremental));
+        assert!(summary.all, "what setup read changed");
+        assert!(summary.setup_inputs_changed.is_empty());
+        assert!(scanned_output(&root).contains("\"own\""));
+        assert_eq!(tree(&root.join("out")), seeded_clean(&root, &options));
+
+        // a new process starts the count over, so it wrote the same bytes: nothing changed, nothing transformed
+        let summary = build();
+        assert!(!summary.all && summary.setup_inputs_changed.is_empty());
+        assert_eq!(tree(&root.join("out")), seeded_clean(&root, &options));
     });
     drop(copy);
 }

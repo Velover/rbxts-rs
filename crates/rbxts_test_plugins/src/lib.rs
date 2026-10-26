@@ -13,6 +13,7 @@
 //!   equal a build without plugins.
 //! - [`inputs`]: `probe-inputs`, every build input and persistence method of DESIGN §14 (environment, globs,
 //!   recorded finish reads, `remove_empty_dir`, encoded file parts, a diagnostic source).
+//! - [`scan`]: a `Shared` that depends on whether the plugin's own state file exists, as Flamework's candidate scan's.
 
 #[path = "../../rbxts_plugin/tests/support/stamp.rs"]
 pub mod stamp;
@@ -20,6 +21,7 @@ pub mod stamp;
 pub mod identity;
 pub mod inputs;
 pub mod probe;
+pub mod scan;
 
 use rbxts_plugin::erased::{DynPlugin, erase};
 
@@ -46,6 +48,7 @@ pub const NAMES: &[&str] = &[
     "identity-assign",
     "identity-fallback",
     "probe-inputs",
+    "scan",
 ];
 
 /// A test plugin by name (`rbxts-bench build --plugin <name>`).
@@ -73,6 +76,7 @@ pub fn by_name(name: &str) -> Option<Box<dyn DynPlugin>> {
         "identity-assign" => erase(identity::Identity(identity::IdentityMode::Assign)),
         "identity-fallback" => erase(identity::Identity(identity::IdentityMode::Fallback)),
         "probe-inputs" => erase(inputs::InputsProbe),
+        "scan" => erase(scan::Scan),
         _ => return None,
     })
 }

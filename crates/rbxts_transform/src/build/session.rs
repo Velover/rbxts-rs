@@ -25,7 +25,10 @@
 //!    not written by this one, removals, the directories those stale artifacts emptied, `remove_empty_dir`s),
 //!    plugin state files, then the incremental state (with each file's encoded parts and the state files' versions);
 //!    9. the working states and `Shared`s become the committed ones, with every file's facts, parts, late values and
-//!    recorded inputs, and the versions of the state files the commit left.
+//!    recorded inputs, and the versions of the state files the commit left. A state file setup read as a build
+//!    input is recorded with the committed bytes, unless the commit changed whether it reads as text (it was
+//!    missing): then the read stays, the next build runs that setup again, and
+//!    [`BuildSummary::setup_inputs_changed`] tells a watcher to start that build at once.
 //!
 //! A cached file whose late strings change value is rendered again from its kept Luau; one with no Luau kept (its
 //! parts came from the incremental state) makes the build start over once, transforming it.
@@ -220,6 +223,12 @@ pub struct BuildSummary {
     /// State files the last committed build left that were missing or changed before this one: their plugins
     /// started from a fresh state (no kept `Shared`), and every file was transformed.
     pub lost_state_files: Vec<String>,
+    /// Plugin state files whose commit changed what a plugin's `setup` read as a build input: setup read one as
+    /// missing (or not as text) and this build left text in it, or the other way round. The plugin's `Shared` may
+    /// depend on that (Flamework's candidate scan loads an ancestor `flamework.build` while its own is missing), so
+    /// the read is kept as it was and the next build runs that setup again; a watcher starts that build at once.
+    /// New bytes alone are not one: a `Shared` never depends on its own state file's bytes (`Plugin::Shared`).
+    pub setup_inputs_changed: Vec<String>,
 }
 
 impl<'p> BuildSession<'p> {
@@ -1465,10 +1474,16 @@ impl<'p> BuildSession<'p> {
             };
             new_files.insert(key, entry);
         }
-        // a state file setup read as a build input (Flamework's candidate scan reads its own `flamework.build`) is
-        // recorded with what this commit left in it, so the next watch rebuild does not take the plugin's own write
-        // for a changed input; a change by anyone else is a lost state file (above). The incremental state keeps
-        // what setup read: a new process runs setup anyway, and Flamework relies on the change there (its salt)
+        // a state file setup read as a build input (Flamework's candidate scan reads its own `flamework.build`):
+        // - read as text and left as text by this commit: recorded with what the commit left, so the next watch
+        //   rebuild does not take the plugin's own write for a changed input (a `Shared` never depends on its own
+        //   state file's bytes, the `Plugin::Shared` contract); a change by anyone else is a lost state file (above);
+        // - read as missing (or not as text) and left as text, or the other way round: the read is kept as it was,
+        //   so the next build runs that plugin's setup again, as its `Shared` may depend on it (Flamework's scan
+        //   loads an ancestor `flamework.build` while its own is missing), and the summary says so, for a watcher
+        //   to start that build at once.
+        // The incremental state keeps what setup read: a new process runs setup anyway, and Flamework relies on the
+        // change there (its salt)
         let committed_texts: FxHashMap<String, Option<Version>> = queue
             .state_files
             .iter()
@@ -1477,12 +1492,22 @@ impl<'p> BuildSession<'p> {
         let plugins = match run_parts {
             Some((names, shared, states, mut inputs)) => {
                 if !self.options.no_write {
-                    for input in inputs.iter_mut().flatten() {
+                    let named = names.iter().zip(&mut inputs);
+                    for (name, input) in named.flat_map(|(name, inputs)| inputs.iter_mut().map(move |i| (name, i))) {
                         if let BuildInput::File { path, exists, version, .. } = input
                             && let Some(text) = committed_texts.get(&path_key_of(services, path))
                         {
-                            *exists = text.is_some();
-                            *version = *text;
+                            if *exists == text.is_some() {
+                                *version = *text;
+                            } else if !summary.setup_inputs_changed.contains(path) {
+                                report.plugin_messages.push(format!(
+                                    "{name}: its setup read its state file {path} {}, and this build left {}: its \
+                                     setup runs again at the next build",
+                                    if *exists { "as text" } else { "as missing" },
+                                    if *exists { "bytes that are not text" } else { "it as text" },
+                                ));
+                                summary.setup_inputs_changed.push(path.clone());
+                            }
                         }
                     }
                 }
