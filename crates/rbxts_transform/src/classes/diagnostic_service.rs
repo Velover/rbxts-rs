@@ -59,10 +59,19 @@ pub enum OnceCache {
     MultipleDefinitions,
 }
 
-/// rbxts-rs: the key of a once-per-compilation diagnostic, the same on every checker. A binder symbol is shared by
-/// the checkers, so it is its own key. A symbol a checker made (merged or instantiated: `Transient`) is a different
-/// object on each checker, so it is keyed by its first declaration and its name; one without declarations has no
-/// identity across checkers and is reported once per file.
+/// rbxts-rs: the key of a once-per-compilation diagnostic, the same on every checker and whatever each checker
+/// checked before. A symbol with declarations is keyed by its first declaration and its name, whether it is the
+/// binder's symbol or one a checker made (merged or instantiated: `Transient`, a different object on each checker).
+/// The two must share a key: `instantiateSymbol` answers a property of an instantiation (`Holder<string>.value`) with
+/// the declared symbol when that property's type is already resolved and has no type variables, else with a new
+/// transient one, so which of the two a checker gives depends on what it resolved before. A symbol without
+/// declarations has no identity across checkers: a binder one is its own key, a transient one is reported once per
+/// file.
+///
+/// Against stock roblox-ts (one checker, keyed by symbol object): the same, except that two distinct symbols with
+/// one first declaration and name report once here, where stock may report each. That needs a property whose type
+/// does depend on the instantiation (`value: T` with `T = any` in two instantiations), or a mapped type's property
+/// next to its source property; and stock's own answer there depends on its checker's history too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ReportOnce {
     cache: OnceCache,
@@ -79,10 +88,10 @@ enum OnceKey {
 impl ReportOnce {
     /// The key of `symbol` in `cache`, reported in `file`.
     pub fn new(cache: OnceCache, symbol: P<Symbol>, file: P<SourceFile>) -> ReportOnce {
-        let key = if !symbol.flags().intersects(SymbolFlags::Transient) {
-            OnceKey::Symbol(symbol)
-        } else if let Some(&declaration) = symbol.declarations().first() {
+        let key = if let Some(&declaration) = symbol.declarations().first() {
             OnceKey::Declared(declaration, symbol.name())
+        } else if !symbol.flags().intersects(SymbolFlags::Transient) {
+            OnceKey::Symbol(symbol)
         } else {
             OnceKey::InFile(symbol, file)
         };

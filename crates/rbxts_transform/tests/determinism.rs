@@ -176,12 +176,16 @@ fn differences(
 }
 
 /// A project whose diagnostics roblox-ts reports once per compilation (`addDiagnosticWithCache`): an `any` export
-/// used in five modules, and an enum and a namespace merged in one file (roblox-ts requires `moduleDetection: force`,
-/// so merged declarations never span files). Its configs are `exprs`'s.
+/// used in five modules; an `any` member of a generic interface read through two instantiations from two files in
+/// another folder (the validator's case: whether a checker answers with the declared symbol or an instantiated
+/// one depends on what it checked before); and an enum and a namespace merged in one file (roblox-ts requires
+/// `moduleDetection: force`, so merged declarations never span files). Its configs are `exprs`'s.
 fn once_fixture(configs: &Path) -> PathBuf {
     let root = std::env::temp_dir().join(format!("rbxts-rs-determinism-once-src-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(root.join("src/shared")).unwrap();
+    for dir in ["src/shared/x", "src/shared/y"] {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+    }
     for name in ["tsconfig.json", "default.project.json", "package.json"] {
         std::fs::copy(configs.join(name), root.join(name)).unwrap();
     }
@@ -190,6 +194,16 @@ fn once_fixture(configs: &Path) -> PathBuf {
     for name in ["b", "c", "d", "e", "f"] {
         write(&format!("{name}.ts"), "import { value } from \"./a\";\nexport const x = value.x;\n");
     }
+    write(
+        "x/p.ts",
+        "export interface Holder<T> {\n\tvalue: any;\n\tt: T;\n}\nexport declare const hs: Holder<string>;\n\
+         export declare const hn: Holder<number>;\nexport function early<T>(h: Holder<T>) {\n\treturn h.value;\n}\n",
+    );
+    write(
+        "y/q.ts",
+        "import { hn, hs } from \"../x/p\";\nexport const one = hs.value.x;\nexport const two = hn.value.x;\n",
+    );
+    write("y/r.ts", "import { hs } from \"../x/p\";\nexport const three = hs.value.x;\n");
     write(
         "g.ts",
         "export enum Merged {\n\tA = 1,\n}\nexport enum Merged {\n\tB = 2,\n}\n\
@@ -230,7 +244,7 @@ fn outputs_and_diagnostics_do_not_depend_on_the_checkers() {
         if label == "once" {
             // a failing build: nothing written, each once-per-compilation diagnostic reported once
             let count = |text: &str| reference.1.iter().filter(|l| l.contains(text)).count();
-            assert_eq!(count("type `any` is not supported"), 1, "{:?}", reference.1);
+            assert_eq!(count("type `any` is not supported"), 2, "{:?}", reference.1);
             assert_eq!(count("Enum merging is not supported"), 1, "{:?}", reference.1);
             assert_eq!(count("Namespace merging is not supported"), 1, "{:?}", reference.1);
             assert!(!reference.0.keys().any(|p| p.ends_with(".luau")), "{:?}", reference.0.keys());
