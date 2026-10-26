@@ -77,6 +77,14 @@ Known, accepted differences from stock roblox-ts on TypeScript 5. None changes a
   (`packages/pkg`). Not modelled: rbxts-rs runs no declaration diagnostics or declaration emit, and reproducing when
   the emitter asks for a specifier would mean running it for every file. To get the `node_modules` path in both, import
   the package by its name. (Probe: a relative import of a sibling `file:` dependency, with a declaration build.)
+- **`rootDirs` without `rootDir`.** With an `outDir` and no `rootDir`, TypeScript 5 lays the output out under the
+  common source directory of the inputs. TypeScript 7 refuses that when the common source directory is not the
+  tsconfig's own directory: `error TS5011: The common source directory of 'tsconfig.json' is './src'. The 'rootDir'
+  setting must be explicitly set to this or another path to adjust your output's file layout.` A tsconfig that sets
+  `rootDirs` (for example `["src/a", "src/b"]`) but not `rootDir` meets it whenever its files share a folder below the
+  tsconfig: stock roblox-ts builds it (`out/a/…`, `out/b/…`), rbxts-rs stops at TS5011. The fix is to set `rootDir`
+  as well, to that common source directory (`"rootDir": "src"`), which gives the same output in both. rbxts-rs does
+  not emulate TypeScript 5's rule: the check is tsrs's option validation.
 - **Automatic type directives.** Without `types` in the tsconfig, TypeScript 5 includes every package of the type
   roots in the program; TypeScript 7 (tsrs `get_automatic_type_directive_names`) includes none (only `"types": ["*"]`
   lists the type roots), so a package nothing imports or references is not loaded. On the real project TypeScript 5
