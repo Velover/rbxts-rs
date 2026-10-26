@@ -36,7 +36,11 @@ pub fn transform_order(program: &Program) -> Vec<P<SourceFile>> {
     let files = program.source_files();
     let cwd = program.get_current_directory();
     let case_sensitive = program.use_case_sensitive_file_names();
-    let key = |name: &str| tspath::to_path(name, cwd, case_sensitive).to_string();
+    // a referenced project's source resolves to the declaration the program holds for it
+    let redirects = !program.get_resolved_project_references().is_empty();
+    let key = |name: &str| {
+        tspath::to_path(&super::graph::program_file_of(program, redirects, name), cwd, case_sensitive).to_string()
+    };
     let index: FxHashMap<String, usize> = files.iter().enumerate().map(|(i, f)| (f.path().to_string(), i)).collect();
     let resolved_modules = program.get_resolved_modules();
     let type_references = program.get_resolved_type_reference_directives();

@@ -104,6 +104,19 @@ fn affects_global_scope(file: P<SourceFile>) -> bool {
     file.statements().nodes().iter().any(|&stmt| !tsrs_ast::is_module_with_string_literal_name(stmt))
 }
 
+/// The program file a module resolution names: for a source of a referenced project (TypeScript project references),
+/// the declaration it emits, which the program holds in its place (TypeScript's output redirect), else the resolved
+/// file itself. `redirects`: the program has project references (else nothing is looked up).
+pub(crate) fn program_file_of<'a>(program: &Program, redirects: bool, resolved: &'a str) -> std::borrow::Cow<'a, str> {
+    if redirects {
+        let redirect = program.get_parse_file_redirect(resolved);
+        if !redirect.is_empty() {
+            return std::borrow::Cow::Owned(redirect);
+        }
+    }
+    std::borrow::Cow::Borrowed(resolved)
+}
+
 /// A path as a key of the facts map: the program's canonical `Path` spelling.
 pub fn path_key(program: &Program, file_name: &str) -> String {
     tspath::to_path(file_name, program.get_current_directory(), program.use_case_sensitive_file_names()).to_string()
@@ -119,7 +132,8 @@ pub fn program_facts(
     let type_references = program.get_resolved_type_reference_directives();
     let case_sensitive = program.use_case_sensitive_file_names();
     let cwd = program.get_current_directory();
-    let key = |name: &str| tspath::to_path(name, cwd, case_sensitive).to_string();
+    let redirects = !program.get_resolved_project_references().is_empty();
+    let key = |name: &str| tspath::to_path(&program_file_of(program, redirects, name), cwd, case_sensitive).to_string();
     let mut facts = Vec::with_capacity(program.source_files().len());
     for &file in program.source_files() {
         let version = *versions.entry(file).or_insert_with(|| Version::of(file.text()));
