@@ -63,7 +63,8 @@ change.
 
 `crates/rbxts_transform` is roblox-ts master's `src/TSTransformer` ported module by module (DESIGN §9b), with the
 build pipeline (`compile_project`: load → setup → check → transform → render → write changed outputs). A build with
-errors reports every file and writes nothing unless asked to (`--write-partial`).
+errors reports what roblox-ts reports (up to the first error, see **The first error** below) and writes nothing,
+unless asked to (`--write-partial`: every transformed file's diagnostics, uncut, and the files without errors written).
 
 ```sh
 cd <project>
@@ -109,9 +110,16 @@ program file followed by the files that import it, depth first; `build::transfor
 once-per-compilation diagnostics (reported at the first file in that order), and the file parts plugins' `finish`
 gets (`FileIndex`), so TS5 Flamework's id allocation and `flamework.build` table order are reproduced. Watch and
 incremental builds use the clean build's order too, where roblox-ts follows its changed files. `rbxtsc` prints the
-diagnostics sorted and deduplicated, as roblox-ts does. One deviation: roblox-ts stops transforming at the first
-file with an error (its diagnostics service is global), so it reports the transform errors of that file only;
-rbxts-rs transforms and reports every file.
+diagnostics sorted and deduplicated, as roblox-ts does.
+
+**The first error** (`compile::first_error_cut`). As roblox-ts's `compileFiles`: when a plugin reports an error (its
+own, or an internal error of its misuse of the seam), only the plugins' diagnostics are reported, as stock runs its
+TypeScript transformers before checking anything; otherwise each file is checked and, while no error has been
+reported, transformed in transform order, so the transform diagnostics of the files after the first with an error
+are not reported (their plugins' diagnostics are). Watch and incremental rebuilds cut the cached lists of the files
+they do not transform again the same way. One deviation: when the check fails, rbxts-rs transforms only the files
+before the first failing one, so plugins see only those files, where stock's transformers see every file (a plugin
+error in a later file is not reported; stock would report it alone).
 
 **Project references** (`build::references`, `rbxts_project::graph`): a tsconfig with `references` builds as
 roblox-ts master's `ProjectGraph` and `ProjectBuild` do. The graph walks the references in build order (a cycle is
