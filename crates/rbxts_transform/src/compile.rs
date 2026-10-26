@@ -71,10 +71,13 @@ pub fn default_checkers() -> usize {
     env_checkers().ok().flatten().unwrap_or(DEFAULT_CHECKERS)
 }
 
-/// `RBXTS_CHECKERS`: `Ok(None)` when unset, `Ok(Some(n))` for a whole number from 1 to [`MAX_CHECKERS`], else the
+/// `RBXTS_CHECKERS`: `Ok(None)` when unset or empty (blanks only), `Ok(Some(n))` for a whole number from 1 to [`MAX_CHECKERS`], else the
 /// warning to give (the build then uses [`DEFAULT_CHECKERS`]).
 pub fn env_checkers() -> Result<Option<usize>, String> {
     let Ok(value) = std::env::var("RBXTS_CHECKERS") else { return Ok(None) };
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
     match value.trim().parse::<usize>() {
         Ok(n) if (1..=MAX_CHECKERS).contains(&n) => Ok(Some(n)),
         _ => Err(format!(
@@ -98,7 +101,8 @@ impl CompileOptions {
         self.checkers.map_or_else(default_checkers, |n| n.clamp(1, MAX_CHECKERS))
     }
 
-    /// The warning about an invalid `RBXTS_CHECKERS` this build would ignore, if any.
+    /// The warning about an invalid `RBXTS_CHECKERS` this build would ignore, if any. A `BuildSession`
+    /// gives it with its first build only.
     pub fn checkers_warning(&self) -> Option<String> {
         if self.checkers.is_some() { None } else { env_checkers().err() }
     }

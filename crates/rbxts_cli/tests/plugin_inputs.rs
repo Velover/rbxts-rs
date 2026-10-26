@@ -177,7 +177,12 @@ impl Drop for Watcher {
 
 impl Watcher {
     fn start(project: &Project) -> Watcher {
+        Watcher::start_with(project, &[])
+    }
+
+    fn start_with(project: &Project, env: &[(&str, &str)]) -> Watcher {
         let mut child = compiler(&project.0, &["-w", "--events", "json"])
+            .envs(env.iter().copied())
             .env("RBXTS_WATCH_MEMORY_LIMIT_MB", "0")
             .env("RBXTS_WATCH_CHILD", "1")
             .stdin(Stdio::piped())
@@ -391,4 +396,26 @@ fn a_failed_input_watch_and_builds_failing_before_finish_start_no_rebuild_loop()
     watcher.settle();
     watcher.assert_quiet(quiet);
     drop(watcher);
+}
+
+/// An invalid `RBXTS_CHECKERS` is warned about once per watch session, not at every rebuild; an empty one counts as
+/// unset (no warning).
+#[test]
+fn the_checkers_warning_is_given_once_per_watch_session() {
+    let Some(project) = Project::new("checkers", false) else { return };
+    let watcher = Watcher::start_with(&project, &[("RBXTS_CHECKERS", "many")]);
+    watcher.next_end();
+    watcher.settle();
+    let good = project.read("src/shared/d.ts");
+    project.write("src/shared/d.ts", &format!("{good}\n// again\n"));
+    watcher.next_end();
+    watcher.settle();
+    let warnings: Vec<String> = watcher.lines.try_iter().filter(|l| l.contains("RBXTS_CHECKERS=")).collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    drop(watcher);
+
+    let (output, _) = build(&project, &[("RBXTS_CHECKERS", "")]);
+    assert!(!output.contains("RBXTS_CHECKERS"), "{output}");
+    let (output, _) = build(&project, &[("RBXTS_CHECKERS", " ")]);
+    assert!(!output.contains("RBXTS_CHECKERS"), "{output}");
 }

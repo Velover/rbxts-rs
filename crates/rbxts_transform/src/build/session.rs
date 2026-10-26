@@ -203,6 +203,8 @@ pub struct BuildSession<'p> {
     finish_ran: bool,
     /// Cached files to transform in the build's second run (late strings changed value, no Luau kept).
     retransform: FxHashSet<String>,
+    /// The invalid `RBXTS_CHECKERS` warning was given: a session gives it once, not on every watch rebuild.
+    checkers_warned: bool,
 }
 
 /// What one build decided, for reports and events.
@@ -249,6 +251,7 @@ impl<'p> BuildSession<'p> {
             finish_reads: Vec::new(),
             finish_ran: false,
             retransform: FxHashSet::default(),
+            checkers_warned: false,
         }
     }
 
@@ -601,7 +604,11 @@ impl<'p> BuildSession<'p> {
         let services = &loaded.services;
         report.program_files = project.program.source_files().len();
         report.warnings = services.warnings.clone();
-        report.warnings.extend(self.options.checkers_warning());
+        if !self.checkers_warned {
+            let warning = self.options.checkers_warning();
+            self.checkers_warned = warning.is_some();
+            report.warnings.extend(warning);
+        }
         for d in &loaded.setup_diagnostics {
             let category =
                 if d.severity == rbxts_project::Severity::Error { Category::Error } else { Category::Warning };
