@@ -10,7 +10,8 @@
 //!   artifacts and state files; the incremental state is left out, as it names absolute paths), and the clean build
 //!   must succeed too.
 //! - **A step that fails:** the watcher's tree must be unchanged (nothing written), and its error diagnostics must
-//!   equal the clean build's.
+//!   equal the clean build's. With project references, per project: one that built has the clean build's outputs,
+//!   one that failed or was blocked wrote nothing.
 //!
 //! Scripts are JSON: `{"prepare": [action, …], "steps": [{"name": …, "do": [action, …], "expect": "ok" | "error"}]}`,
 //! where `prepare` edits the watched copy before the initial build. Actions: `{"write":
@@ -345,7 +346,9 @@ pub fn error_texts(report: &CompileReport, root: &Path) -> Vec<String> {
 /// Runs the script; the results of the initial build (step 0) and of every step.
 ///
 /// The clean build of a step runs in a copy of `work/` (`clean-<n>/`) when plugins are registered, since their
-/// artifacts and state files live in the project; without plugins it runs in `work/` itself with its outDir moved
+/// artifacts and state files live in the project, and for a project with project references, whose referenced
+/// projects build into their own folders (the copied entries are the sources: list a referenced project's sources
+/// and tsconfig, not the project folder with its outputs); without either it runs in `work/` itself with its outDir moved
 /// to `clean-<n>/out` (no copy, and packages resolve the same), and the two output trees are compared.
 pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResult>, String> {
     remove_tree(&options.scratch);
@@ -359,6 +362,10 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
             if source.is_dir() {
                 copy_tree(&source, &to.join(name)).map_err(|e| format!("copying {}: {e}", source.display()))?;
             } else if source.is_file() {
+                // an entry may be a nested path (`projects/lib/tsconfig.json`)
+                if let Some(parent) = to.join(name).parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
                 std::fs::copy(&source, to.join(name)).map_err(|e| format!("copying {}: {e}", source.display()))?;
             }
         }
@@ -395,7 +402,9 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
         no_write: false,
         checkers: options.checkers,
     };
-    let in_copy = !options.plugins.is_empty();
+    // with project references too: the clean build must build the referenced projects, whose outputs are compared
+    let in_copy =
+        !options.plugins.is_empty() || rbxts_project::graph::has_references(&work.join(&options.tsconfig).to_string_lossy());
     let mut session = BuildSession::new(compile_options(&work, None), &plugin_options, !options.incremental);
     let mut results = Vec::new();
     let all_steps: Vec<Step> =
@@ -481,6 +490,46 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
                 result.problems.push(format!("the clean build failed: {:?}", error_texts(&clean_report, &clean_root)));
             }
             result.problems.extend(tree_diff(&watch_tree(), &clean_tree));
+        } else if !report.projects.is_empty() {
+            // project references: a project that built has the clean build's outputs, one that failed or was blocked
+            // wrote nothing, as did everything outside the projects' output roots
+            let after = outputs_of(snapshot(&work));
+            let prefix = |root: &str| -> String {
+                let relative = Path::new(root).strip_prefix(&work).map(|p| p.to_string_lossy().replace('\\', "/"));
+                format!("{}/", relative.unwrap_or_default())
+            };
+            let under = |tree: &BTreeMap<String, Vec<u8>>, roots: &[String]| -> BTreeMap<String, Vec<u8>> {
+                tree.iter().filter(|(p, _)| roots.iter().any(|r| p.starts_with(r))).map(|(p, b)| (p.clone(), b.clone())).collect()
+            };
+            let mut all_roots = Vec::new();
+            for project in &report.projects {
+                let roots: Vec<String> = project.output_roots.iter().map(|r| prefix(r)).collect();
+                all_roots.extend(roots.iter().cloned());
+                if project.ok {
+                    result.problems.extend(
+                        tree_diff(&under(&after, &roots), &under(&clean_tree, &roots))
+                            .into_iter()
+                            .map(|p| format!("{}, which built: {p}", project.tsconfig)),
+                    );
+                } else {
+                    result.problems.extend(
+                        tree_diff(&under(&after, &roots), &under(&before, &roots))
+                            .into_iter()
+                            .map(|p| format!("{}, which failed, wrote: {p}", project.tsconfig)),
+                    );
+                }
+            }
+            let outside = |tree: &BTreeMap<String, Vec<u8>>| -> BTreeMap<String, Vec<u8>> {
+                tree.iter().filter(|(p, _)| !all_roots.iter().any(|r| p.starts_with(r))).map(|(p, b)| (p.clone(), b.clone())).collect()
+            };
+            result
+                .problems
+                .extend(tree_diff(&outside(&after), &outside(&before)).into_iter().map(|p| format!("a failing build wrote: {p}")));
+            let watch_errors = error_texts(&report, &work);
+            let clean_errors = error_texts(&clean_report, &clean_root);
+            if watch_errors != clean_errors {
+                result.problems.push(format!("diagnostics differ: watch {watch_errors:?} / clean {clean_errors:?}"));
+            }
         } else {
             // nothing written
             let after = outputs_of(snapshot(&work));

@@ -4,6 +4,8 @@
 //!   incremental builds in new sessions; after every step the output must equal a clean build's (JSON modules
 //!   included: an edit re-copies the asset and re-transforms only the importers);
 //! - `attack.script.json` on `tests/watch_fixtures/attack`: the review of the branch's attack sequence;
+//! - `references.script.json` on `tests/watch_fixtures/references`: TypeScript project references (edits in a
+//!   referenced project, errors, new and deleted files, hand-deleted outputs, a referenced tsconfig edit);
 //! - the kept-`Shared` contract, with a plugin that counts its `setup` and `rebuild_start` calls;
 //! - the clean of a declaration build over a used output directory, against roblox-ts's keep set, with a junction.
 //!
@@ -50,7 +52,21 @@ fn run_basic(label: &str, plugins: &[&str], incremental: bool) -> Option<Vec<Ste
     run_fixture("basic", label, plugins, incremental)
 }
 
+/// The entries the harness copies: the sources and configs.
+const COPY: &[&str] = &["src", "tsconfig.json", "default.project.json", "package.json"];
+
 fn run_fixture(fixture: &str, label: &str, plugins: &[&str], incremental: bool) -> Option<Vec<StepResult>> {
+    run_fixture_copying(fixture, label, plugins, incremental, COPY)
+}
+
+/// [`run_fixture`] copying `copy` (the entries holding sources and configs).
+fn run_fixture_copying(
+    fixture: &str,
+    label: &str,
+    plugins: &[&str],
+    incremental: bool,
+    copy: &[&str],
+) -> Option<Vec<StepResult>> {
     let Some(node_modules) = node_modules() else {
         eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
         return None;
@@ -65,7 +81,7 @@ fn run_fixture(fixture: &str, label: &str, plugins: &[&str], incremental: bool) 
         let options = ParityOptions {
             source: fixtures().join(fixture),
             tsconfig: "tsconfig.json".into(),
-            copy: ["src", "tsconfig.json", "default.project.json", "package.json"].map(str::to_owned).to_vec(),
+            copy: copy.iter().map(|c| (*c).to_owned()).collect(),
             scratch: scratch.clone(),
             project_options: ProjectOptionLayer::default(),
             plugins: &plugins,
@@ -125,6 +141,33 @@ const JSON_TYPE_EDIT: &str = "a JSON module: a number becomes a string (the impo
 fn the_review_attack_sequence_equals_clean_builds() {
     run_fixture("attack", "attack", &["stamp"], false);
     run_fixture("attack", "attack-inc", &[], true);
+}
+
+/// The `references` fixture's sources: each referenced project's sources and tsconfig, not its output folder.
+const REFERENCES_COPY: &[&str] = &[
+    "src",
+    "tsconfig.json",
+    "default.project.json",
+    "package.json",
+    "projects/common/src",
+    "projects/common/tsconfig.json",
+    "projects/shared/src",
+    "projects/shared/tsconfig.json",
+    "projects/external",
+];
+
+/// TypeScript project references (`references.script.json`): after every watch rebuild and every incremental build,
+/// every project's outputs equal a clean build's (which builds the whole graph in a copy); an error in a referenced
+/// project builds nothing.
+#[test]
+fn project_references_rebuild_as_clean_builds() {
+    let Some(results) = run_fixture_copying("references", "references", &[], false, REFERENCES_COPY) else { return };
+    // a declaration-neutral edit transforms the edited file only (the root's program sees the same declarations)
+    assert_eq!(step(&results, "a body edit in a referenced project (its declarations unchanged)").transformed, 1);
+    // a type change reaches the files that import it, across the reference boundary
+    assert!(step(&results, "a referenced type change reaches the root's Luau (`+` becomes `..`)").transformed >= 3);
+    assert_eq!(step(&results, "an unchanged save in a referenced project").transformed, 0);
+    run_fixture_copying("references", "references-inc", &[], true, REFERENCES_COPY);
 }
 
 #[test]

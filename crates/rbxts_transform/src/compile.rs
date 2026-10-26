@@ -182,6 +182,21 @@ pub struct CompileReport {
     /// Plugin artifacts and state files written, and files plugins removed.
     pub artifacts_written: Vec<String>,
     pub artifacts_deleted: Vec<String>,
+    /// A build with project references: each project that builds, in build order, with its output roots and whether
+    /// its build succeeded (a project whose references failed is not built: blocked). Empty otherwise.
+    pub projects: Vec<ProjectOutcome>,
+}
+
+/// One project of a build with project references.
+#[derive(Clone, Debug)]
+pub struct ProjectOutcome {
+    pub tsconfig: String,
+    /// Its outDir and `declarationDir`.
+    pub output_roots: Vec<String>,
+    /// Built without errors (and committed).
+    pub ok: bool,
+    /// Not built: a project it references failed or was blocked.
+    pub blocked: bool,
 }
 
 impl CompileReport {

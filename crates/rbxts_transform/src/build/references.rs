@@ -30,7 +30,7 @@ use rbxts_project::graph::{GraphError, ProjectGraph, ProjectNode};
 
 use super::outputs::GraphOutputs;
 use super::session::{BuildSession, BuildSummary};
-use crate::compile::{CompileOptions, CompileReport};
+use crate::compile::{CompileOptions, CompileReport, ProjectOutcome};
 
 /// What the graph tells one project's builds.
 #[derive(Clone, Debug)]
@@ -79,6 +79,13 @@ pub(super) fn build_graph(root: &mut BuildSession<'_>, touched: &[String]) -> (C
     root.graph_config_paths = graph.config_paths.clone();
     let outputs = graph_outputs(&graph);
     let mut reports: Vec<(CompileReport, BuildSummary)> = Vec::new();
+    let mut outcomes: Vec<ProjectOutcome> = Vec::new();
+    let outcome = |node: &ProjectNode, ok: bool, blocked: bool| ProjectOutcome {
+        tsconfig: node.data.tsconfig_path.clone(),
+        output_roots: node.output_roots(),
+        ok,
+        blocked,
+    };
     // the projects whose build failed or was blocked
     let mut failed: HashSet<String> = HashSet::new();
     let mut old: Vec<(String, BuildSession<'_>)> = std::mem::take(&mut root.references);
@@ -90,6 +97,7 @@ pub(super) fn build_graph(root: &mut BuildSession<'_>, touched: &[String]) -> (C
         }
         if node.dependencies.iter().any(|d| failed.contains(d)) {
             failed.insert(node.key.clone());
+            outcomes.push(outcome(node, false, true));
             continue;
         }
         if !build_references {
@@ -117,6 +125,7 @@ pub(super) fn build_graph(root: &mut BuildSession<'_>, touched: &[String]) -> (C
         if report.has_errors() {
             failed.insert(node.key.clone());
         }
+        outcomes.push(outcome(node, !report.has_errors(), false));
         reports.push((report, summary));
         root.references.push((node.key.clone(), session));
     }
@@ -126,9 +135,14 @@ pub(super) fn build_graph(root: &mut BuildSession<'_>, touched: &[String]) -> (C
     let root_built = node.path_translator.is_some() && !blocked;
     if root_built {
         root.graph = Some(GraphContext::of(node, &outputs));
-        reports.push(root.build_project(touched));
+        let (report, summary) = root.build_project(touched);
+        outcomes.push(outcome(node, !report.has_errors(), false));
+        reports.push((report, summary));
+    } else if node.path_translator.is_some() {
+        outcomes.push(outcome(node, false, true));
     }
     let (mut report, mut summary) = merge(reports, root_built);
+    report.projects = outcomes;
     if node.path_translator.is_none() && graph.shared_deployment && root.options.out_dir_override.is_none() {
         // a solution root of one deployment builds nothing, yet its include folder is the one its projects use:
         // roblox-ts copies its runtime files (`copyInclude` of the runtime projects) whatever the build does
