@@ -276,3 +276,38 @@ fn a_state_file_the_commit_creates_starts_one_more_build_at_once() {
     watcher.assert_quiet(quiet);
     drop(watcher);
 }
+
+/// `scan` (val-sfile2 `racedel`): the state file deleted, then deleted again as the follow-up build starts (its
+/// `build-start` event; the build looks at the disk well after). The follow-up lost the file itself, so it starts one
+/// more build (only an outside change does that: no loop), and the output is the one a build with the file there
+/// makes, not the one of a setup that read it as missing.
+#[test]
+fn a_follow_up_that_lost_its_state_file_starts_one_more_build() {
+    let Some(project) = Project::new("racedel") else { return };
+    project.write("src/shared/scan.d.ts", "/** @scan */\ndeclare function scanned(): string;\n");
+    project.write("src/shared/scanned.ts", "export const answer = scanned();\n");
+    project.write("scan-ancestor.txt", "first");
+    let scanned = || project.read("out/shared/scanned.luau").unwrap_or_default();
+    let watcher = Watcher::start_with(&project, true);
+    let quiet = Duration::from_millis(2000);
+    watcher.next_end();
+    watcher.next_start();
+    watcher.next_end();
+    assert!(scanned().contains("\"own\""), "{}", scanned());
+    watcher.assert_quiet(quiet);
+
+    std::fs::remove_file(project.0.join("scan-state.txt")).unwrap();
+    watcher.next_start();
+    watcher.next_end();
+    // the follow-up: deleted again before it looks
+    watcher.next_start();
+    std::fs::remove_file(project.0.join("scan-state.txt")).unwrap();
+    watcher.next_end();
+    // and the one it starts, which reads the file its own commit created
+    watcher.next_start();
+    watcher.next_end();
+    assert!(scanned().contains("\"own\""), "{}", scanned());
+    assert!(project.read("scan-state.txt").is_some());
+    watcher.assert_quiet(quiet);
+    drop(watcher);
+}

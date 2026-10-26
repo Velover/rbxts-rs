@@ -8,6 +8,8 @@
 //!   the files that call one depend on it, as Flamework's ids do.
 //! - `finish` writes the state file with the number of builds this state saw, new bytes at every build (as
 //!   Flamework's hashed id mode writes a new salt at every fresh setup). The `Shared` never depends on those bytes.
+//!
+//! [`ScanReader`] (`scan-reader`) reads that state file in its own `setup`: another plugin's state file as an input.
 
 use std::sync::Arc;
 
@@ -81,6 +83,78 @@ impl PluginInstance for ScanInstance {
 
     fn classify_symbol(&self, cx: &mut Cx<'_>, symbol: P<Symbol>, role: SymbolRole) -> Option<Tag> {
         (role == SymbolRole::Callee && cx.symbol_jsdoc_tags(symbol).iter().any(|t| t.name == "scan")).then_some(SCAN)
+    }
+
+    fn call(&self, _cx: &mut Cx<'_>, call: &CallSite, _tag: Tag) -> PResult<Claim<LuauExpr>> {
+        if matches!(call.kind, CallKind::New | CallKind::Decorator) || !call.args.is_empty() {
+            return Ok(Claim::Decline);
+        }
+        Ok(Claim::Take(text_literal(&self.0)))
+    }
+
+    fn end_file(&self, _cx: &mut Cx<'_>) -> PResult<()> {
+        Ok(())
+    }
+}
+
+/// `scan-reader`: another plugin's state file as a setup input. Its `setup` reads `scan`'s [`STATE_FILE`] through
+/// `read_input`, and calls of functions whose JSDoc has a `@scanreader` tag become a string literal of
+/// `reader <its text>` (`reader none` without one). It has no state file of its own, and `scan` writes new bytes
+/// at every build, so its output depends on bytes another plugin's commit changes.
+pub struct ScanReader;
+
+pub struct ScanReaderInstance(Arc<String>);
+
+const READER: Tag = Tag(0);
+
+impl Plugin for ScanReader {
+    type Shared = String;
+    type State = ();
+    type FilePart = ();
+    type Instance = ScanReaderInstance;
+
+    fn info(&self) -> PluginInfo {
+        PluginInfo { name: "scan-reader", version: "0.1.0", tsconfig_transform: None }
+    }
+
+    fn setup(&self, cx: &mut SetupCx<'_>, _state: &mut ()) -> Result<Arc<String>, Fatal> {
+        let text = cx.read_input(STATE_FILE).map_err(|e| Fatal::new(format!("scan-reader: {e}")))?;
+        Ok(Arc::new(format!("reader {}", text.as_deref().map_or("none", str::trim))))
+    }
+
+    fn instance(&self, shared: Arc<String>, _checker: CheckerInfo) -> ScanReaderInstance {
+        ScanReaderInstance(shared)
+    }
+
+    fn finish(
+        &self,
+        _shared: &String,
+        _state: &mut (),
+        _parts: &[(FileIndex, &())],
+        _cx: &mut FinishCx<'_>,
+    ) -> Result<(), Fatal> {
+        Ok(())
+    }
+
+    fn encode_file_part(&self, _part: &()) -> Option<Vec<u8>> {
+        Some(Vec::new())
+    }
+
+    fn decode_file_part(&self, _bytes: &[u8]) -> Option<()> {
+        Some(())
+    }
+}
+
+impl PluginInstance for ScanReaderInstance {
+    type FilePart = ();
+
+    fn interest(&self, interest: &mut Interest) {
+        interest.calls_by_symbol();
+    }
+
+    fn classify_symbol(&self, cx: &mut Cx<'_>, symbol: P<Symbol>, role: SymbolRole) -> Option<Tag> {
+        (role == SymbolRole::Callee && cx.symbol_jsdoc_tags(symbol).iter().any(|t| t.name == "scanreader"))
+            .then_some(READER)
     }
 
     fn call(&self, _cx: &mut Cx<'_>, call: &CallSite, _tag: Tag) -> PResult<Claim<LuauExpr>> {

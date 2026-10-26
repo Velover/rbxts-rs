@@ -794,6 +794,55 @@ fn a_state_file_the_commit_creates_reruns_setup_in_the_next_incremental_build() 
     drop(copy);
 }
 
+/// Another plugin's state file as a setup input (`scan-reader` reads the one `scan` writes, new bytes at every
+/// build): a commit that changes what the reader read asks for one more build (`setup_inputs_changed`, as for a
+/// plugin's own state file created), and the reader's read is kept as it was, so the next build runs its setup again
+/// and its output follows the bytes that build started with. `scan`'s own new bytes alone still ask for nothing.
+#[test]
+fn another_plugins_state_file_is_a_setup_input_like_any_other() {
+    let Some((copy, root)) = scan_copy("scan-reader", false) else { return };
+    std::fs::write(root.join("src/shared/reader.d.ts"), "/** @scanreader */\ndeclare function readState(): string;\n")
+        .unwrap();
+    std::fs::write(root.join("src/shared/read.ts"), "export const text = readState();\n").unwrap();
+    let plugins = vec![erase(scan::Scan), erase(scan::ScanReader)];
+    let state_path = root.join(scan::STATE_FILE);
+    let path = |p: &str| root.join(p).to_string_lossy().replace('\\', "/");
+    let read_output = || std::fs::read_to_string(root.join("out/shared/read.luau")).unwrap();
+    big_stack(|| {
+        let options =
+            PluginOptions { plugins: &plugins, ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
+        let mut session = keeper_session(&root, &options, true);
+        // both read the state file as missing; scan's commit creates it
+        let (report, summary) = session.build(&[]);
+        assert!(!report.has_errors(), "{:?}", report.fatal);
+        assert!(read_output().contains("\"reader none\""), "{}", read_output());
+        assert_eq!(summary.setup_inputs_changed.len(), 1, "{:?}", summary.setup_inputs_changed);
+
+        // the build a watcher starts at once: the reader reads "1", scan's commit leaves "2", which the reader's
+        // setup did not read
+        let (report, summary) = session.build(&summary.setup_inputs_changed);
+        assert!(!report.has_errors(), "{:?}", report.fatal);
+        assert!(read_output().contains("\"reader 1\""), "{}", read_output());
+        assert_eq!(std::fs::read_to_string(&state_path).unwrap().trim(), "2");
+        assert_eq!(summary.setup_inputs_changed.len(), 1, "{:?}", summary.setup_inputs_changed);
+        assert!(
+            report
+                .plugin_messages
+                .iter()
+                .any(|m| m.starts_with("scan-reader: ") && m.contains("the state file of scan")),
+            "{:?}",
+            report.plugin_messages
+        );
+
+        // the next build (an edit) runs the reader's setup again: it reads "2"
+        std::fs::write(root.join("src/shared/d.ts"), D_TS).unwrap();
+        let (report, _) = session.build(&[path("src/shared/d.ts")]);
+        assert!(!report.has_errors(), "{:?}", report.fatal);
+        assert!(read_output().contains("\"reader 2\""), "{}", read_output());
+    });
+    drop(copy);
+}
+
 // --- the clean keeps what roblox-ts keeps ---
 
 /// A declaration build (`declaration`, `declarationMap`, `declarationDir`, an explicit `tsBuildInfoFile` under

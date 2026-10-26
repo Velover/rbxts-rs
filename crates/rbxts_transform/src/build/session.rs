@@ -229,7 +229,8 @@ pub struct BuildSummary {
     /// missing (or not as text) and this build left text in it, or the other way round. The plugin's `Shared` may
     /// depend on that (Flamework's candidate scan loads an ancestor `flamework.build` while its own is missing), so
     /// the read is kept as it was and the next build runs that setup again; a watcher starts that build at once.
-    /// New bytes alone are not one: a `Shared` never depends on its own state file's bytes (`Plugin::Shared`).
+    /// New bytes alone are not one: a `Shared` never depends on its own state file's bytes (`Plugin::Shared`). For
+    /// another plugin's state file, they are.
     pub setup_inputs_changed: Vec<String>,
 }
 
@@ -1493,30 +1494,44 @@ impl<'p> BuildSession<'p> {
         //   so the next build runs that plugin's setup again, as its `Shared` may depend on it (Flamework's scan
         //   loads an ancestor `flamework.build` while its own is missing), and the summary says so, for a watcher
         //   to start that build at once.
+        // Another plugin's state file is an input like any other file, whose bytes that plugin's `Shared` may depend
+        // on: when this commit changed what setup read (new bytes too), the read is kept as it was and the summary
+        // says so, as in the second case.
         // The incremental state keeps what setup read: a new process runs setup anyway, and Flamework relies on the
         // change there (its salt)
-        let committed_texts: FxHashMap<String, Option<Version>> = queue
+        let committed_texts: FxHashMap<String, (&str, Option<Version>)> = queue
             .state_files
             .iter()
-            .map(|(_, path, bytes)| (path_key_of(services, path), std::str::from_utf8(bytes).ok().map(Version::of)))
+            .map(|(owner, path, bytes)| {
+                (path_key_of(services, path), (*owner, std::str::from_utf8(bytes).ok().map(Version::of)))
+            })
             .collect();
         let plugins = match run_parts {
             Some((names, shared, states, mut inputs)) => {
                 if !self.options.no_write {
-                    let named = names.iter().zip(&mut inputs);
-                    for (name, input) in named.flat_map(|(name, inputs)| inputs.iter_mut().map(move |i| (name, i))) {
-                        if let BuildInput::File { path, exists, version, .. } = input
-                            && let Some(text) = committed_texts.get(&path_key_of(services, path))
+                    for input in inputs.iter_mut().flatten() {
+                        if let BuildInput::File { plugin, path, exists, version } = input
+                            && let Some(&(owner, text)) = committed_texts.get(&path_key_of(services, path))
                         {
-                            if *exists == text.is_some() {
-                                *version = *text;
-                            } else if !summary.setup_inputs_changed.contains(path) {
-                                report.plugin_messages.push(format!(
-                                    "{name}: its setup read its state file {path} {}, and this build left {}: its \
-                                     setup runs again at the next build",
-                                    if *exists { "as text" } else { "as missing" },
-                                    if *exists { "bytes that are not text" } else { "it as text" },
-                                ));
+                            let own = *plugin == owner;
+                            if own && *exists == text.is_some() {
+                                *version = text;
+                            } else if (own || *exists != text.is_some() || *version != text)
+                                && !summary.setup_inputs_changed.contains(path)
+                            {
+                                report.plugin_messages.push(if own {
+                                    format!(
+                                        "{plugin}: its setup read its state file {path} {}, and this build left {}: \
+                                         its setup runs again at the next build",
+                                        if *exists { "as text" } else { "as missing" },
+                                        if *exists { "bytes that are not text" } else { "it as text" },
+                                    )
+                                } else {
+                                    format!(
+                                        "{plugin}: its setup read {path}, the state file of {owner}, and this build \
+                                         changed it: its setup runs again at the next build"
+                                    )
+                                });
                                 summary.setup_inputs_changed.push(path.clone());
                             }
                         }

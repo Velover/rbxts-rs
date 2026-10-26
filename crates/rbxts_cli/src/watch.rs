@@ -44,7 +44,8 @@
 //!   holds what the commit left (deleted, edited), so this watcher's own write starts nothing. A build whose commit
 //!   changed what a plugin's `setup` read of its own state file answered (missing before, there now:
 //!   [`BuildSummary::setup_inputs_changed`]) is followed at once by one more build, which runs that setup again; a
-//!   build started that way never starts another.
+//!   build started that way starts no other, unless it lost a state file itself
+//!   ([`BuildSummary::lost_state_files`]: deleted or edited since the last commit, by someone else, so no loop).
 //! - **Debounce.** Trailing, 100 ms as roblox-ts: each event restarts the wait, and the paths of one burst become
 //!   one rebuild. A rename is its two paths (the session sees a deletion and an addition).
 //! - **Errors.** A panic in a rebuild is reported and the session starts over with a clean build; the watcher
@@ -1038,11 +1039,12 @@ fn watch(
 
     let mut watched = Watches { good: minimal_set(&session), failed: None };
     status("Starting compilation in watch mode...");
-    let (mut stale, again) =
+    let (mut stale, again, _) =
         rebuild(&mut session, &mut subscriptions, &mut watched, build, cwd, generation, &[], &mut own);
     // the last build's commit changed what a plugin's setup read (its own state file created): one more build at
-    // once, which runs that setup again; a build started that way never starts another (no loop, whatever a plugin
-    // writes)
+    // once, which runs that setup again; a build started that way starts no other (no loop, whatever a plugin
+    // writes), unless it lost a state file itself: deleted or edited again by someone else since the last commit
+    // (only an outside change does that, so it can't loop either)
     let mut follow_up = !again.is_empty();
     stale.extend(again);
     loop {
@@ -1079,10 +1081,10 @@ fn watch(
         }
         generation += 1;
         status("File change detected. Starting incremental compilation...");
-        let again;
-        (stale, again) =
+        let (again, lost);
+        (stale, again, lost) =
             rebuild(&mut session, &mut subscriptions, &mut watched, build, cwd, generation, &paths, &mut own);
-        follow_up = !follow_up && !again.is_empty();
+        follow_up = (!follow_up || lost) && !again.is_empty();
         if follow_up {
             stale.extend(again);
         }
@@ -1153,8 +1155,9 @@ fn path_text(path: &Path) -> String {
 /// One build of the watch loop, with its report and events. A panic is reported, and the session starts over.
 /// After the build, the watched directories are brought up to date before anything is printed, so a change made
 /// as soon as the build is reported finished is seen. Returns the paths that changed before their directory was
-/// watched, and the state files whose commit changed what a plugin's setup read
-/// ([`BuildSummary::setup_inputs_changed`]).
+/// watched, the state files whose commit changed what a plugin's setup read
+/// ([`BuildSummary::setup_inputs_changed`]), and whether the build lost a state file
+/// ([`BuildSummary::lost_state_files`]).
 #[allow(clippy::too_many_arguments)]
 fn rebuild(
     session: &mut BuildSession<'_>,
@@ -1165,7 +1168,7 @@ fn rebuild(
     generation: u64,
     paths: &[String],
     own: &mut Own,
-) -> (Vec<String>, Vec<String>) {
+) -> (Vec<String>, Vec<String>, bool) {
     if build.events_json {
         println!("{{\"event\":\"build-start\",\"gen\":{generation},\"changes\":{}}}", json_list(paths));
     }
@@ -1240,7 +1243,7 @@ fn rebuild(
                 );
             }
             status("Found 1 error. Watching for file changes.");
-            return (stale, Vec::new());
+            return (stale, Vec::new(), false);
         }
     };
     print_report(&report, cwd, build);
@@ -1249,7 +1252,7 @@ fn rebuild(
         print_end(generation, &report, &summary, errors);
     }
     status(&format!("Found {errors} error{}. Watching for file changes.", if errors == 1 { "" } else { "s" }));
-    (stale, summary.setup_inputs_changed)
+    (stale, summary.setup_inputs_changed, !summary.lost_state_files.is_empty())
 }
 
 fn print_end(generation: u64, report: &CompileReport, summary: &BuildSummary, errors: usize) {
