@@ -263,7 +263,6 @@ fn transform_switch_middle_default(
 }
 
 /// `transformSwitchStatement`
-/// `transformSwitchStatement`
 pub fn transform_switch_statement(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stmt> {
     let mut result = transform_switch_statement_inner(state, node);
     // rbxts-rs: a `continue` inside set this switch's flag and broke out of its block (`create_continue`); continue

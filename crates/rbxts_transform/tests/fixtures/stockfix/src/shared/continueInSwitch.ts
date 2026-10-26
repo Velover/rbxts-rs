@@ -113,3 +113,90 @@ export function tryInSwitch(values: number[]) {
 	}
 	return log;
 }
+
+// a switch inside a try statement: the try's blocks are functions, so the switch returns `TS.TRY_CONTINUE` from them
+// and the try statement continues the loop
+export function switchInTry() {
+	const log: string[] = [];
+	for (const x of [1, 2, 3]) {
+		try {
+			switch (x) {
+				case 2:
+					continue;
+			}
+			log.push(`in ${x}`);
+		} catch (e) {
+			log.push("caught");
+		}
+		log.push(`after ${x}`);
+	}
+	return log;
+}
+
+// a try statement inside a switch inside a try statement
+export function tryInSwitchInTry() {
+	const log: string[] = [];
+	for (const x of [1, 2, 3]) {
+		try {
+			switch (x) {
+				case 2:
+					try {
+						continue;
+					} finally {
+						log.push(`fin ${x}`);
+					}
+			}
+			log.push(`in ${x}`);
+		} finally {
+			log.push(`outer fin ${x}`);
+		}
+		log.push(`after ${x}`);
+	}
+	return log;
+}
+
+// a switch inside a try statement inside a switch
+export function switchInTryInSwitch() {
+	const log: string[] = [];
+	for (const x of [1, 2, 3]) {
+		switch (x) {
+			case 2:
+			case 3:
+				try {
+					switch (x) {
+						case 2:
+							continue;
+					}
+					log.push(`in ${x}`);
+				} finally {
+					log.push(`fin ${x}`);
+				}
+		}
+		log.push(`after ${x}`);
+	}
+	return log;
+}
+
+// switch, try, switch, try: each level passes the `continue` on
+export function deep() {
+	const log: string[] = [];
+	for (const x of [1, 2, 3]) {
+		switch (x) {
+			default:
+				try {
+					switch (x) {
+						case 2:
+							try {
+								continue;
+							} finally {
+								log.push(`inner fin ${x}`);
+							}
+					}
+				} finally {
+					log.push(`fin ${x}`);
+				}
+		}
+		log.push(`after ${x}`);
+	}
+	return log;
+}

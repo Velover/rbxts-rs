@@ -170,6 +170,146 @@ local function tryInSwitch(values)
 	end
 	return log
 end
+-- a switch inside a try statement: the try's blocks are functions, so the switch returns `TS.TRY_CONTINUE` from them
+-- and the try statement continues the loop
+local function switchInTry()
+	local log = {}
+	for _, x in { 1, 2, 3 } do
+		local _exitType, _returns = TS.try(function()
+			local _continue = false
+			repeat
+				if x == 2 then
+					_continue = true
+					break
+				end
+			until true
+			if _continue then
+				return TS.TRY_CONTINUE
+			end
+			table.insert(log, `in {x}`)
+		end, function(e)
+			table.insert(log, "caught")
+		end)
+		if _exitType then
+			continue
+		end
+		table.insert(log, `after {x}`)
+	end
+	return log
+end
+-- a try statement inside a switch inside a try statement
+local function tryInSwitchInTry()
+	local log = {}
+	for _, x in { 1, 2, 3 } do
+		local _exitType, _returns = TS.try(function()
+			local _continue = false
+			repeat
+				local _fallthrough = false
+				if x == 2 then
+					local _exitType_1, _returns_1 = TS.try(function()
+						return TS.TRY_CONTINUE
+					end, nil, function()
+						table.insert(log, `fin {x}`)
+					end)
+					if _exitType_1 then
+						_continue = true
+						break
+					end
+				end
+			until true
+			if _continue then
+				return TS.TRY_CONTINUE
+			end
+			table.insert(log, `in {x}`)
+		end, nil, function()
+			table.insert(log, `outer fin {x}`)
+		end)
+		if _exitType then
+			continue
+		end
+		table.insert(log, `after {x}`)
+	end
+	return log
+end
+-- a switch inside a try statement inside a switch
+local function switchInTryInSwitch()
+	local log = {}
+	for _, x in { 1, 2, 3 } do
+		local _continue = false
+		repeat
+			local _fallthrough = false
+			if x == 2 then
+				_fallthrough = true
+			end
+			if _fallthrough or x == 3 then
+				local _exitType, _returns = TS.try(function()
+					local _continue_1 = false
+					repeat
+						if x == 2 then
+							_continue_1 = true
+							break
+						end
+					until true
+					if _continue_1 then
+						return TS.TRY_CONTINUE
+					end
+					table.insert(log, `in {x}`)
+				end, nil, function()
+					table.insert(log, `fin {x}`)
+				end)
+				if _exitType then
+					_continue = true
+					break
+				end
+			end
+		until true
+		if _continue then
+			continue
+		end
+		table.insert(log, `after {x}`)
+	end
+	return log
+end
+-- switch, try, switch, try: each level passes the `continue` on
+local function deep()
+	local log = {}
+	for _, x in { 1, 2, 3 } do
+		local _continue = false
+		repeat
+			local _exitType, _returns = TS.try(function()
+				local _continue_1 = false
+				repeat
+					local _fallthrough = false
+					if x == 2 then
+						local _exitType_1, _returns_1 = TS.try(function()
+							return TS.TRY_CONTINUE
+						end, nil, function()
+							table.insert(log, `inner fin {x}`)
+						end)
+						if _exitType_1 then
+							_continue_1 = true
+							break
+						end
+					end
+				until true
+				if _continue_1 then
+					return TS.TRY_CONTINUE
+				end
+			end, nil, function()
+				table.insert(log, `fin {x}`)
+			end)
+			if _exitType then
+				_continue = true
+				break
+			end
+		until true
+		if _continue then
+			continue
+		end
+		table.insert(log, `after {x}`)
+	end
+	return log
+end
 return {
 	forOf = forOf,
 	middleDefault = middleDefault,
@@ -177,4 +317,8 @@ return {
 	loopInSwitch = loopInSwitch,
 	forAndDo = forAndDo,
 	tryInSwitch = tryInSwitch,
+	switchInTry = switchInTry,
+	tryInSwitchInTry = tryInSwitchInTry,
+	switchInTryInSwitch = switchInTryInSwitch,
+	deep = deep,
 }
