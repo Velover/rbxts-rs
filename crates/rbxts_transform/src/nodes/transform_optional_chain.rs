@@ -317,7 +317,21 @@ fn transform_optional_chain_inner(
                     (ChainItemKind::PropertyCall { name, .. }, None) => CalleeKey::Name(name),
                     (ChainItemKind::ElementCall { expression, argument_expression, .. }, None) => {
                         let exp_type = state.get_type(expression.as_element_access_expression().expression);
-                        let argument = transform_expression(state, prereqs, argument_expression);
+                        // rbxts-rs: fixes roblox-ts (transformOptionalChain.ts:264) running the key's prerequisites
+                        // before the receiver's nil check: `x?.[(kv = 1, "m")]?.()` ran `kv = 1` for a nil `x`. They
+                        // go inside the check, as a plugin-rewritten key's do; for a receiver that is not optional,
+                        // after it (captured when they could change it)
+                        let mut key_prereqs = Prereqs::new();
+                        let argument = transform_expression(state, &mut key_prereqs, argument_expression);
+                        if item.optional {
+                            key_statements = key_prereqs.statements;
+                        } else {
+                            base_expression = crate::plugins::dispatch::place_key_statements(
+                                prereqs,
+                                base_expression,
+                                key_prereqs.statements,
+                            );
+                        }
                         CalleeKey::Index(add_one_if_array_type(state, exp_type, argument))
                     }
                     _ => unreachable!(),
