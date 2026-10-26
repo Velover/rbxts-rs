@@ -59,20 +59,34 @@ pub struct CompileOptions {
     /// Transform and render, but write nothing.
     pub no_write: bool,
     /// Type checkers, each checking and transforming its share of the files on a thread of its own (`--checkers`).
-    /// `None`: [`default_checkers`]. The output is the same for any count.
+    /// `None`: [`default_checkers`]. The output is the same for any count, but for tsrs's known rare
+    /// history-dependent case ([`DEFAULT_CHECKERS`]).
     pub checkers: Option<usize>,
 }
 
-/// The checker count when none is given: `RBXTS_CHECKERS` when set (tests and harnesses run a whole suite at
-/// another count with it), else [`DEFAULT_CHECKERS`], at most the machine's parallelism.
+/// The checker count when none is given: `RBXTS_CHECKERS` when it is a whole number from 1 to [`MAX_CHECKERS`]
+/// (tests and harnesses run a whole suite at another count with it), else [`DEFAULT_CHECKERS`]. Not tied to the
+/// machine, so every machine builds with the same count unless told otherwise.
 pub fn default_checkers() -> usize {
-    if let Some(n) = std::env::var("RBXTS_CHECKERS").ok().and_then(|v| v.trim().parse::<usize>().ok()) {
-        return n.clamp(1, MAX_CHECKERS);
-    }
-    DEFAULT_CHECKERS.min(std::thread::available_parallelism().map_or(1, usize::from)).max(1)
+    env_checkers().ok().flatten().unwrap_or(DEFAULT_CHECKERS)
 }
 
-/// The default checker count (S3-par measurements: past it, more checkers add memory for little time).
+/// `RBXTS_CHECKERS`: `Ok(None)` when unset, `Ok(Some(n))` for a whole number from 1 to [`MAX_CHECKERS`], else the
+/// warning to give (the build then uses [`DEFAULT_CHECKERS`]).
+pub fn env_checkers() -> Result<Option<usize>, String> {
+    let Ok(value) = std::env::var("RBXTS_CHECKERS") else { return Ok(None) };
+    match value.trim().parse::<usize>() {
+        Ok(n) if (1..=MAX_CHECKERS).contains(&n) => Ok(Some(n)),
+        _ => Err(format!(
+            "RBXTS_CHECKERS={value:?} is not a whole number from 1 to {MAX_CHECKERS}; using {DEFAULT_CHECKERS} checkers"
+        )),
+    }
+}
+
+/// The default checker count (S3-par measurements: past it, more checkers add memory for little time). Fixed, not
+/// capped by the machine's parallelism: with several checkers tsrs (like TypeScript 7) has a rare known case whose
+/// diagnostics depend on which checker checked what (a base constraint cut short by the depth limit and cached:
+/// tsrs `notes/open-history-dependence.md` §1), so a fixed count gives every machine the same output.
 pub const DEFAULT_CHECKERS: usize = 4;
 
 /// tsrs's limit.
@@ -82,6 +96,11 @@ impl CompileOptions {
     /// The checker count this build asks for.
     pub fn checker_count(&self) -> usize {
         self.checkers.map_or_else(default_checkers, |n| n.clamp(1, MAX_CHECKERS))
+    }
+
+    /// The warning about an invalid `RBXTS_CHECKERS` this build would ignore, if any.
+    pub fn checkers_warning(&self) -> Option<String> {
+        if self.checkers.is_some() { None } else { env_checkers().err() }
     }
 }
 

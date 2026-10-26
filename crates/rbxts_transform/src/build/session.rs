@@ -600,6 +600,7 @@ impl<'p> BuildSession<'p> {
         let services = &loaded.services;
         report.program_files = project.program.source_files().len();
         report.warnings = services.warnings.clone();
+        report.warnings.extend(self.options.checkers_warning());
         for d in &loaded.setup_diagnostics {
             let category =
                 if d.severity == rbxts_project::Severity::Error { Category::Error } else { Category::Warning };

@@ -19,7 +19,10 @@
 //!
 //! rbxts-rs's own options besides `--timings` and `--events`: `--checkers <n>`, the number of type checkers, each
 //! checking and transforming its share of the files on a thread of its own (default
-//! [`rbxts_transform::DEFAULT_CHECKERS`], at most the machine's parallelism; the output is the same for any count).
+//! [`rbxts_transform::DEFAULT_CHECKERS`], or `RBXTS_CHECKERS`; an invalid `RBXTS_CHECKERS` is a warning). The output
+//! is the same for any count, but for one known rare case: with several checkers tsrs (like TypeScript 7) can give a
+//! different diagnostic when a base constraint is cut short by the instantiation-depth limit, depending on which
+//! checker resolved it first (tsrs `notes/open-history-dependence.md`).
 //!
 //! `RBXTS_PLUGIN_CLAIMS=all` asks every matching plugin for each claimable node and reports double claims.
 
