@@ -48,6 +48,8 @@
 //! - `props`: the names of `ts5_properties_of_type` of the argument's type, joined;
 //! - `importafter`: `compile_expr(a)`, then `import_named("./runtime", "other")` (plugin imports are ordered by
 //!   where they were asked for, not when);
+//! - `importfrom`: `import_named(path, export)` of its two string literal arguments (plugin imports are grouped by
+//!   path, in the order each path was first asked for);
 //! - `boom`: panics in [`Mode::Panic`]; `fail`: an error in [`Mode::Fail`]; `err`: `Err` with no new error in
 //!   [`Mode::ErrWithoutError`]; declined otherwise.
 //!
@@ -181,6 +183,7 @@ const OPS: &[&str] = &[
     "idents",
     "props",
     "importafter",
+    "importfrom",
 ];
 const RECEIVER: Tag = Tag(100);
 const CALLEE: Tag = Tag(101);
@@ -622,6 +625,12 @@ impl ProbeInstance {
                 let t = cx.checker().get_type_at_location(a);
                 let names: Vec<&str> = cx.ts5_properties_of_type(t).iter().map(|p| p.name()).collect();
                 self.claimed(text_literal(&names.join(",")))
+            }
+            "importfrom" => {
+                // `probeImportFrom("<path>", "<export>")`: the import's value
+                let text = |node: Option<P<Node>>| node.expect("two arguments").text();
+                let value = cx.import_named(text(arg(0)), text(arg(1)))?;
+                self.claimed(value)
             }
             "importafter" => {
                 let value = cx.compile_expr(arg(0).expect("an argument"))?;

@@ -212,13 +212,17 @@ pub trait CxBackend {
     /// **Placement.** Plugin imports go after the `--!` directives, the `-- Compiled with` line and
     /// `local TS = require(...)`, and after a header comment the file starts with (a run of comments with a blank
     /// line after it, which TypeScript's printer keeps at the top of the file), ahead of the user's own imports.
-    /// They are ordered by the source position of the node whose hook first asked for each (the file for
-    /// `begin_file` / `end_file`), then by request order, as the TS transformer adds them while it walks the file.
+    /// They are placed as Flamework's TS transformer adds its import declarations while it walks the file: one per
+    /// path, the paths in the order their first import was asked for, each listing its imports in the order they
+    /// were asked for. That order is the source position of the node whose hook asked (the file for
+    /// `begin_file` / `end_file`), then the request order. A path with several imports binds its module to a
+    /// local first (`local _core = TS.import(…)`, `local a = _core.a`), as roblox-ts compiles such a declaration.
     ///
     /// **Name.** The local is named after the export; when that name is taken (see
     /// [`CxBackend::hoist_spillable_named`]), the first free `export_1`, `export_2`, …, as TypeScript's printer
-    /// names the TS transformer's unique import name. An export name that is not a valid Luau identifier gets a
-    /// temporary instead.
+    /// names the TS transformer's unique import name. The printer names them in the placement order above, so when
+    /// two paths both give an export `t`, the one placed first is `t` whichever was asked for first. An export name
+    /// that is not a valid Luau identifier gets a temporary instead.
     ///
     /// A reused user import is kept alive like a [`CxBackend::mark_import_used`] one, so it counts as left behind
     /// for declining.

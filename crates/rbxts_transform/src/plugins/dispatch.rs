@@ -1,7 +1,7 @@
 //! The claim points and broadcast hooks the transform calls (DESIGN §9b "Plugin dispatch", §11.5). Each returns at
 //! once when the build has no plugins (`state.plugins` is `None`) or no plugin asked for that kind of node.
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use rbxts_luau::{AnyIdentifier, Expr, Stmt, create};
 use rbxts_plugin::{
@@ -1666,13 +1666,10 @@ fn apply_import_decisions(state: &mut TransformState<'_>, statements: &mut Vec<S
 }
 
 /// Plugin imports go first, after any `--!` directives and the file's header comment (as Flamework's added imports
-/// did ahead of the user's), ordered by where they were asked for; header statements after the imports: after the
-/// last import of the file's leading run of imports.
+/// did ahead of the user's), ordered as Flamework's TS transformer adds them ([`plugin_import_statements`]);
+/// header statements after the imports: after the last import of the file's leading run of imports.
 fn place_imports_and_header(state: &mut TransformState<'_>, statements: &mut Vec<Stmt>) {
-    // in the order the TS transform adds them as it walks the file: by the asking node's position
-    let mut order: Vec<usize> = (0..state.plugin_file.imports.len()).collect();
-    order.sort_by_key(|&i| state.plugin_file.imports[i].order);
-    let imports: Vec<Stmt> = order.into_iter().filter_map(|i| state.plugin_file.imports[i].statement.take()).collect();
+    let imports = plugin_import_statements(state, statements);
     let header = std::mem::take(&mut state.plugin_file.header);
     if imports.is_empty() && header.is_empty() {
         return;
@@ -1694,6 +1691,90 @@ fn place_imports_and_header(state: &mut TransformState<'_>, statements: &mut Vec
     state.plugin_file.front_inserts.push((header_at, header.len()));
     statements.splice(imports_at..imports_at, imports);
     statements.splice(header_at..header_at, header);
+}
+
+/// The plugin imports' statements, as roblox-ts compiles the import declarations Flamework's TS transformer adds
+/// (`fileImports`): one declaration per path, the paths in the order their first import was asked for, each listing
+/// its imports in the order they were asked for ([`PluginImport::order`]); a declaration of several imports binds
+/// the module to a local first (`local _core = TS.import(…)`, `local a = _core.a`), as roblox-ts does.
+///
+/// TypeScript names the imports' unique identifiers (`t`, `t_1`, …) as it prints them, so in that order; they were
+/// named when asked for, so names of one export are handed back out in print order, the file renamed to match.
+fn plugin_import_statements(state: &mut TransformState<'_>, statements: &mut [Stmt]) -> Vec<Stmt> {
+    use crate::classes::prereqs::{as_any_identifier, temp_id_expr};
+    use crate::util::clean_module_name::clean_module_name;
+    use super::luau_walk::{Visit, walk_statements};
+
+    let imports = &mut state.plugin_file.imports;
+    let mut sorted: Vec<usize> = (0..imports.len()).collect();
+    sorted.sort_by_key(|&i| imports[i].order);
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for i in sorted {
+        match groups.iter_mut().find(|group| imports[group[0]].specifier == imports[i].specifier) {
+            Some(group) => group.push(i),
+            None => groups.push(vec![i]),
+        }
+    }
+
+    // the names of one export in request order, handed out in print order
+    let plain_name = |import: &PluginImport| match &import.local {
+        AnyIdentifier::Identifier(id) => Some(id.name.clone()),
+        AnyIdentifier::Temporary(_) => None,
+    };
+    let printed: Vec<usize> = groups.iter().flatten().copied().collect();
+    let mut renames: FxHashMap<String, String> = FxHashMap::default();
+    let mut handed: FxHashMap<&str, usize> = FxHashMap::default();
+    for &i in &printed {
+        let Some(old) = plain_name(&imports[i]) else { continue };
+        let export = imports[i].export.as_str();
+        let k = handed.entry(export).or_default();
+        let new = imports.iter().filter(|import| import.export == export).filter_map(plain_name).nth(*k);
+        *k += 1;
+        if let Some(new) = new
+            && new != old
+        {
+            renames.insert(old, new);
+        }
+    }
+    if !renames.is_empty() {
+        let mut rename = |visit: Visit<'_>| {
+            if let Visit::Expr(Expr::Identifier(id)) = visit
+                && let Some(new) = renames.get(&id.name)
+            {
+                id.name.clone_from(new);
+            }
+        };
+        walk_statements(statements, &mut rename);
+        walk_statements(&mut state.plugin_file.header, &mut rename);
+    }
+
+    let mut out = Vec::new();
+    for group in groups {
+        let imports = &mut state.plugin_file.imports;
+        let import = imports[group[0]].import.take().expect("an import is placed once");
+        let module = if group.len() > 1 {
+            let specifier = &imports[group[0]].specifier;
+            let module_name = specifier.rsplit('/').next().unwrap_or(specifier);
+            let id = temp_id_expr(clean_module_name(module_name));
+            out.push(create::local(as_any_identifier(id.clone()), Some(import)));
+            id
+        } else {
+            import
+        };
+        for i in group {
+            let import = &mut imports[i];
+            import.import = None;
+            let local = match &import.local {
+                AnyIdentifier::Identifier(id) => match renames.get(&id.name) {
+                    Some(new) => create::any_id(new.clone()),
+                    None => import.local.clone(),
+                },
+                AnyIdentifier::Temporary(_) => import.local.clone(),
+            };
+            out.push(create::local(local, Some(create::computed_index(module.clone(), create::string(&import.export)))));
+        }
+    }
+    out
 }
 
 /// Whether the local name of an import alias could be shadowed where a plugin uses it: some identifier of the file
@@ -1796,16 +1877,17 @@ pub(crate) fn import_named(
         };
         state.plugin_file.import_names.insert(export.to_owned());
         let import = create_import_expression_of_file(state, file, module_file, anchor);
-        let statement = create::local(id.clone(), Some(create::computed_index(import, create::string(export))));
-        state.plugin_file.main_chunk_locals += 1;
-        let value: Expr = id.into();
+        // the import's local, and the module's when a second import from its path shares the declaration
+        let same_path = state.plugin_file.imports.iter().filter(|i| i.specifier == specifier).count();
+        state.plugin_file.main_chunk_locals += if same_path == 1 { 2 } else { 1 };
+        let value: Expr = id.clone().into();
         let position = if anchor.kind() == Kind::SourceFile { 0 } else { crate::util::traversal::get_start(anchor) };
         let order = (position, state.plugin_file.imports.len());
         state.plugin_file.imports.push(PluginImport {
             specifier: specifier.to_owned(),
             export: export.to_owned(),
-            value: value.clone(),
-            statement: Some(statement),
+            local: id,
+            import: Some(import),
             order,
         });
         value

@@ -317,3 +317,6 @@ declare function probeProps(a: unknown): string;
 /** The argument, then `import_named("./runtime", "other")`. */
 /** @probe importafter */
 declare function probeImportAfter<T>(a: T): [T, number];
+/** `import_named(path, export)` of its two string literal arguments. */
+/** @probe importfrom */
+declare function probeImportFrom(path: string, name: string): unknown;

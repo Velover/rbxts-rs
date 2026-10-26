@@ -5,7 +5,7 @@ use std::cell::{OnceCell, RefCell};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use rbxts_luau::{Expr, Stmt};
+use rbxts_luau::{AnyIdentifier, Expr, Stmt};
 use rbxts_plugin::FileInfo;
 use rbxts_plugin::erased::ErasedPart;
 use tsrs_ast::{Node, SourceFile};
@@ -39,10 +39,14 @@ pub struct ImportOverrides {
 pub struct PluginImport {
     pub specifier: String,
     pub export: String,
-    pub value: Expr,
-    pub statement: Option<Stmt>,
-    /// Where it goes among the plugin imports: the source position of the node whose hook first asked for it (the
-    /// file's start for `begin_file` / `end_file`), then the request order.
+    /// The local the import declares, which the plugin was given.
+    pub local: AnyIdentifier,
+    /// The `TS.import` call it indexes, until the imports are placed.
+    pub import: Option<Expr>,
+    /// Where it was asked for: the source position of the node whose hook first asked for it (the file's start
+    /// for `begin_file` / `end_file`), then the request order. Imports are placed as Flamework's TS transformer
+    /// adds them in its walk: one declaration per path, in the order its first import was asked for, listing its
+    /// imports in the order they were asked for.
     pub order: (u32, usize),
 }
 

@@ -162,6 +162,7 @@ pub mod lifecycle;
 mod facts;
 mod hoist_check;
 mod lowering;
+mod luau_walk;
 pub(crate) mod spill;
 
 pub use backend::diagnostic_source;

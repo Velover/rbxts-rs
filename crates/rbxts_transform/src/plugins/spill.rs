@@ -21,7 +21,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use rbxts_luau::{
-    AnyIdentifier, BinaryOperator, ElseBody, Expr, IfStatement, InterpolatedStringPart, Stmt, TableField, create,
+    AnyIdentifier, BinaryOperator, ElseBody, Expr, InterpolatedStringPart, Stmt, TableField, create,
 };
 use rbxts_luau_check::{CompileError, LUAU_VERSION};
 use tsrs_ast::{Diagnostic, Node, SourceFile, new_diagnostic};
@@ -29,6 +29,7 @@ use tsrs_core::{P, TextRange};
 use tsrs_diagnostics::{Category, new_ad_hoc_message};
 
 use super::file_state::SpillableLocal;
+use super::luau_walk::{Visit, walk_statements};
 use crate::classes::prereqs::temp_id;
 use crate::classes::transform_state::TransformState;
 use crate::shared::diagnostics::{internal_error, node_range};
@@ -538,7 +539,26 @@ fn spill(state: &mut TransformState<'_>, statements: &mut Vec<Stmt>) -> Option<u
         );
     }
     let mut misplaced = false;
-    rewrite_statements(statements, &spill, &mut misplaced);
+    walk_statements(statements, &mut |visit| match visit {
+        Visit::Declared(ids) => misplaced |= ids.iter().any(|id| spill.field(id).is_some()),
+        Visit::LocalFunction(name) => {
+            misplaced |= match name {
+                Expr::TemporaryIdentifier(t) => spill.fields.contains_key(&SpillableLocal::Temporary(t.id)),
+                Expr::Identifier(i) => spill.named_field(&i.name).is_some(),
+                _ => false,
+            }
+        }
+        Visit::Expr(expr) => {
+            let field = match &*expr {
+                Expr::TemporaryIdentifier(t) => spill.fields.get(&SpillableLocal::Temporary(t.id)),
+                Expr::Identifier(i) => spill.named_field(&i.name),
+                _ => None,
+            };
+            if let Some(field) = field {
+                *expr = create::property(spill.table.clone(), field.clone());
+            }
+        }
+    });
     // the table first: `local _spill = {}` before the first field assignment
     statements.insert(first, create::local(table_id, Some(create::map([]))));
     if misplaced {
@@ -550,180 +570,6 @@ fn spill(state: &mut TransformState<'_>, statements: &mut Vec<Stmt>) -> Option<u
         );
     }
     Some(first)
-}
-
-fn rewrite_statements(statements: &mut [Stmt], spill: &Spill, misplaced: &mut bool) {
-    for statement in statements {
-        rewrite_statement(statement, spill, misplaced);
-    }
-}
-
-fn check_declared(ids: &[AnyIdentifier], spill: &Spill, misplaced: &mut bool) {
-    for id in ids {
-        if spill.field(id).is_some() {
-            *misplaced = true;
-        }
-    }
-}
-
-fn rewrite_statement(statement: &mut Stmt, spill: &Spill, misplaced: &mut bool) {
-    match statement {
-        Stmt::Assignment(assignment) => {
-            for e in assignment.left.iter_mut().chain(assignment.right.iter_mut()) {
-                rewrite_expr(e, spill, misplaced);
-            }
-        }
-        Stmt::Break | Stmt::Continue | Stmt::Comment(_) => {}
-        Stmt::Call(e) => rewrite_expr(e, spill, misplaced),
-        Stmt::Do(block) => rewrite_statements(&mut block.statements, spill, misplaced),
-        Stmt::While(w) => {
-            rewrite_expr(&mut w.condition, spill, misplaced);
-            rewrite_statements(&mut w.statements, spill, misplaced);
-        }
-        Stmt::Repeat(r) => {
-            rewrite_statements(&mut r.statements, spill, misplaced);
-            rewrite_expr(&mut r.condition, spill, misplaced);
-        }
-        Stmt::If(i) => rewrite_if(i, spill, misplaced),
-        Stmt::NumericFor(f) => {
-            check_declared(std::slice::from_ref(&f.id), spill, misplaced);
-            rewrite_expr(&mut f.start, spill, misplaced);
-            rewrite_expr(&mut f.end, spill, misplaced);
-            if let Some(step) = &mut f.step {
-                rewrite_expr(step, spill, misplaced);
-            }
-            rewrite_statements(&mut f.statements, spill, misplaced);
-        }
-        Stmt::For(f) => {
-            check_declared(&f.ids, spill, misplaced);
-            rewrite_expr(&mut f.expression, spill, misplaced);
-            rewrite_statements(&mut f.statements, spill, misplaced);
-        }
-        Stmt::FunctionDeclaration(f) => {
-            if f.localize
-                && match &f.name {
-                    Expr::TemporaryIdentifier(t) => spill.fields.contains_key(&SpillableLocal::Temporary(t.id)),
-                    Expr::Identifier(i) => spill.named_field(&i.name).is_some(),
-                    _ => false,
-                }
-            {
-                *misplaced = true;
-            }
-            rewrite_expr(&mut f.name, spill, misplaced);
-            check_declared(&f.parameters, spill, misplaced);
-            rewrite_statements(&mut f.statements, spill, misplaced);
-        }
-        Stmt::MethodDeclaration(m) => {
-            rewrite_expr(&mut m.expression, spill, misplaced);
-            check_declared(&m.parameters, spill, misplaced);
-            rewrite_statements(&mut m.statements, spill, misplaced);
-        }
-        Stmt::VariableDeclaration(v) => {
-            check_declared(&v.left, spill, misplaced);
-            for e in &mut v.right {
-                rewrite_expr(e, spill, misplaced);
-            }
-        }
-        Stmt::Return(r) => {
-            for e in &mut r.expressions {
-                rewrite_expr(e, spill, misplaced);
-            }
-        }
-    }
-}
-
-fn rewrite_if(statement: &mut IfStatement, spill: &Spill, misplaced: &mut bool) {
-    rewrite_expr(&mut statement.condition, spill, misplaced);
-    rewrite_statements(&mut statement.statements, spill, misplaced);
-    match &mut statement.else_body {
-        ElseBody::If(next) => rewrite_if(next, spill, misplaced),
-        ElseBody::Block(statements) => rewrite_statements(statements, spill, misplaced),
-    }
-}
-
-fn rewrite_expr(expr: &mut Expr, spill: &Spill, misplaced: &mut bool) {
-    match expr {
-        Expr::TemporaryIdentifier(t) => {
-            if let Some(field) = spill.fields.get(&SpillableLocal::Temporary(t.id)) {
-                *expr = create::property(spill.table.clone(), field.clone());
-            }
-        }
-        Expr::Identifier(i) => {
-            if let Some(field) = spill.named_field(&i.name) {
-                *expr = create::property(spill.table.clone(), field.clone());
-            }
-        }
-        Expr::None
-        | Expr::Nil
-        | Expr::False
-        | Expr::True
-        | Expr::Number(_)
-        | Expr::String(_)
-        | Expr::LateString(_)
-        | Expr::VarArgs => {}
-        Expr::ComputedIndex(c) => {
-            rewrite_expr(&mut c.expression, spill, misplaced);
-            rewrite_expr(&mut c.index, spill, misplaced);
-        }
-        Expr::PropertyAccess(p) => rewrite_expr(&mut p.expression, spill, misplaced),
-        Expr::Call(c) => {
-            rewrite_expr(&mut c.expression, spill, misplaced);
-            for e in &mut c.args {
-                rewrite_expr(e, spill, misplaced);
-            }
-        }
-        Expr::MethodCall(m) => {
-            rewrite_expr(&mut m.expression, spill, misplaced);
-            for e in &mut m.args {
-                rewrite_expr(e, spill, misplaced);
-            }
-        }
-        Expr::Parenthesized(p) => rewrite_expr(&mut p.expression, spill, misplaced),
-        Expr::Function(f) => {
-            check_declared(&f.parameters, spill, misplaced);
-            rewrite_statements(&mut f.statements, spill, misplaced);
-        }
-        Expr::Binary(b) => {
-            rewrite_expr(&mut b.left, spill, misplaced);
-            rewrite_expr(&mut b.right, spill, misplaced);
-        }
-        Expr::Unary(u) => rewrite_expr(&mut u.expression, spill, misplaced),
-        Expr::If(i) => {
-            rewrite_expr(&mut i.condition, spill, misplaced);
-            rewrite_expr(&mut i.expression, spill, misplaced);
-            rewrite_expr(&mut i.alternative, spill, misplaced);
-        }
-        Expr::InterpolatedString(s) => {
-            for part in &mut s.parts {
-                match part {
-                    InterpolatedStringPart::Text(_) => {}
-                    InterpolatedStringPart::Expression(e) => rewrite_expr(e, spill, misplaced),
-                }
-            }
-        }
-        Expr::Array(items) | Expr::Set(items) => {
-            for e in items {
-                rewrite_expr(e, spill, misplaced);
-            }
-        }
-        Expr::Map(fields) => {
-            for field in fields {
-                rewrite_expr(&mut field.index, spill, misplaced);
-                rewrite_expr(&mut field.value, spill, misplaced);
-            }
-        }
-        Expr::MixedTable(fields) => {
-            for field in fields {
-                match field {
-                    TableField::Value(e) => rewrite_expr(e, spill, misplaced),
-                    TableField::Field(f) => {
-                        rewrite_expr(&mut f.index, spill, misplaced);
-                        rewrite_expr(&mut f.value, spill, misplaced);
-                    }
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
