@@ -66,6 +66,13 @@ Re-check these after an update; they are where tsrs's behaviour reaches our outp
 - TypeScript 7 gives the related information of `TS1007` ("The parser expected to find a '}' to match the '{' token
   here.") a length of 0; rbxtsc prints it with TypeScript 5's length of 1 (`rbxts_cli/src/pretty.rs`), so its
   underline matches stock's.
+- **Automatic type directives.** Without `types` in the tsconfig, TypeScript 5 includes every package of the type
+  roots in the program; TypeScript 7 (tsrs `get_automatic_type_directive_names`) includes none (only `"types": ["*"]`
+  lists the type roots). rbxts-rs restores TypeScript 5's rule: `rbxts_project` lists the type roots' packages into
+  the parsed options' `types` when the tsconfig has none (`add_automatic_type_directives`), so a project, or a
+  referenced project, whose sources import no package still sees `@rbxts/compiler-types` (TypeScript 7 alone stops at
+  `TS2318: Cannot find global type 'Array'`). On the real project that loads 70 more declaration files, from 8
+  packages nothing imports, as TypeScript 5 does.
 - **Threading:** the checker is not `Send`, and `get_type_checker` takes a non-reentrant guard. Checking needs a
   512 MiB stack. Set only `checkers`: `single_threaded` also makes parsing and binding serial.
 
@@ -107,14 +114,10 @@ wrong; a few make a build fail where stock's passes, and the entry says how to w
   tsconfig: stock roblox-ts builds it (`out/a/…`, `out/b/…`), rbxts-rs stops at TS5011. The fix is to set `rootDir`
   as well, to that common source directory (`"rootDir": "src"`), which gives the same output in both. rbxts-rs does
   not emulate TypeScript 5's rule: the check is tsrs's option validation.
-- **Automatic type directives.** Without `types` in the tsconfig, TypeScript 5 includes every package of the type
-  roots in the program; TypeScript 7 (tsrs `get_automatic_type_directive_names`) includes none (only `"types": ["*"]`
-  lists the type roots), so a package nothing imports or references is not loaded. On the real project TypeScript 5
-  loads 70 more declaration files, from 8 such packages (and a package nested in one). Only one declares something global
-  (`@rbxts/vide`'s `declare global { namespace JSX }`), which the project does not use: its JSX goes through
-  `React.JSX`, and no source names the global `JSX`. A project that relies on a global or an augmentation from a
-  package it never imports must name the package in `types` (each entry must exist under a type root, as roblox-ts
-  checks; roblox-ts rejects `"*"`). The same holds for each project of a build with project references: a
-  referenced project without `types` sees no type package, so its declarations of Roblox globals fail to check.
+- **Grammar errors TypeScript 7 added.** TypeScript 7's checker reports some grammar errors TypeScript 5.9 does not,
+  for example `error TS18064: Private identifiers cannot be used in destructuring patterns.` (`const { #x: v } = obj`).
+  A file with one fails to build in rbxts-rs, where stock roblox-ts reports its own diagnostic for the construct when
+  it reaches the file (or nothing, when an earlier file's error stops it). Both refuse the code; only the message
+  differs.
 - **Declaration maps.** TypeScript 7 maps some declarations (constructors, a specifier `transformPaths` rewrites)
   differently from TypeScript 5: `.d.ts.map` files are not byte-equal to stock roblox-ts's. The `.d.ts` files are.

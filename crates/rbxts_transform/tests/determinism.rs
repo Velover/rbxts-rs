@@ -127,7 +127,9 @@ fn build(
                         cwd,
                         project_options: ProjectOptionLayer::default(),
                         out_dir_override: None,
-                        write_partial: false,
+                        // the once-per-compilation case keeps every file's diagnostics (rbxts-rs's partial mode): a
+                        // failing build reports no file after the first with an error, as roblox-ts's
+                        write_partial: label == "once",
                         no_write: false,
                         checkers: Some(checkers),
                     },
@@ -274,12 +276,11 @@ fn outputs_and_diagnostics_do_not_depend_on_the_checkers() {
     for (label, fixture, plugins) in &cases {
         let reference = build(fixture, plugins, label, &node_modules, CONFIGS[0]);
         if label == "once" {
-            // a failing build: nothing written, each once-per-compilation diagnostic reported once
+            // a failing build, every file transformed (partial mode): each once-per-compilation diagnostic, once
             let count = |text: &str| reference.1.iter().filter(|l| l.contains(text)).count();
             assert_eq!(count("type `any` is not supported"), 2 + 9, "{:?}", reference.1);
             assert_eq!(count("Enum merging is not supported"), 1, "{:?}", reference.1);
             assert_eq!(count("Namespace merging is not supported"), 1, "{:?}", reference.1);
-            assert!(!reference.0.keys().any(|p| p.ends_with(".luau")), "{:?}", reference.0.keys());
         } else {
             assert!(reference.0.keys().any(|p| p.ends_with(".luau")), "{label}: the reference build wrote no Luau");
         }

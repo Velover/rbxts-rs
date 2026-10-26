@@ -81,3 +81,37 @@ fn diagnostics_print_as_stock_with_related_information() {
 fn diagnostics_print_as_stock_with_an_empty_span() {
     diagnostics_like_stock("diagnostics_pretty_syntax");
 }
+
+/// roblox-ts's `compileFiles` adds every file's checker diagnostics but transforms file by file, in transform order,
+/// and transforms nothing after the first error: `b.ts`'s roblox-ts error and `d.ts`'s checker error are reported,
+/// `c.ts`'s roblox-ts error is not (it comes after `b.ts`'s).
+#[test]
+fn diagnostics_stop_at_the_first_file_with_an_error_as_stock() {
+    diagnostics_like_stock("diagnostics_first_error");
+}
+
+/// Without `types` in the tsconfig, every package of the type roots is in the program, as in TypeScript 5: a project
+/// whose sources import no package still sees `@rbxts/compiler-types` (TypeScript 7 would load none: TS2318).
+#[test]
+fn a_tsconfig_without_types_loads_every_type_root_package_as_stock() {
+    let Some(node_modules) = node_modules_or_skip("cli::automatic_types") else { return };
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/automatic_types");
+    let mut root = TempDir::new("cli-automatic-types");
+    for name in ["src", "tsconfig.json", "package.json"] {
+        let from = fixture.join(name);
+        if from.is_dir() {
+            copy_dir(&from, &root.path().join(name));
+        } else {
+            std::fs::copy(&from, root.path().join(name)).unwrap();
+        }
+    }
+    root.link("node_modules", &node_modules);
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_rbxtsc"))
+        .arg("build")
+        .current_dir(root.path())
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    assert_eq!(output.status.code(), Some(0));
+    assert!(root.path().join("out/init.luau").is_file());
+}

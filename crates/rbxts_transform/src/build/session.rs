@@ -1217,11 +1217,27 @@ impl<'p> BuildSession<'p> {
             check_failed = report.diagnostics.iter().any(|d| d.category() == Category::Error);
             to_transform = files.clone();
         }
+        // roblox-ts's `compileFiles` checks and transforms file by file, in transform order, and stops transforming at
+        // the first error: the files before the first one the check failed are transformed (their diagnostics are
+        // reported, up to the first transform error), nothing is written (`first_error_cut`)
+        let mut checked_prefix = false;
         if check_failed {
             if let Some(run) = &run {
                 explain_failures(&mut report, project, services, &run.active, &run.shared, &run.times, &ctx, &env);
             }
-            return (report, summary, committed, Some(loaded));
+            let failing: FxHashSet<P<SourceFile>> = report
+                .diagnostics
+                .iter()
+                .filter(|d| d.category() == Category::Error)
+                .map(|d| d.file())
+                .collect::<Option<_>>()
+                .unwrap_or_default();
+            let first = to_transform.iter().position(|f| failing.contains(f)).unwrap_or(0);
+            if first == 0 || self.options.write_partial {
+                return (report, summary, committed, Some(loaded));
+            }
+            to_transform.truncate(first);
+            checked_prefix = true;
         }
 
         // 5. transform
@@ -1288,6 +1304,9 @@ impl<'p> BuildSession<'p> {
                 asts.push(transformed.ast);
                 done.push(file);
             }
+            if !self.options.write_partial {
+                crate::compile::first_error_cut(&mut report.files, &plugin_reported);
+            }
             drop_reported_earlier(report.files.iter_mut().map(|f| &mut f.diagnostics).zip(once.iter().map(Vec::as_slice)));
             report.diagnostics.extend(crate::compile::classify_diagnostics(classify));
             report.fatal.extend(transformed.stopped);
@@ -1335,7 +1354,7 @@ impl<'p> BuildSession<'p> {
         report.diagnostics.extend(cached.into_iter().flat_map(|(_, diagnostics, _)| diagnostics));
 
         let any_errors = report.has_errors();
-        if any_errors && !self.options.write_partial {
+        if (any_errors && !self.options.write_partial) || checked_prefix {
             if let Some(run) = &run {
                 record_timings(&mut report, &run.active, &run.times, hook_times.as_ref());
             }

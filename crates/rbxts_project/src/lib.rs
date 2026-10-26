@@ -83,6 +83,41 @@ impl ParseConfigHost for ConfigHost {
     }
 }
 
+/// TypeScript 5's automatic type directives (`getAutomaticTypeDirectiveNames`): without `types` in the tsconfig,
+/// every package of the type roots is in the program (one whose package.json has `"typings": null` excepted, and
+/// names starting with a dot). TypeScript 7 includes none then (only `"types": ["*"]` does), so a project, or a
+/// referenced project, whose sources import no package would not see the Roblox globals of `@rbxts/compiler-types`.
+/// The names go into the parsed options' `types`, which roblox-ts's own check of `types` accepts (each is a
+/// directory of a type root).
+fn add_automatic_type_directives(parsed: &mut ParsedCommandLine, fs: &dyn FS, cwd: &str) {
+    let Some(options) = parsed.parsed_config.compiler_options.as_ref() else { return };
+    if options.types.is_some() {
+        return;
+    }
+    let mut names = Vec::new();
+    for root in options.get_effective_type_roots(cwd).0 {
+        if !fs.directory_exists(&root) {
+            continue;
+        }
+        for directory in fs.get_accessible_entries(&root).directories {
+            let normalized = tspath::normalize_path(&directory);
+            let package_json = tspath::combine_paths(&root, &[&normalized, "package.json"]);
+            let not_needed = fs.file_exists(&package_json)
+                && fs
+                    .read_file(&package_json)
+                    .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                    .is_some_and(|json| json.get("typings").is_some_and(serde_json::Value::is_null));
+            let name = tspath::get_base_file_name(&normalized);
+            if !not_needed && !name.starts_with('.') {
+                names.push(name);
+            }
+        }
+    }
+    let mut options = CompilerOptions::clone(options);
+    options.types = Some(names);
+    parsed.parsed_config.compiler_options = Some(P::new(options));
+}
+
 /// Parses the tsconfig and creates the program. Returns the config diagnostics when the config cannot be used.
 /// `lazy_dts` switches a process-wide tsrs mode on for good: only for one-shot processes that never check a
 /// declaration file.
@@ -112,9 +147,10 @@ pub fn load_cached(
     let (parsed, errors) = tsrs_compiler::worker_pool()
         .install(|| get_parsed_command_line_of_config_file(&opts.tsconfig, Some(&overrides), None, host, None));
     let config_time = start.elapsed();
-    let Some(parsed) = parsed.filter(|_| errors.is_empty()) else {
+    let Some(mut parsed) = parsed.filter(|_| errors.is_empty()) else {
         return Err(errors);
     };
+    add_automatic_type_directives(&mut parsed, fs.as_ref(), &cwd);
     let config = P::new(parsed);
 
     if opts.lazy_dts && tsrs_compiler::lazy_dts_allowed() {
