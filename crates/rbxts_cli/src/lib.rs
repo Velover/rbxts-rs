@@ -321,7 +321,9 @@ pub fn print_report(report: &CompileReport, cwd: &str, build: &BuildArgs) {
     }
     // roblox-ts's build returns `ts.sortAndDeduplicateDiagnostics(diagnostics)`: by file, position, code and message,
     // whatever order the files were checked and transformed in
-    let diagnostics = sort_and_deduplicate_diagnostics(&diagnostics);
+    // the project graph's errors (thrown before any build) come in the order found: roblox-ts's watcher reports a
+    // `DiagnosticError`'s diagnostics as they are
+    let diagnostics = if report.thrown { diagnostics } else { sort_and_deduplicate_diagnostics(&diagnostics) };
     // roblox-ts reports its fatal errors (`ProjectError`, `emitResultFailure`) as text diagnostics too
     let fatal = report.fatal.iter().map(|message| text_diagnostic(message, Category::Error));
     for diagnostic in diagnostics.iter().copied().chain(fatal) {
