@@ -165,7 +165,11 @@ resolution sees packages installed or upgraded since the last build.
   the incremental state last.
 - **Errors before writes:** the output set (roblox-ts's `getProjectOutputs`: two inputs emitting to one output, an
   output root holding sources) is computed before anything is compiled, and the assets are read before the first
-  write, so a failing build writes nothing; only I/O errors can stop a commit midway.
+  write, so a failing build writes nothing. The Luau outputs (and re-rendered files) are written all or nothing:
+  each is staged in a temporary file beside it first (a directory in the way fails here), and when any staging
+  fails, the temporary files go and nothing is renamed or written after; only then are they renamed into place.
+  Only I/O errors at a rename (a target another process keeps holding past the retries) or in the later steps can
+  stop a commit midway, leaving what was renamed before; the next build repairs it.
 - **Watch mode:** `notify` events on the sources, configs, Rojo files, plugin inputs and `watch_dir` roots, and on
   everything the last program load read (logged as tsrs's own watch mode does: files, directories and the paths
   module resolution probed that did not exist, in every ancestor's `node_modules`, `@types`, `typeRoots` and

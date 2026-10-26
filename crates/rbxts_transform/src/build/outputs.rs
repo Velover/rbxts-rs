@@ -32,7 +32,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use rbxts_project::{ProjectServices, nodepath};
 
-use crate::plugins::lifecycle::{remove_file, write_if_changed};
+use crate::plugins::lifecycle::{commit_staged, remove_file, stage_if_changed, write_if_changed};
 use crate::project::copy_include::effective_include_path;
 
 /// The outputs of one build.
@@ -252,39 +252,72 @@ pub fn sync_assets(
     Ok(written)
 }
 
-/// Commit step 1 for the Luau outputs: `(path, bytes)` per file. With `listing`, each output's case is matched first
-/// ([`match_case`]), one file at a time, since a case-only rename can rename a directory other outputs share; then
-/// the files are written in parallel ([`super::parallel::map`]), each only if it is missing or its bytes differ.
-/// Every file is attempted. Per file, in `files` order: whether it was written, or the error.
+/// Commit step 1 for the Luau outputs: `(path, bytes, match case)` per file, all or nothing (DESIGN §14: a failing
+/// build writes nothing).
+/// 1. Every file whose bytes differ (or that is missing) is staged in a temporary file beside it, in parallel
+///    ([`super::parallel::map`]); a directory in the way is an error here. When any staging fails, the temporary
+///    files and the directories staging created are removed and nothing else happens.
+/// 2. With `listing`, the case of each output flagged so is matched ([`match_case`]), one file at a time, since a
+///    case-only rename can rename a directory other outputs share (a temporary file inside moves with it).
+/// 3. The temporary files are renamed into place, in parallel.
+///
+/// A failure in step 2 or 3 (a rename the file system refuses, a target another process keeps holding past the
+/// retries) leaves the renames made before it: an accepted residual risk, which the next build repairs. Per file,
+/// in `files` order: whether it was written, or the error (a file not written because another failed: `Ok(false)`).
 pub fn write_outputs(
     services: &ProjectServices,
     listing: Option<&Listing>,
-    files: &[(&str, &[u8])],
+    files: &[(&str, &[u8], bool)],
 ) -> Vec<Result<bool, String>> {
-    let cased: Vec<Result<(), String>> = files
-        .iter()
-        .map(|&(path, _)| match listing {
-            Some(listing) => {
-                match_case(services, path, listing).map_err(|e| format!("could not rename to {path}: {e}"))
-            }
-            None => Ok(()),
-        })
-        .collect();
-    let jobs: Vec<(usize, &str, &[u8])> = files
-        .iter()
-        .zip(&cased)
-        .enumerate()
-        .filter(|(_, (_, cased))| cased.is_ok())
-        .map(|(i, (&(path, bytes), _))| (i, path, bytes))
-        .collect();
-    let written = super::parallel::map(&jobs, |&(_, path, bytes)| {
-        write_if_changed(Path::new(path), bytes).map_err(|e| format!("could not write {path}: {e}"))
-    });
-    let mut results: Vec<Result<bool, String>> = cased.into_iter().map(|r| r.map(|()| false)).collect();
-    for ((i, _, _), result) in jobs.into_iter().zip(written) {
-        results[i] = result;
+    let error = |path: &str, e: io::Error| format!("could not write {path}: {e}");
+    // the directories staging may create, deepest first, to remove again when it fails
+    let mut created: Vec<&Path> = Vec::new();
+    let mut seen: FxHashSet<&Path> = FxHashSet::default();
+    for &(path, _, _) in files {
+        let mut dir = Path::new(path).parent();
+        while let Some(d) = dir
+            && !d.as_os_str().is_empty()
+            && seen.insert(d)
+            && !d.exists()
+        {
+            created.push(d);
+            dir = d.parent();
+        }
     }
-    results
+    created.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
+    let staged = super::parallel::map(files, |&(path, bytes, _)| stage_if_changed(Path::new(path), bytes));
+    let unstage = |staged: &[io::Result<Option<std::path::PathBuf>>]| {
+        for temp in staged.iter().filter_map(|s| s.as_ref().ok().and_then(Option::as_ref)) {
+            let _ = std::fs::remove_file(temp);
+        }
+        for dir in &created {
+            let _ = std::fs::remove_dir(dir);
+        }
+    };
+    if staged.iter().any(Result::is_err) {
+        unstage(&staged);
+        return files
+            .iter()
+            .zip(staged)
+            .map(|(&(path, _, _), s)| s.map(|_| false).map_err(|e| error(path, e)))
+            .collect();
+    }
+    let staged: Vec<Option<std::path::PathBuf>> = staged.into_iter().map(Result::unwrap_or_default).collect();
+    if let Some(listing) = listing {
+        for &(path, _, _) in files.iter().filter(|f| f.2) {
+            if let Err(e) = match_case(services, path, listing) {
+                unstage(&staged.iter().cloned().map(Ok).collect::<Vec<_>>());
+                let message = format!("could not rename to {path}: {e}");
+                return files.iter().map(|f| if f.0 == path { Err(message.clone()) } else { Ok(false) }).collect();
+            }
+        }
+    }
+    let jobs: Vec<(&str, Option<&std::path::PathBuf>)> =
+        files.iter().zip(&staged).map(|(&(path, _, _), temp)| (path, temp.as_ref())).collect();
+    super::parallel::map(&jobs, |&(path, temp)| match temp {
+        Some(temp) => commit_staged(temp, Path::new(path)).map(|()| true).map_err(|e| error(path, e)),
+        None => Ok(false),
+    })
 }
 
 /// The files under the output roots before a build writes anything, taken once per build: for the missing-output

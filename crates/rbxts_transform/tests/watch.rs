@@ -1136,3 +1136,58 @@ fn a_late_string_that_makes_a_cached_file_refused_fails_the_watch_rebuild() {
     });
     drop(copy);
 }
+
+/// Every entry under `dir` (files and directories), by relative path.
+fn entries(dir: &Path) -> Vec<String> {
+    fn walk(dir: &Path, base: &Path, out: &mut Vec<String>) {
+        let Ok(read) = std::fs::read_dir(dir) else { return };
+        for entry in read.map(Result::unwrap) {
+            let path = entry.path();
+            out.push(path.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/"));
+            if entry.file_type().unwrap().is_dir() {
+                walk(&path, base, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out);
+    out.sort();
+    out
+}
+
+/// The Luau outputs are written all or nothing (DESIGN §14: a failing build writes nothing): with two outputs blocked
+/// by directories, the build fails naming both, and no other output is written, no temporary file is left, and no
+/// directory the staging created stays. With the paths free again, the next build writes them.
+#[test]
+fn a_luau_write_error_writes_no_other_output() {
+    let Some((copy, root)) = keeper_copy("blocked", false) else { return };
+    let blocked = ["out/shared/c.luau", "out/shared/d.luau"];
+    for dir in blocked {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+        std::fs::write(root.join(dir).join("keep.txt"), "x").unwrap();
+    }
+    let before = entries(&root.join("out"));
+    big_stack(|| {
+        let options = PluginOptions { ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
+        let mut session = keeper_session(&root, &options, false);
+        let (report, summary) = session.build(&[]);
+        let failed: Vec<&String> = report.fatal.iter().filter(|m| m.starts_with("could not write")).collect();
+        assert_eq!(failed.len(), 2, "{:?}", report.fatal);
+        for (message, dir) in failed.iter().zip(blocked) {
+            assert!(message.replace('\\', "/").contains(dir), "{message}");
+        }
+        assert!(summary.written.is_empty(), "{:?}", summary.written);
+        assert_eq!(entries(&root.join("out")), before, "nothing written, no temporary file, no new directory");
+
+        for dir in blocked {
+            std::fs::remove_dir_all(root.join(dir)).unwrap();
+        }
+        let (report, summary) = session.build(&[]);
+        assert!(!report.has_errors(), "{:?}", report.fatal);
+        assert!(!summary.written.is_empty());
+        for file in blocked {
+            assert!(root.join(file).is_file(), "{file}");
+        }
+    });
+    drop(copy);
+}

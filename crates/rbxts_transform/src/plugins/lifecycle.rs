@@ -531,7 +531,17 @@ fn is_transient(error: &io::Error) -> bool {
 /// `MOVEFILE_REPLACE_EXISTING`), retrying with backoff while another process holds the target. The error is
 /// returned after the last attempt; nothing is skipped silently.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let temp = stage(path, bytes)?;
+    commit_staged(&temp, path)
+}
+
+/// [`write_atomic`]'s first half: writes `bytes` to a temporary file next to `path` (creating its directory) and
+/// returns that file. A directory at `path` is an error here already, not only at the rename.
+pub fn stage(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    if std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir()) {
+        return Err(io::Error::from(io::ErrorKind::IsADirectory));
+    }
     let dir = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir)?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -541,10 +551,25 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         let _ = std::fs::remove_file(&temp);
         return Err(e);
     }
+    Ok(temp)
+}
+
+/// [`stage`] when the file is missing or its bytes differ (`None`: it holds them already).
+pub fn stage_if_changed(path: &Path, bytes: &[u8]) -> io::Result<Option<PathBuf>> {
+    if std::fs::read(path).is_ok_and(|existing| existing == bytes) {
+        return Ok(None);
+    }
+    stage(path, bytes).map(Some)
+}
+
+/// [`write_atomic`]'s second half: renames the [`stage`]d `temp` into place (`MoveFileExW` with
+/// `MOVEFILE_REPLACE_EXISTING`), retrying with backoff while another process holds the target; removes `temp` when
+/// it fails at last.
+pub fn commit_staged(temp: &Path, path: &Path) -> io::Result<()> {
     let mut delay = Duration::from_millis(10);
     let mut attempt = 0;
     loop {
-        match std::fs::rename(&temp, path) {
+        match std::fs::rename(temp, path) {
             Ok(()) => return Ok(()),
             Err(e) if is_transient(&e) && attempt < 8 => {
                 attempt += 1;
@@ -552,7 +577,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
                 delay = (delay * 2).min(Duration::from_millis(500));
             }
             Err(e) => {
-                let _ = std::fs::remove_file(&temp);
+                let _ = std::fs::remove_file(temp);
                 return Err(e);
             }
         }

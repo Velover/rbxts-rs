@@ -1341,18 +1341,24 @@ impl<'p> BuildSession<'p> {
             prepared => prepared.and_then(Result::ok).flatten(),
         };
         if !self.options.no_write {
-            // rbxts-rs: in parallel, in transform order for what is reported; a case-only rename renames the output too
-            // (roblox-ts keeps the old name: its bug)
+            // rbxts-rs: in parallel, all or nothing (`write_outputs`), errors in the order of `report.files`; a
+            // case-only rename renames the output too (roblox-ts keeps the old name: its bug). The re-rendered files
+            // (a successful build's only) go in the same batch, without the case check.
             let luau: Vec<(usize, &str, &[u8])> = report
                 .files
                 .iter()
                 .enumerate()
                 .filter_map(|(i, o)| o.luau.as_ref().map(|luau| (i, o.out_path.as_str(), luau.as_bytes())))
                 .collect();
-            let to_write: Vec<(&str, &[u8])> = luau.iter().map(|&(_, path, bytes)| (path, bytes)).collect();
-            let results = outputs::write_outputs(services, Some(&listing), &to_write);
+            let rerender = success && report.fatal.is_empty();
+            let mut to_write: Vec<(&str, &[u8], bool)> =
+                luau.iter().map(|&(_, path, bytes)| (path, bytes, true)).collect();
+            if rerender {
+                to_write.extend(rerendered.iter().map(|(p, s)| (p.as_str(), s.as_bytes(), false)));
+            }
+            let mut results = outputs::write_outputs(services, Some(&listing), &to_write).into_iter();
             let indices: Vec<usize> = luau.iter().map(|&(i, _, _)| i).collect();
-            for (i, result) in indices.into_iter().zip(results) {
+            for (i, result) in indices.into_iter().zip(results.by_ref()) {
                 let outcome = &mut report.files[i];
                 match result {
                     Ok(written) => {
@@ -1364,10 +1370,8 @@ impl<'p> BuildSession<'p> {
                     Err(message) => report.fatal.push(message),
                 }
             }
-            if success && report.fatal.is_empty() {
-                let to_write: Vec<(&str, &[u8])> =
-                    rerendered.iter().map(|(p, s)| (p.as_str(), s.as_bytes())).collect();
-                for ((path, _), result) in rerendered.iter().zip(outputs::write_outputs(services, None, &to_write)) {
+            if rerender {
+                for ((path, _), result) in rerendered.iter().zip(results) {
                     match result {
                         Ok(true) => summary.written.push(path.clone()),
                         Ok(false) => {}
