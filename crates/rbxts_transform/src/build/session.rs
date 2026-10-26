@@ -302,10 +302,23 @@ impl<'p> BuildSession<'p> {
         self.disk_checked = true;
     }
 
+    /// The sessions of the projects this one references, in build order (a build with project references): a
+    /// watcher watches their sources and inputs too.
+    pub fn reference_sessions(&self) -> impl Iterator<Item = &BuildSession<'p>> {
+        self.references.iter().map(|(_, session)| session)
+    }
+
+    /// The output roots of the last loaded project: its outDir (or the override) and its `declarationDir`.
+    pub fn output_roots(&self) -> Vec<String> {
+        let Some(last) = &self.last else { return Vec::new() };
+        outputs::output_roots(&last.services, &last.project.program.options(), self.options.out_dir_override.as_deref())
+    }
+
     /// The tsconfig and `extends` files, the Rojo project files (the project's and the package resolvers') and the
-    /// plugin build inputs of the last loaded build: what a watcher watches besides the sources.
+    /// plugin build inputs of the last loaded build, and every config of its project graph: what a watcher watches
+    /// besides the sources.
     pub fn config_inputs(&self) -> Vec<String> {
-        let mut inputs = Vec::new();
+        let mut inputs = self.graph_config_paths.clone();
         if let Some(last) = &self.last {
             inputs.extend(last.config_paths.iter().cloned());
             inputs.extend(last.services.rojo_resolver.config_files().iter().cloned());

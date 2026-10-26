@@ -958,3 +958,48 @@ fn the_runtime_include_source_is_watched() {
     drop(watcher);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// Project references (`rbxts_transform`'s `references` watch fixture): an edit in the deepest referenced project
+/// rebuilds it, its declarations and the root (a type change there turns the root's `+` into `..`), and the
+/// declarations the build writes into the referenced projects' output folders start no rebuild of their own.
+#[test]
+fn edits_in_a_referenced_project_are_seen() {
+    let node_modules = fixture_node_modules();
+    if !node_modules.join("@rbxts").join("compiler-types").is_dir() {
+        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        return;
+    }
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../rbxts_transform/tests/watch_fixtures/references");
+    let base = std::env::temp_dir().join(format!("rbxts-rs-cli-watch-refs-{}", std::process::id()));
+    let root = base.join("project");
+    let _ = std::fs::remove_dir_all(&base);
+    copy_dir(&fixture, &root);
+    let links = link_packages(&root.join("node_modules/@rbxts"));
+    let watcher = start(&root);
+    assert_eq!(watcher.build_end(0)["ok"], true);
+    watcher.assert_quiet(Duration::from_secs(2));
+    let main = root.join("out/main.server.luau");
+    let common = root.join("projects/common/src/index.ts");
+    let declaration = root.join("projects/common/out/types/index.d.ts");
+    assert!(std::fs::read_to_string(&main).unwrap().contains("common.label + common.label"));
+
+    let text = std::fs::read_to_string(&common).unwrap();
+    std::fs::write(&common, text.replace("export let label: number = 0;", "export let label: string = \"\";")).unwrap();
+    watcher.until_ok();
+    watcher.still_ok("label to string");
+    assert!(std::fs::read_to_string(&main).unwrap().contains("common.label .. common.label"), "the root rebuilt");
+    assert!(std::fs::read_to_string(&declaration).unwrap().contains("label: string"), "the declaration rewritten");
+
+    let text = std::fs::read_to_string(&common).unwrap();
+    std::fs::write(&common, text.replace("total += value;", "total += value * 7;")).unwrap();
+    watcher.until_ok();
+    watcher.still_ok("body edit");
+    let output = std::fs::read_to_string(root.join("projects/common/out/init.luau")).unwrap();
+    assert!(output.contains("value * 7"), "the referenced project rebuilt: {output}");
+
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}

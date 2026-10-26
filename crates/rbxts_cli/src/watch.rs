@@ -700,8 +700,64 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
     watched.inputs = inputs::InputWatches::of(session);
     watched.recursive.extend(watched.inputs.recursive.iter().cloned());
     watched.flat.extend(watched.inputs.flat.iter().cloned());
+    for root in session.output_roots() {
+        let root = key(&root);
+        if !protected.iter().any(|p| is_under(p, &root)) && !watched.ignored_roots.contains(&root) {
+            watched.ignored_roots.push(root);
+        }
+    }
+    for reference in session.reference_sessions() {
+        add_referenced_project(&mut watched, reference, &mut dirs);
+    }
     watched.dedupe();
     Some(watched)
+}
+
+/// What a project a build with project references builds before its root adds to the watched set: its source roots
+/// (any event in them counts), configs, state files, the directories of its program files, what its load read, its
+/// Rojo folders and its plugins' recorded inputs; its output roots are ignored, as the root's are (the root's program
+/// reads the declarations written there: their events are this watcher's own writes).
+fn add_referenced_project(watched: &mut Watched, session: &BuildSession<'_>, dirs: &mut FxHashMap<String, bool>) {
+    let Some((_, program_files, root_dirs)) = session.watch_roots() else { return };
+    let protected: Vec<String> = root_dirs.iter().map(|r| key(r)).collect();
+    for root in session.output_roots() {
+        let root = key(&root);
+        if !protected.iter().any(|p| is_under(p, &root)) && !watched.ignored_roots.contains(&root) {
+            watched.ignored_roots.push(root);
+        }
+    }
+    for input in session.config_inputs() {
+        watched.config_inputs.insert(key(&input));
+        watched.cover(&input, dirs);
+    }
+    for file in session.state_files() {
+        watched.state_files.insert(key(&file.path), file.clone());
+        watched.cover(&file.path, dirs);
+    }
+    for root in root_dirs.iter().map(|r| nodepath::resolve(&[r])).chain(session.plugin_watch_dirs()) {
+        watched.root_keys.push(key(&root));
+        watched.recursive.insert(root);
+    }
+    for file in &program_files {
+        if file.starts_with("bundled:") {
+            continue;
+        }
+        if let Some(root) = package_root(file) {
+            watched.add_package(&root, dirs, true);
+            continue;
+        }
+        let dir = nodepath::dirname(file).to_owned();
+        watched.open_dirs.insert(key(&dir));
+        watched.flat.insert(dir);
+    }
+    if let Some(log) = session.read_log() {
+        watched.add_log(&log, dirs);
+    }
+    watched.add_rojo_dirs(session.rojo_partitions(), dirs);
+    watched.stamps.extend(session.loaded_stamps());
+    let inputs = inputs::InputWatches::of(session);
+    watched.recursive.extend(inputs.recursive.iter().cloned());
+    watched.flat.extend(inputs.flat.iter().cloned());
 }
 
 /// Whether an event path matters. `folder_modify`: the event is only a modification of an existing directory (its
