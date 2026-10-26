@@ -994,6 +994,23 @@ fn checker_errors_are_explained_by_plugins() {
     assert!(!project.out_exists());
 }
 
+/// Stock roblox-ts runs its TypeScript transformers (the plugins here) before checking anything: when one reports an
+/// error, only their diagnostics are reported, not the checker's of a later file, nor roblox-ts's.
+#[test]
+fn a_plugin_error_reports_only_the_plugins_diagnostics() {
+    let Some(project) = Project::new("plugin-first") else { return };
+    project.write(
+        "src/shared/aaplugin.ts",
+        "export const h = probeHoist(laterFn());\nexport function laterFn() {\n\treturn 1;\n}\nexport const nul = null;\n",
+    );
+    project.write("src/shared/zzcheck.ts", "export const bad: number = \"x\";\n");
+    let report = project.build(&["stamp", "probe"], |_| {});
+    let errors = errors(&report);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].starts_with("error aaplugin.ts: rbxts-rs internal error: plugin `probe`: hoist"), "{errors:?}");
+    assert!(!project.out_exists());
+}
+
 /// A tsconfig transformer no registered plugin claims: as in stock roblox-ts 3.0.0 (`createTransformerList`), one Node
 /// can't resolve from the project directory is a warning with stock's text, and the build goes on without it; one
 /// Node loads a factory function from (stock would run it) is an error; one Node fails to load is a warning with Node's

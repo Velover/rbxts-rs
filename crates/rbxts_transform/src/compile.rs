@@ -338,30 +338,66 @@ pub(crate) struct FileTransform {
     pub plugin_failures: Vec<P<Diagnostic>>,
 }
 
+/// Where the first error of a build cuts its transform diagnostics ([`first_error_cut`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ErrorCut {
+    /// No error: every diagnostic stays.
+    None,
+    /// A plugin reported an error: only the plugins' side stays, of every file, and no checker diagnostic.
+    Plugin,
+    /// The file at this transform order is the first with an error: the later files keep only the plugins' side.
+    After(u32),
+}
+
+impl ErrorCut {
+    /// Whether the compiler diagnostics of the file at transform order `order` stay.
+    pub(crate) fn keeps(self, order: u32) -> bool {
+        match self {
+            ErrorCut::None => true,
+            ErrorCut::Plugin => false,
+            ErrorCut::After(first) => order <= first,
+        }
+    }
+}
+
 /// roblox-ts's `compileFiles` stops at the first error: its TypeScript transformers (the plugins here) run over every
-/// file first, and when one reports an error, only their diagnostics are reported; otherwise the files are
-/// transformed one by one in transform order, and those after the first with an error are not. `files` are the
-/// transformed files in that order (in `plugin`, what plugins reported and the internal errors of their misuse of the
-/// seam, a failing transformer's errors): with a plugin error, every compiler diagnostic goes; otherwise those of the
-/// files after the first with an error do. The plugins' side stays, as the transformers saw every file.
-pub(crate) fn first_error_cut(files: &mut [FileOutcome], plugin: &[Vec<P<Diagnostic>>]) {
+/// file first, and when one reports an error, only their diagnostics are reported (no checker diagnostic either: the
+/// check comes after them); otherwise each file in transform order is checked, then transformed while no error has
+/// been reported, so the transform diagnostics of the files after the first with an error are not. `files` are the
+/// files transformed now, `orders` their transform orders, `plugin` their plugins' side (what plugins reported and the
+/// internal errors of their misuse of the seam, a failing transformer's errors); `plugin_error` is a plugin error
+/// reported elsewhere. Cuts `files` and returns the cut, which the caller applies to the cached lists of the files not
+/// transformed again (their last transform's, which hold no error) and, for [`ErrorCut::Plugin`], to the checker
+/// diagnostics. The plugins' side stays, as the transformers saw every file.
+pub(crate) fn first_error_cut(
+    files: &mut [FileOutcome],
+    orders: &[u32],
+    plugin: &[Vec<P<Diagnostic>>],
+    plugin_error: bool,
+) -> ErrorCut {
     let is_error = |d: &P<Diagnostic>| d.category() == Category::Error;
     let plugin_sets: Vec<FxHashSet<P<Diagnostic>>> = plugin.iter().map(|p| p.iter().copied().collect()).collect();
-    let plugin_error = plugin.iter().flatten().any(is_error);
-    let first = if plugin_error {
-        0
+    let cut = if plugin_error || plugin.iter().flatten().any(is_error) {
+        ErrorCut::Plugin
     } else {
-        let compiler_error = |(f, p): (&FileOutcome, &FxHashSet<P<Diagnostic>>)| {
-            f.diagnostics.iter().any(|d| is_error(d) && !p.contains(d))
-        };
-        match files.iter().zip(&plugin_sets).position(compiler_error) {
-            Some(index) => index + 1,
-            None => return,
+        let first = files
+            .iter()
+            .zip(&plugin_sets)
+            .zip(orders)
+            .filter(|((f, p), _)| f.diagnostics.iter().any(|d| is_error(d) && !p.contains(d)))
+            .map(|(_, &order)| order)
+            .min();
+        match first {
+            Some(first) => ErrorCut::After(first),
+            None => return ErrorCut::None,
         }
     };
-    for (file, plugin) in files.iter_mut().zip(&plugin_sets).skip(first) {
-        file.diagnostics.retain(|d| plugin.contains(d));
+    for ((file, plugin), &order) in files.iter_mut().zip(&plugin_sets).zip(orders) {
+        if !cut.keeps(order) {
+            file.diagnostics.retain(|d| plugin.contains(d));
+        }
     }
+    cut
 }
 
 /// One file's transform diagnostics, for [`drop_plugin_duplicates`].

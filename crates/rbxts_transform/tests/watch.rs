@@ -239,6 +239,19 @@ fn plugin_diagnostic_duplicates_rebuild_as_clean_builds() {
     run_script("plugindiag", "plugindiag-errors", "plugindiag-errors-inc", &["stamp", "probe"], true);
 }
 
+/// Stock's first-error rule (`firsterror-s*.script.json`, over `plugindiag` with a ReplicatedFirst file whose
+/// runtime-library warning is cut after an earlier error): check and roblox-ts errors early and late, a cached file's
+/// warnings after the first error, plugin errors with roblox-ts and check errors (only the plugins' diagnostics).
+#[test]
+fn first_error_cuts_rebuild_as_clean_builds() {
+    for script in ["firsterror-s1", "firsterror-s2", "firsterror-s3", "firsterror-s4"] {
+        run_script("plugindiag", script, script, &["stamp", "probe"], false);
+        run_script("plugindiag", script, &format!("{script}-inc"), &["stamp", "probe"], true);
+    }
+    run_script("plugindiag", "firsterror-s2", "firsterror-s2-plain", &[], false);
+    run_script("plugindiag", "firsterror-s2", "firsterror-s2-plain-inc", &[], true);
+}
+
 /// A tsconfig without `types` (`autotypes.script.json`): every package of the type roots is in the program, as in
 /// TypeScript 5, and a package appearing, changing, turning `"typings": null` or going is a change the watcher and the
 /// incremental state see.

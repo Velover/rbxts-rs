@@ -2,6 +2,12 @@
 	"name": "probe-fixture",
 	"tree": {
 		"$className": "DataModel",
+		"ReplicatedFirst": {
+			"$className": "ReplicatedFirst",
+			"zfirst": {
+				"$path": "out/zfirst"
+			}
+		},
 		"ReplicatedStorage": {
 			"$className": "ReplicatedStorage",
 			"shared": {

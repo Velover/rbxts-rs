@@ -1115,6 +1115,8 @@ impl<'p> BuildSession<'p> {
         // 3. check the files to transform
         let start = Instant::now();
         let ctx = Context::background();
+        // the checker diagnostics are `checked_from..checked_to` (a plugin error drops them: `first_error_cut`)
+        let checked_from = report.diagnostics.len();
         report.diagnostics.extend(project.program_diagnostics());
         report.diagnostics.extend(project.check_files(&ctx, &to_transform));
         if !services.data.options.allow_comment_directives {
@@ -1222,6 +1224,7 @@ impl<'p> BuildSession<'p> {
         // reported, up to the first transform error), nothing is written (`first_error_cut`). A rebuild transforms
         // those of them it would transform anyway and reports the cached lists of the others; the transform order of
         // the first failing file is `checked_prefix`.
+        let checked_to = report.diagnostics.len();
         let mut checked_prefix: Option<u32> = None;
         if check_failed {
             if let Some(run) = &run {
@@ -1257,6 +1260,7 @@ impl<'p> BuildSession<'p> {
         let mut plugin_reported: Vec<Vec<P<Diagnostic>>> = Vec::with_capacity(to_transform.len());
         // with the internal errors of plugins' misuse of the seam: the plugins' side of `first_error_cut`
         let mut plugin_side: Vec<Vec<P<Diagnostic>>> = Vec::with_capacity(to_transform.len());
+        let mut cut = crate::compile::ErrorCut::None;
         let hook_times = {
             // every file on the checker that checked it, one thread per checker (`checker_groups`)
             let file_diagnostics: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>> = match &run {
@@ -1313,7 +1317,14 @@ impl<'p> BuildSession<'p> {
                 done.push(file);
             }
             if !self.options.write_partial {
-                crate::compile::first_error_cut(&mut report.files, &plugin_side);
+                let orders: Vec<u32> = done.iter().map(|f| file_indices[f].0).collect();
+                let is_error = |d: &P<Diagnostic>| d.category() == Category::Error;
+                // what plugins reported while explaining checker diagnostics, and classify_symbol's refusals
+                let elsewhere = report.diagnostics[checked_to..].iter().any(is_error) || classify.iter().any(is_error);
+                cut = crate::compile::first_error_cut(&mut report.files, &orders, &plugin_side, elsewhere);
+                if cut == crate::compile::ErrorCut::Plugin {
+                    report.diagnostics.drain(checked_from..checked_to);
+                }
             }
             drop_reported_earlier(report.files.iter_mut().map(|f| &mut f.diagnostics).zip(once.iter().map(Vec::as_slice)));
             report.diagnostics.extend(crate::compile::classify_diagnostics(classify));
@@ -1333,7 +1344,13 @@ impl<'p> BuildSession<'p> {
                     && checked_prefix.is_none_or(|first| file_indices[&file].0 < first)
                     && let Some(old) = c.files.get(&file.path().to_string())
                 {
-                    cached.push((file_indices[&file].0, old.diagnostics.clone(), &old.plugin_diagnostics));
+                    // cut as the files transformed now (`first_error_cut`)
+                    let order = file_indices[&file].0;
+                    let mut diagnostics = old.diagnostics.clone();
+                    if !cut.keeps(order) {
+                        diagnostics.retain(|d| old.plugin_diagnostics.contains(d));
+                    }
+                    cached.push((order, diagnostics, &old.plugin_diagnostics));
                 }
             }
         }
