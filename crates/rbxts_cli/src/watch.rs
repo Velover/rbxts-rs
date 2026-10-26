@@ -227,8 +227,9 @@ struct Watched {
     /// Path keys of the folders the Rojo resolvers search for nested project files (`$path` folders outside the
     /// ignored roots, the type roots): a project file, or a folder holding one, created or removed there counts.
     rojo_dirs: Vec<String>,
-    /// Which files the program could take in, for `open_dirs`.
-    matcher: Option<IncludeMatcher>,
+    /// Which files the programs could take in, for `open_dirs`: the root project's and every referenced project's
+    /// include matcher (none before a project loaded: any file).
+    matchers: Vec<IncludeMatcher>,
     /// Path keys of the JSON files the last load read, with their spelling and the hash of their text: an event
     /// leaving the same text under the same name does not count.
     texts: FxHashMap<String, (String, u64)>,
@@ -411,7 +412,7 @@ impl Watched {
     /// Whether an entry of an open directory (not under a root) counts: a directory, or a file the program could
     /// take in.
     fn open_entry_counts(&self, path: &str, name: &str) -> bool {
-        let includable = || self.matcher.is_none_or(|m| m.possibly_includes(path));
+        let includable = || self.matchers.is_empty() || self.matchers.iter().any(|m| m.possibly_includes(path));
         match std::fs::metadata(path) {
             Ok(m) if m.is_dir() => true,
             Ok(_) => includable(),
@@ -607,7 +608,7 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
     // a project loaded: the project directory's entries count as the build could read them
     watched.open_dirs.remove(&watched.project_dir);
     watched.project_dir = key(&project_dir);
-    watched.matcher = session.include_matcher();
+    watched.matchers = session.include_matcher().into_iter().collect();
     let out_dir = session.options.out_dir_override.clone().unwrap_or_else(|| services.path_translator.out_dir.clone());
     // an output root holding the project, a source root or the tsconfig would drop the events that matter (the
     // build refuses such a root anyway): it is never ignored
@@ -743,6 +744,8 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
 /// reads the declarations written there: their events are this watcher's own writes).
 fn add_referenced_project(watched: &mut Watched, session: &BuildSession<'_>, dirs: &mut FxHashMap<String, bool>) {
     let Some((_, program_files, root_dirs)) = session.watch_roots() else { return };
+    // a file its tsconfig could take in, in the directory of one of its program files, counts
+    watched.matchers.extend(session.include_matcher());
     let protected: Vec<String> = root_dirs.iter().map(|r| key(r)).collect();
     for root in session.output_roots() {
         let root = key(&root);

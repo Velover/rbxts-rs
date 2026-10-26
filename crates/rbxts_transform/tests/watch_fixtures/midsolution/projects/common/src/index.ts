@@ -12,6 +12,15 @@ export function part(): Instance {
 }
 
 export let count = 0;
+export const joined = SEP + SEP;
+
+export function nonzero() {
+	if (count) {
+		return 1;
+	}
+	return 0;
+}
+
 export function bump() {
 	return ++count;
 }

@@ -85,7 +85,8 @@ fn run_fixture_copying(
             tsconfig: "tsconfig.json".into(),
             copy: copy.iter().map(|c| (*c).to_owned()).collect(),
             scratch: scratch.clone(),
-            project_options: ProjectOptionLayer::default(),
+            // truthiness warnings: a rebuild must report the warnings of the files it does not transform again
+            project_options: ProjectOptionLayer { log_truthy_changes: Some(true), ..ProjectOptionLayer::default() },
             plugins: &plugins,
             ignore_unknown_plugins: plugins.is_empty(),
             node_modules: Some(node_modules),

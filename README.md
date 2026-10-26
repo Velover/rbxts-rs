@@ -113,8 +113,9 @@ dirs to its Rojo output path, so an import across the boundary names the referen
 (`util/create_import_expression.rs`). Each project is a `BuildSession` of its own (incremental and watch state
 included), built before the projects that reference it; a project whose references failed, directly or through a
 solution config, is blocked (not built, nothing written), and the build reports every project's outcome
-(`CompileReport.projects`). A project that is not dirty (no change under its root dirs, program files, configs,
-reads or plugin inputs, and no dirty reference: `BuildSession::needs_build`) is not built, and its last diagnostics
+(`CompileReport.projects`). A project that is not dirty (no change under its root dirs, to its program files, configs,
+reads (the folders its include patterns listed included) or plugin inputs, no output of its last build gone, and no dirty reference:
+`BuildSession::needs_build`) is not built, and its last diagnostics
 are reported again, as roblox-ts does in watch mode. A solution root (no files of its own) only copies the runtime
 include, and only when every project built: roblox-ts copies it whatever the build does, rbxts-rs writes nothing
 for a failing build (DESIGN §14), on purpose. Graph errors (TS6306, TS6310, TS6202) are printed as roblox-ts's
@@ -197,8 +198,9 @@ resolution sees packages installed or upgraded since the last build.
   every plugin, and the files whose hooks' recorded inputs changed (`Cx::env` in a new process; `Cx::record_glob`
   matched again in watch, and always in a new process, which has no matcher). `assumeChangesOnlyAffectDirectDependencies` is refused.
 - **What is kept:** each file's facts (text version, references, augmentations), its plugin file parts, the late
-  strings its Luau uses and what its hooks read (`Cx::env`, `Cx::record_glob`); in memory, the Luau of files with
-  late strings (for re-rendering), the plugins' committed states with the `Shared` made from them and the build
+  strings its Luau uses and what its hooks read (`Cx::env`, `Cx::record_glob`); in memory, its transform warnings (a
+  watch rebuild reports those of the files it does not transform again, as a clean build would; a new process
+  reports those of the files it transforms, as roblox-ts does), the Luau of files with late strings (for re-rendering), the plugins' committed states with the `Shared` made from them and the build
   inputs their `setup` read, and what the last `finish` read; and the artifacts of the last build. The incremental
   state keeps the facts, the parts as the plugins encode them (`Plugin::encode_file_part`), the late strings, the
   hooks' and `setup`'s recorded inputs and the artifacts, so a new process transforms only what changed (a cached

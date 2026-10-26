@@ -110,6 +110,9 @@ struct CommittedFile {
     inputs: FileInputs,
     /// Per active plugin, the part's encoded bytes (made for the incremental state, or read from it).
     encoded: Option<Vec<Option<Vec<u8>>>>,
+    /// Its last transform's diagnostics (warnings: a file with an error never commits), reported again by a
+    /// rebuild that does not transform it, as a clean build would report them (in this process only).
+    diagnostics: Vec<P<Diagnostic>>,
 }
 
 impl CommittedFile {
@@ -122,6 +125,7 @@ impl CommittedFile {
             load_check: None,
             inputs: FileInputs::default(),
             encoded: None,
+            diagnostics: Vec::new(),
         }
     }
 
@@ -152,7 +156,7 @@ impl CommittedFile {
             Vec::new()
         };
         let encoded = (!parts.is_empty()).then_some(record.parts);
-        CommittedFile { facts, parts, late: record.late, ast: None, load_check: None, inputs, encoded }
+        CommittedFile { facts, parts, late: record.late, ast: None, load_check: None, inputs, encoded, diagnostics: Vec::new() }
     }
 }
 
@@ -179,6 +183,9 @@ struct Committed {
     setup_inputs: Option<Vec<DiskInput>>,
     /// The plugin state files the build committed, with the version of the bytes it left on disk.
     state_files: Vec<StateFile>,
+    /// Every output the build left (Luau, declarations and their maps, transformed files, assets): one gone since
+    /// makes the project dirty in a build with project references ([`BuildSession::needs_build`]).
+    outputs: Vec<String>,
 }
 
 /// One project's builds: the committed state, the parsed files and the last program, across builds.
@@ -571,14 +578,20 @@ impl<'p> BuildSession<'p> {
     }
 
     /// Whether this project of a build with project references is dirty (roblox-ts's `ProjectBuild.build`):
-    /// a first build (no paths touched), its last build failed or was blocked, or one of `touched` concerns it:
-    /// under its root dirs, one of its program files, configs (Rojo files and plugin inputs included) or plugin state
-    /// files, under a plugin's watched directory, a recorded plugin input that answers differently, or a path its
-    /// last program load read or probed (or in a directory it listed, or above one). rbxts-rs: also any path under a
+    /// a first build (no paths touched), its last build failed or was blocked, an output its last build left is gone,
+    /// or one of `touched` concerns it: under its root dirs, one of its program files, configs (Rojo files and plugin
+    /// inputs included) or plugin state files, under a plugin's watched directory, a recorded plugin input that
+    /// answers differently, or a path its last program load read or probed (or in a directory it listed, or above
+    /// one: a file new in a folder its tsconfig includes, as the config parse listed it). rbxts-rs: also any path under a
     /// `node_modules` and any Rojo project file, which roblox-ts leaves to its watcher. A project its references
     /// make dirty is dirty too (the caller's).
     pub(super) fn needs_build(&self, touched: &[String]) -> bool {
-        if touched.is_empty() || self.must_build || self.replay.is_none() || self.committed.is_none() {
+        if touched.is_empty() || self.must_build || self.replay.is_none() {
+            return true;
+        }
+        // an output the last build left, gone since (deleted by hand: the watcher counts no event in the output roots)
+        let Some(committed) = &self.committed else { return true };
+        if committed.outputs.iter().any(|output| std::fs::symlink_metadata(output).is_err()) {
             return true;
         }
         let Some(last) = &self.last else { return true };
@@ -809,6 +822,7 @@ impl<'p> BuildSession<'p> {
                     from_disk: true,
                     setup_inputs: Some(disk.setup_inputs),
                     state_files: disk.state_files,
+                    outputs: Vec::new(),
                 });
             }
         }
@@ -1199,6 +1213,18 @@ impl<'p> BuildSession<'p> {
             transformed.hook_times
         };
         report.timings.transform = start.elapsed();
+        // the transform diagnostics of the project files not transformed again: their last transform's, so a rebuild
+        // reports what a clean build would (a single project's, or a dirty project of a graph whose files all cached)
+        if let Some(c) = &committed {
+            let transformed: FxHashSet<P<SourceFile>> = to_transform.iter().copied().collect();
+            for &file in &files {
+                if !transformed.contains(&file)
+                    && let Some(old) = c.files.get(&file.path().to_string())
+                {
+                    report.diagnostics.extend(old.diagnostics.iter().copied());
+                }
+            }
+        }
 
         let any_errors = report.has_errors();
         if any_errors && !self.options.write_partial {
@@ -1649,6 +1675,8 @@ impl<'p> BuildSession<'p> {
             to_transform.iter().copied().zip(load_checks).collect();
         let mut inputs_by_file: FxHashMap<P<SourceFile>, FileInputs> =
             to_transform.iter().copied().zip(file_inputs).collect();
+        let mut diagnostics_by_file: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>> =
+            to_transform.iter().copied().zip(report.files.iter().map(|f| f.diagnostics.clone())).collect();
         let program_files: FxHashMap<String, P<SourceFile>> =
             project.program.source_files().iter().map(|&f| (f.path().to_string(), f)).collect();
         for (key, facts) in facts {
@@ -1663,7 +1691,8 @@ impl<'p> BuildSession<'p> {
                     let load_check = if ast.is_some() { checks_by_file.remove(&file).flatten() } else { None };
                     let inputs = inputs_by_file.remove(&file).unwrap_or_default();
                     let encoded = records.remove(&key).map(|record| record.parts);
-                    CommittedFile { facts, parts, late, ast, load_check, inputs, encoded }
+                    let diagnostics = diagnostics_by_file.remove(&file).unwrap_or_default();
+                    CommittedFile { facts, parts, late, ast, load_check, inputs, encoded, diagnostics }
                 }
                 None => match old_files.remove(&key) {
                     Some(mut old) => {
@@ -1754,6 +1783,7 @@ impl<'p> BuildSession<'p> {
             from_disk: false,
             setup_inputs: None,
             state_files,
+            outputs: project_outputs.files.clone(),
         };
         summary.changes = changes;
         self.pending.clear();

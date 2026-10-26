@@ -1030,3 +1030,34 @@ fn the_first_build_starts_no_second_one() {
     drop(watcher);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A new file in a folder a referenced project's tsconfig includes (`projects/common` includes `types`, outside its
+/// root dir; `rbxts_transform`'s `midsolution` watch fixture) is matched with that project's include patterns, not
+/// the root's: a `.d.ts` redeclaring a global there starts a build, which fails, and its removal one that succeeds.
+#[test]
+fn a_new_file_a_referenced_project_includes_is_seen() {
+    let node_modules = fixture_node_modules();
+    if !node_modules.join("@rbxts").join("compiler-types").is_dir() {
+        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        return;
+    }
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../rbxts_transform/tests/watch_fixtures/midsolution");
+    let base = std::env::temp_dir().join(format!("rbxts-rs-cli-watch-include-{}", std::process::id()));
+    let root = base.join("project");
+    let _ = std::fs::remove_dir_all(&base);
+    copy_dir(&fixture, &root);
+    let links = link_packages(&root.join("node_modules/@rbxts"));
+    let watcher = start(&root);
+    assert_eq!(watcher.build_end(0)["ok"], true);
+    let dup = root.join("projects/common/types/dup.d.ts");
+    std::fs::write(&dup, "declare const SEP: boolean;\n").unwrap();
+    let end = watcher.build_end(1);
+    assert_eq!(end["ok"], false, "the conflicting declaration is part of common's program: {end}");
+    std::fs::remove_file(&dup).unwrap();
+    assert_eq!(watcher.build_end(2)["ok"], true);
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}

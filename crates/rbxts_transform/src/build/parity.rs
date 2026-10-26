@@ -345,6 +345,26 @@ pub fn error_texts(report: &CompileReport, root: &Path) -> Vec<String> {
     out
 }
 
+/// Every diagnostic of a report (each category) and its warnings, as [`error_texts`] names them, sorted.
+pub fn diagnostic_texts(report: &CompileReport, root: &Path) -> Vec<String> {
+    let root = root.to_string_lossy().replace('\\', "/").to_lowercase();
+    let mut out: Vec<String> = report
+        .diagnostics
+        .iter()
+        .chain(report.files.iter().flat_map(|f| &f.diagnostics))
+        .map(|&d| {
+            let file = d.file().map(|f| f.get().file_name().to_lowercase()).unwrap_or_default();
+            let file = file.strip_prefix(&root).unwrap_or(&file).to_owned();
+            let category = format!("{:?}", d.category());
+            format!("{category} {file}:{} TS{}: {}", d.pos().unwrap_or(0), d.code(), flatten_diagnostic_message(d, "\n"))
+        })
+        .chain(report.warnings.iter().map(|w| format!("warning {}", w.replace('\\', "/").to_lowercase().replace(&root, ""))))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// Runs the script; the results of the initial build (step 0) and of every step.
 ///
 /// The clean build of a step runs in a copy of `work/` (`clean-<n>/`) when plugins are registered, since their
@@ -552,6 +572,18 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
                 result.problems.push(format!("diagnostics differ: watch {watch_errors:?} / clean {clean_errors:?}"));
             }
         }
+        // every diagnostic, warnings included, equals the clean build's (a watch rebuild reports the warnings of the
+        // files it does not transform again; a new process of an incremental build, as roblox-ts's, only those of
+        // the files it transforms)
+        if !options.incremental {
+            let moved_out = clean.join("out").to_string_lossy().replace('\\', "/").to_lowercase();
+            let watch_all = diagnostic_texts(&report, &work);
+            let clean_all: Vec<String> =
+                diagnostic_texts(&clean_report, &clean_root).iter().map(|e| e.replace(&moved_out, "/out")).collect();
+            if watch_all != clean_all {
+                result.problems.push(format!("all diagnostics differ: watch {watch_all:?} / clean {clean_all:?}"));
+            }
+        }
         if !options.keep_clean_copies {
             remove_tree(&clean);
         }
@@ -648,8 +680,12 @@ fn apply(dir: &Path, actions: &[Action]) -> Result<Vec<String>, String> {
                 touched.add(text(&path));
             }
             Action::DeleteOutput(file) => {
-                // not a watched path: the build finds the output missing on its own
-                std::fs::remove_file(abs(file)?).map_err(|e| format!("{file}: {e}"))?;
+                // a watcher counts no event in the output roots: the path is passed as an event that starts nothing
+                // of its own (the next edit's build), so the build must find the output missing on its own, also in a
+                // referenced project that nothing else made dirty
+                let path = abs(file)?;
+                std::fs::remove_file(&path).map_err(|e| format!("{file}: {e}"))?;
+                touched.add(text(&path));
             }
             Action::Touch(file) => {
                 let path = abs(file)?;
