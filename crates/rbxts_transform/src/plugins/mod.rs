@@ -122,8 +122,10 @@
 //! **Hoists** (`hoist_check`): a hoisted value must not use what the top-level statement around the hook's node
 //! declares, which it would not read before that statement: a temporary made since the statement started
 //! (`PluginFileState::root_temp_start`; the seam's own top-level temporaries excepted), a name that resolves at the
-//! hook's node to a declaration in that statement or in a function, class or block, or `self` / `super` inside a
-//! function or class. Such a value is an internal error naming the plugin.
+//! hook's node to a declaration in that statement, in a function, class or block, or in a later statement of the file
+//! (roblox-ts declares a name used before its declaration ahead of the statement using it, after the hoist), or
+//! `self` / `super` inside a function or class. The value's own functions and blocks are scopes: a local they
+//! declare covers its uses inside them only. Such a value is an internal error naming the plugin.
 //!
 //! **`classify_symbol`** (`backend::run_classify`): what it reports is anchored at the symbol's declaration and
 //! taken out of the file's diagnostics; the build reports each such diagnostic once, sorted

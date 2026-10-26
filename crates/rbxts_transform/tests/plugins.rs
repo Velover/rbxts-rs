@@ -667,7 +667,15 @@ fn a_hoist_of_what_its_statement_declares_is_refused() {
          for (const i of [1, 2]) {\n\
          \tprint(probeHoist([i]));\n\
          }\n\
-         export const bad5 = (() => { const loc = mk(); return probeHoist(loc); })();\n",
+         export const bad5 = (() => { const loc = mk(); return probeHoist(loc); })();\n\
+         export const bad6 = probeSpill(() => later());\n\
+         export const bad7 = (() => {\n\
+         \tconst q = mk();\n\
+         \treturn probeSpill([(() => { const q = 2; return q; })(), q]);\n\
+         })();\n\
+         export const bad8 = probeSpill(() => ambientLater());\n\
+         function later() { return 1; }\n\
+         declare function ambientLater(): number;\n",
     );
     let report = project.build(&["stamp", "probe"], |_| {});
     let prefix = "error hoists.ts: rbxts-rs internal error: plugin `probe`:";
@@ -697,6 +705,22 @@ fn a_hoist_of_what_its_statement_declares_is_refused() {
                 "{prefix} hoist: the value uses `loc`, which is declared in the current statement (a parameter or a \
                  local of the code around its node){tail}"
             ),
+            // a function the file declares further down: the hoist would read a global
+            format!(
+                "{prefix} hoist_spillable: the value uses `later`, which a later statement of the file declares (a \
+                 function, class, enum or variable declared after the statement around its node){tail}"
+            ),
+            // the inner `q` is the nested function's own: the outer one is still the statement's
+            format!(
+                "{prefix} hoist_spillable: the value uses `q`, which is declared in the current statement (a \
+                 parameter or a local of the code around its node){tail}"
+            ),
+            // an ambient function declared further down: roblox-ts declares `local ambientLater` before the statement
+            // that uses it, after the hoist
+            format!(
+                "{prefix} hoist_spillable: the value uses `ambientLater`, which a later statement of the file declares \
+                 (a function, class, enum or variable declared after the statement around its node){tail}"
+            ),
         ]
     );
     assert!(!project.out_exists());
@@ -707,18 +731,25 @@ fn a_hoist_of_what_its_statement_declares_is_refused() {
         "const top = mk();\n\
          export const fine1 = probeHoist(top);\n\
          export const fine2 = probeHoist([probeHoist(sideEffect())]);\n\
-         export const fine3 = probeSpill(() => { const inner = mk(); return nx ?? inner; });\n",
+         export const fine3 = probeSpill(() => { const inner = mk(); return nx ?? inner; });\n\
+         export const fine4 = probeSpill(() => early());\n",
     );
+    // a function declared further up
+    let early = "function early() { return 1; }\n";
+    let source = std::fs::read_to_string(project.root.join("src/shared/hoists.ts")).unwrap();
+    project.write("src/shared/hoists.ts", &format!("{early}{source}"));
     let report = project.build(&["stamp", "probe"], |_| {});
     assert_eq!(errors(&report), Vec::<String>::new());
     let file = report.files.iter().find(|f| f.file_name.ends_with("hoists.ts")).unwrap();
     assert_eq!(
         file.luau.as_deref().unwrap(),
-        "-- Compiled with roblox-ts v3.0.0\nlocal top = mk()\nlocal _hoisted = top\nlocal fine1 = _hoisted\n\
+        "-- Compiled with roblox-ts v3.0.0\nlocal function early()\n\treturn 1\nend\n\
+         local top = mk()\nlocal _hoisted = top\nlocal fine1 = _hoisted\n\
          local _hoisted_1 = sideEffect()\nlocal _hoisted_2 = { _hoisted_1 }\nlocal fine2 = _hoisted_2\n\
          local _spilled = function()\n\tlocal inner = mk()\n\tlocal _condition = nx\n\tif _condition == nil then\n\
-         \t\t_condition = inner\n\tend\n\treturn _condition\nend\nlocal fine3 = _spilled\nreturn {\n\tfine1 = fine1,\n\
-         \tfine2 = fine2,\n\tfine3 = fine3,\n}\n"
+         \t\t_condition = inner\n\tend\n\treturn _condition\nend\nlocal fine3 = _spilled\n\
+         local _spilled_1 = function()\n\treturn early()\nend\nlocal fine4 = _spilled_1\nreturn {\n\tfine1 = fine1,\n\
+         \tfine2 = fine2,\n\tfine3 = fine3,\n\tfine4 = fine4,\n}\n"
     );
 }
 

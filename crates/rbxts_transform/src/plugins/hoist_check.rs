@@ -1,8 +1,9 @@
 //! What a hoisted value may refer to (`hoist`, `hoist_spillable`, `hoist_spillable_named`). A hoist is declared before
 //! the top-level statement around the hook's node, so its value must not use anything that statement declares: a
 //! temporary its lowering made so far (a prereq's, roblox-ts's or the plugin's own `push_to_var`), or a local of the
-//! code around the node (a parameter, a local of a function or block, `self`, the class's own name). Used there, it
-//! would read a global instead (`nil`), silently. The compiler refuses such a value: an internal error naming the
+//! code around the node (a parameter, a local of a function or block, `self`, the class's own name), or a name a later
+//! statement of the file declares (roblox-ts declares it as a local ahead of the statement that first uses it, after
+//! the hoist). Used there, it would read a global instead (`nil`), silently. The compiler refuses such a value: an internal error naming the
 //! plugin.
 
 use rustc_hash::FxHashSet;
@@ -13,28 +14,62 @@ use tsrs_core::P;
 
 use crate::classes::transform_state::TransformState;
 
-/// The temporaries and names an expression uses that it does not declare itself (in a function or a block of its
-/// own).
+/// The temporaries and names an expression uses that it does not declare itself, scope by scope: a local of a
+/// function or block the value holds counts only inside it, after its declaration (a `local function` from its own
+/// name on), as Luau resolves names.
 #[derive(Default)]
 struct Free<'t> {
     used_temporaries: Vec<u32>,
-    declared_temporaries: FxHashSet<u32>,
     used_names: Vec<&'t str>,
-    declared_names: FxHashSet<&'t str>,
+    /// The scopes open at the walk's position, innermost last: the temporaries and names declared in each so far.
+    scopes: Vec<(FxHashSet<u32>, FxHashSet<&'t str>)>,
 }
 
 impl<'t> Free<'t> {
     fn declare(&mut self, ids: &'t [AnyIdentifier]) {
         for id in ids {
             match id {
-                AnyIdentifier::Temporary(t) => {
-                    self.declared_temporaries.insert(t.id);
-                }
-                AnyIdentifier::Identifier(id) => {
-                    self.declared_names.insert(&id.name);
-                }
+                AnyIdentifier::Temporary(t) => self.declare_temporary(t.id),
+                AnyIdentifier::Identifier(id) => self.declare_name(&id.name),
             }
         }
+    }
+
+    fn declare_temporary(&mut self, id: u32) {
+        if let Some((temporaries, _)) = self.scopes.last_mut() {
+            temporaries.insert(id);
+        }
+    }
+
+    fn declare_name(&mut self, name: &'t str) {
+        if let Some((_, names)) = self.scopes.last_mut() {
+            names.insert(name);
+        }
+    }
+
+    fn use_temporary(&mut self, id: u32) {
+        if !self.scopes.iter().any(|(temporaries, _)| temporaries.contains(&id)) {
+            self.used_temporaries.push(id);
+        }
+    }
+
+    fn use_name(&mut self, name: &'t str) {
+        if !self.scopes.iter().any(|(_, names)| names.contains(name)) {
+            self.used_names.push(name);
+        }
+    }
+
+    /// `f` in a scope of its own, which starts with `declared` (parameters, loop variables).
+    fn scoped(&mut self, declared: &'t [AnyIdentifier], f: impl FnOnce(&mut Self)) {
+        self.scopes.push(Default::default());
+        self.declare(declared);
+        f(self);
+        self.scopes.pop();
+    }
+
+    /// A block: its statements in a scope of their own.
+    fn block(&mut self, statements: &'t [Stmt]) {
+        self.scoped(&[], |free| free.statements(statements));
     }
 
     fn statements(&mut self, statements: &'t [Stmt]) {
@@ -51,65 +86,58 @@ impl<'t> Free<'t> {
             }
             Stmt::Break | Stmt::Continue | Stmt::Comment(_) => {}
             Stmt::Call(e) => self.expr(e),
-            Stmt::Do(node) => self.statements(&node.statements),
+            Stmt::Do(node) => self.block(&node.statements),
             Stmt::While(node) => {
                 self.expr(&node.condition);
-                self.statements(&node.statements);
+                self.block(&node.statements);
             }
             Stmt::Repeat(node) => {
-                self.statements(&node.statements);
-                self.expr(&node.condition);
+                // the condition sees the body's locals
+                self.scoped(&[], |free| {
+                    free.statements(&node.statements);
+                    free.expr(&node.condition);
+                });
             }
             Stmt::If(node) => {
                 let mut node = &**node;
                 loop {
                     self.expr(&node.condition);
-                    self.statements(&node.statements);
+                    self.block(&node.statements);
                     match &node.else_body {
                         ElseBody::If(elseif) => node = elseif,
-                        ElseBody::Block(statements) => break self.statements(statements),
+                        ElseBody::Block(statements) => break self.block(statements),
                     }
                 }
             }
             Stmt::NumericFor(node) => {
-                self.declare(std::slice::from_ref(&node.id));
                 self.expr(&node.start);
                 self.expr(&node.end);
                 if let Some(step) = &node.step {
                     self.expr(step);
                 }
-                self.statements(&node.statements);
+                self.scoped(std::slice::from_ref(&node.id), |free| free.statements(&node.statements));
             }
             Stmt::For(node) => {
-                self.declare(&node.ids);
                 self.expr(&node.expression);
-                self.statements(&node.statements);
+                self.scoped(&node.ids, |free| free.statements(&node.statements));
             }
             Stmt::FunctionDeclaration(node) => {
-                if node.localize {
-                    match &node.name {
-                        Expr::TemporaryIdentifier(t) => {
-                            self.declared_temporaries.insert(t.id);
-                        }
-                        Expr::Identifier(id) => {
-                            self.declared_names.insert(&id.name);
-                        }
-                        other => self.expr(other),
-                    }
-                } else {
-                    self.expr(&node.name);
+                match (&node.name, node.localize) {
+                    // `local function f`: `f` is declared before its body
+                    (Expr::TemporaryIdentifier(t), true) => self.declare_temporary(t.id),
+                    (Expr::Identifier(id), true) => self.declare_name(&id.name),
+                    (name, _) => self.expr(name),
                 }
-                self.declare(&node.parameters);
-                self.statements(&node.statements);
+                self.scoped(&node.parameters, |free| free.statements(&node.statements));
             }
             Stmt::MethodDeclaration(node) => {
                 self.expr(&node.expression);
-                self.declare(&node.parameters);
-                self.statements(&node.statements);
+                self.scoped(&node.parameters, |free| free.statements(&node.statements));
             }
             Stmt::VariableDeclaration(node) => {
-                self.declare(&node.left);
+                // `local a = a` reads the outer `a`
                 self.exprs(&node.right);
+                self.declare(&node.left);
             }
             Stmt::Return(node) => self.exprs(&node.expressions),
         }
@@ -123,8 +151,8 @@ impl<'t> Free<'t> {
 
     fn expr(&mut self, e: &'t Expr) {
         match e {
-            Expr::TemporaryIdentifier(t) => self.used_temporaries.push(t.id),
-            Expr::Identifier(id) => self.used_names.push(&id.name),
+            Expr::TemporaryIdentifier(t) => self.use_temporary(t.id),
+            Expr::Identifier(id) => self.use_name(&id.name),
             Expr::ComputedIndex(node) => {
                 self.expr(&node.expression);
                 self.expr(&node.index);
@@ -139,10 +167,7 @@ impl<'t> Free<'t> {
                 self.exprs(&node.args);
             }
             Expr::Parenthesized(node) => self.expr(&node.expression),
-            Expr::Function(node) => {
-                self.declare(&node.parameters);
-                self.statements(&node.statements);
-            }
+            Expr::Function(node) => self.scoped(&node.parameters, |free| free.statements(&node.statements)),
             Expr::Binary(node) => {
                 self.expr(&node.left);
                 self.expr(&node.right);
@@ -234,8 +259,8 @@ fn in_inner_scope(node: P<Node>) -> bool {
 /// Why `value`, hoisted for the hook at `anchor`, would not read what it reads at the hook's node: it uses a
 /// temporary declared within the current top-level statement (made at or after `temp_start`, except the seam's own
 /// top-level ones in `top_level`), or a name that, at the hook's node, is a local of that statement (declared in it,
-/// or a parameter or local of a function, class or block around the node), or `self` / `super` inside a function or
-/// class. `None` when it may be hoisted.
+/// or a parameter or local of a function, class or block around the node) or of a later statement, or `self` /
+/// `super` inside a function or class. `None` when it may be hoisted.
 pub(crate) fn hoist_problem(
     state: &mut TransformState<'_>,
     anchor: P<Node>,
@@ -246,7 +271,7 @@ pub(crate) fn hoist_problem(
     let mut free = Free::default();
     free.expr(value);
     for &id in &free.used_temporaries {
-        if id >= temp_start && !top_level.contains(&id) && !free.declared_temporaries.contains(&id) {
+        if id >= temp_start && !top_level.contains(&id) {
             return Some(
                 "uses a temporary declared in the current statement (a prerequisite's, or one roblox-ts made while \
                  lowering it)"
@@ -257,9 +282,6 @@ pub(crate) fn hoist_problem(
     let root = root_statement(anchor);
     let file = tsrs_ast::get_source_file_of_node(anchor);
     for &name in &free.used_names {
-        if free.declared_names.contains(name) {
-            continue;
-        }
         if matches!(name, "self" | "super") {
             if in_inner_scope(anchor) {
                 return Some(format!("uses `{name}`, which is a local of the function or class around its node"));
@@ -269,15 +291,27 @@ pub(crate) fn hoist_problem(
         let Some(symbol) = state.checker.resolve_name_exported(name, Some(anchor), SymbolFlags::Value, false) else {
             continue;
         };
-        let local = symbol.declarations().iter().any(|&declaration| {
-            tsrs_ast::get_source_file_of_node(declaration) == file
-                && (root_statement(declaration) == root || in_inner_scope(declaration))
-        });
-        if local {
-            return Some(format!(
-                "uses `{name}`, which is declared in the current statement (a parameter or a local of the code around \
-                 its node)"
-            ));
+        // a later one, ambient (`declare`) included: roblox-ts declares a name used before its declaration as a local
+        // ahead of the statement that uses it (`local f`), after the hoist, which would read the global instead
+        let declarations = symbol
+            .declarations()
+            .iter()
+            .copied()
+            .filter(|&declaration| tsrs_ast::get_source_file_of_node(declaration) == file);
+        for declaration in declarations {
+            let declared_at = root_statement(declaration);
+            if declared_at == root || in_inner_scope(declaration) {
+                return Some(format!(
+                    "uses `{name}`, which is declared in the current statement (a parameter or a local of the code \
+                     around its node)"
+                ));
+            }
+            if declared_at.pos() > root.pos() {
+                return Some(format!(
+                    "uses `{name}`, which a later statement of the file declares (a function, class, enum or variable \
+                     declared after the statement around its node)"
+                ));
+            }
         }
     }
     None
