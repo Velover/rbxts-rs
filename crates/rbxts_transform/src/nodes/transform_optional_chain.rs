@@ -28,18 +28,46 @@ use rbxts_plugin::AccessPosition;
 /// One link of a chain (`ChainItem`).
 #[derive(Clone, Copy, Debug)]
 pub enum ChainItemKind {
-    PropertyAccess { name: &'static str },
-    ElementAccess { expression: P<Node> },
+    /// `a.name`.
+    PropertyAccess {
+        /// The property's name.
+        name: &'static str,
+    },
+    /// `a[expression]`.
+    ElementAccess {
+        /// The index expression.
+        expression: P<Node>,
+    },
+    /// `f(…)`, a call of anything but a property or element access.
     Call,
-    PropertyCall { expression: P<Node>, name: &'static str, call_optional: bool },
-    ElementCall { expression: P<Node>, argument_expression: P<Node>, call_optional: bool },
+    /// `a.name(…)`.
+    PropertyCall {
+        /// The callee, `a.name`.
+        expression: P<Node>,
+        /// The method's name.
+        name: &'static str,
+        /// The call itself is optional (`a.name?.(…)`).
+        call_optional: bool,
+    },
+    /// `a[index](…)`.
+    ElementCall {
+        /// The callee, `a[index]`.
+        expression: P<Node>,
+        /// The index expression.
+        argument_expression: P<Node>,
+        /// The call itself is optional (`a[index]?.(…)`).
+        call_optional: bool,
+    },
 }
 
 /// `ChainItem`
 #[derive(Clone, Copy, Debug)]
 pub struct ChainItem {
+    /// What the link does.
     pub kind: ChainItemKind,
+    /// The link's node (the access or call expression).
     pub node: P<Node>,
+    /// The link is reached through `?.` (on its object: `a?.b`, `a?.b()`).
     pub optional: bool,
 }
 

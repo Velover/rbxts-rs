@@ -16,7 +16,9 @@ use crate::nodepath;
 pub struct PackageInfo {
     /// The directory holding package.json (Node spelling).
     pub dir: String,
+    /// Its `name`, when that is a string.
     pub name: Option<String>,
+    /// Its `version`, when that is a string.
     pub version: Option<String>,
     /// The whole file; `Null` when it is not valid JSON.
     pub json: Value,

@@ -17,7 +17,9 @@ use crate::util::types::{is_definitely_type, is_mixed_string_type, is_string_typ
 
 /// What [`object_accessor`] returns: the key (for object rest's exclusions) and the read of the member.
 pub struct ObjectAccess {
+    /// The member's key.
     pub key: Expr,
+    /// The read of the member.
     pub value: Expr,
 }
 

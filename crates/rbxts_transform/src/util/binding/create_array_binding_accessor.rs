@@ -24,9 +24,15 @@ use crate::util::types::{
 /// (`rest`).
 pub enum BindingAccessor {
     /// Arrays and tuples: `parent[i + 1]`, `table.move(parent, i + 1, #parent, 1, {})`.
-    Array { parent_id: Expr },
+    Array {
+        /// The array.
+        parent_id: Expr,
+    },
     /// Strings, by UTF-8 character through one `string.gmatch` matcher.
-    String { matcher: Expr },
+    String {
+        /// The `string.gmatch(s, utf8.charpattern)` iterator, in a temporary.
+        matcher: Expr,
+    },
     /// Iterators (iterable functions, `SharedTable`, objects with `next`), consumed once.
     Iterator(IteratorAccessor),
     /// Sets and maps, walked with `next`.

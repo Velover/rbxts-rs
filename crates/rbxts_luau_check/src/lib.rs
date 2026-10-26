@@ -7,6 +7,7 @@
 //! The Luau release is pinned in `Cargo.toml` (luau0-src, built from source with the C++ toolchain): [`LUAU_VERSION`].
 //! The only `unsafe` is the call into Luau ([`compile_raw`]), through `src/shim.cpp`, which turns any C++ exception
 //! into an error so that none unwinds into Rust.
+#![warn(missing_docs)]
 
 use std::ffi::{c_char, c_int, c_void};
 
@@ -17,7 +18,9 @@ pub const LUAU_VERSION: &str = env!("LUAU_VERSION");
 /// local registers when trying to allocate x: exceeded limit 200`, a syntax error, …).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompileError {
+    /// The line Luau names, 1-based; 0 when its message names none.
     pub line: u32,
+    /// Luau's message, without the line prefix.
     pub message: String,
 }
 

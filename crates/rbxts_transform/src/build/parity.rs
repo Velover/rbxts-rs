@@ -36,28 +36,63 @@ use crate::plugins::lifecycle::PluginOptions;
 /// One edit.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
-    Write { file: String, text: String },
-    Append { file: String, text: String },
-    Patch { file: String, find: String, replace: String },
+    /// Writes `text` as the file (creating it and its directories).
+    Write {
+        /// The file, relative to the project.
+        file: String,
+        /// Its new text.
+        text: String,
+    },
+    /// Adds `text` at the end of the file.
+    Append {
+        /// The file, relative to the project.
+        file: String,
+        /// The text added.
+        text: String,
+    },
+    /// Replaces the first `find` in the file with `replace` (an error when it is not there).
+    Patch {
+        /// The file, relative to the project.
+        file: String,
+        /// The text replaced.
+        find: String,
+        /// Its replacement.
+        replace: String,
+    },
+    /// Deletes a file or directory of the project.
     Delete(String),
-    Rename { from: String, to: String },
+    /// Renames a file or directory of the project.
+    Rename {
+        /// The old path, relative to the project.
+        from: String,
+        /// The new path, relative to the project.
+        to: String,
+    },
+    /// Creates a directory (and its parents).
     Mkdir(String),
+    /// Deletes an output by hand (relative to the project).
     DeleteOutput(String),
+    /// Writes a file's bytes back unchanged (a save without a change).
     Touch(String),
 }
 
 /// One step: its edits and whether the build after them succeeds.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Step {
+    /// What the step does, for reports.
     pub name: String,
+    /// Its edits, in order.
     pub actions: Vec<Action>,
+    /// The build after the edits succeeds (else it must fail as a clean build does, writing nothing).
     pub expect_ok: bool,
 }
 
 /// A script: edits made before the initial build (to make the project build), then the steps.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Script {
+    /// The edits made to the copy before its initial build.
     pub prepare: Vec<Action>,
+    /// The steps, in order.
     pub steps: Vec<Step>,
 }
 
@@ -130,7 +165,9 @@ pub struct ParityOptions<'a> {
     pub copy: Vec<String>,
     /// Where `work/` and the `clean-<n>/` copies go (emptied first).
     pub scratch: PathBuf,
+    /// The command line's project options, for the watcher's builds and the clean ones.
     pub project_options: ProjectOptionLayer,
+    /// The plugins both builds run.
     pub plugins: &'a [Box<dyn DynPlugin>],
     /// A tsconfig `plugins` entry no registered plugin claims is ignored.
     pub ignore_unknown_plugins: bool,
@@ -191,11 +228,13 @@ pub fn link_packages(from: &Path, to: &Path) -> Result<(), String> {
 /// One step's outcome.
 #[derive(Debug, Default)]
 pub struct StepResult {
+    /// The step's name.
     pub name: String,
     /// The watcher's build succeeded.
     pub ok: bool,
     /// Project files the watcher transformed, and whether that was all of them.
     pub transformed: usize,
+    /// Every project file was transformed.
     pub all: bool,
     /// Files the watcher parsed (source cache misses).
     pub parsed: usize,
@@ -209,6 +248,7 @@ pub struct StepResult {
     pub memory: Option<usize>,
     /// The watcher's build time and the clean build's, in milliseconds.
     pub watch_ms: f64,
+    /// The clean build's time, in milliseconds.
     pub clean_ms: f64,
     /// Mismatches (empty when the step passes).
     pub problems: Vec<String>,

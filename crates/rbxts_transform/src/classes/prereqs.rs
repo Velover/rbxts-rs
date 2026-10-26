@@ -36,10 +36,12 @@ pub fn temp_id_expr(name: impl Into<String>) -> Expr {
 /// `Prereqs`
 #[derive(Debug, Default)]
 pub struct Prereqs {
+    /// The statements, in order.
     pub statements: Vec<Stmt>,
 }
 
 impl Prereqs {
+    /// No statements.
     pub fn new() -> Prereqs {
         Prereqs::default()
     }

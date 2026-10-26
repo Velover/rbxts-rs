@@ -40,9 +40,13 @@ pub struct InputsShared {
 /// One file's part.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InputsPart {
+    /// The file's path.
     pub path: String,
+    /// The file has a marked call (its output depends on the inputs).
     pub marked: bool,
+    /// The environment variable's value the file read.
     pub env: Option<String>,
+    /// The glob matches the file read.
     pub globs: Vec<String>,
 }
 

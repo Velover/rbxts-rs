@@ -21,6 +21,7 @@
 //! [`MultiTransformState`]: classes::multi_transform_state::MultiTransformState
 //! [`Prereqs`]: classes::prereqs::Prereqs
 //! [`MacroManager`]: classes::macro_manager::MacroManager
+#![warn(missing_docs)]
 
 pub mod build;
 pub mod classes;

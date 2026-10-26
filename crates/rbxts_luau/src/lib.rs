@@ -18,6 +18,7 @@
 //!
 //! **Temporary identifiers.** A [`TemporaryIdentifier`] carries a per-file id from [`TempIds`]; copies with the same
 //! id render as the same name, chosen at render time to be unique in its scope (`solveTempIds`).
+#![warn(missing_docs)]
 
 pub mod ast;
 pub mod create;

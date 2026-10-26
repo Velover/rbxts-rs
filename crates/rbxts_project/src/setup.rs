@@ -24,12 +24,16 @@ const RBXTS_SCOPE: &str = "@rbxts";
 /// runtime passed in by the consumer).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProjectType {
+    /// A place: imports go through `game:GetService(…)` from the DataModel.
     Game,
+    /// A model: imports are relative, between the project's own instances.
     Model,
+    /// A package: imports are relative, and the runtime library comes from the consumer (`_G[script]`).
     Package,
 }
 
 impl ProjectType {
+    /// The name roblox-ts uses (`game`, `model`, `package`).
     pub fn as_str(self) -> &'static str {
         match self {
             ProjectType::Game => "game",
@@ -38,6 +42,7 @@ impl ProjectType {
         }
     }
 
+    /// The project type of a `type` option value, None for any other value.
     pub fn parse(s: &str) -> Option<ProjectType> {
         match s {
             "game" => Some(ProjectType::Game),
@@ -57,12 +62,19 @@ pub struct ProjectOptions {
     pub rojo: Option<String>,
     /// None infers it from package.json and the Rojo tree.
     pub project_type: Option<ProjectType>,
+    /// `--noInclude`: the runtime files are not copied to `include_path`.
     pub no_include: bool,
+    /// `noCompilerHeader`: the outputs start without the `-- Compiled with roblox-ts` line.
     pub no_compiler_header: bool,
+    /// `--logTruthyChanges`: log where Luau's truthiness differs from JavaScript's.
     pub log_truthy_changes: bool,
+    /// `--writeOnlyChanged`: an output whose text did not change is not written again.
     pub write_only_changed: bool,
+    /// `--writeTransformedFiles`: each source is also written as TypeScript after the TS transformers ran.
     pub write_transformed_files: bool,
+    /// `--optimizedLoops`: simple counting `for` loops become numeric Luau loops.
     pub optimized_loops: bool,
+    /// `--allowCommentDirectives`: `@ts-ignore` / `@ts-expect-error` / `@ts-nocheck` are accepted.
     pub allow_comment_directives: bool,
     /// `.luau` output files (the default) rather than `.lua`.
     pub luau: bool,
@@ -90,16 +102,27 @@ impl Default for ProjectOptions {
 /// A layer of options: the tsconfig's `rbxts` section, or command-line overrides. Set fields win over lower layers.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProjectOptionLayer {
+    /// See [`ProjectOptions::include_path`].
     pub include_path: Option<String>,
+    /// See [`ProjectOptions::rojo`].
     pub rojo: Option<String>,
+    /// See [`ProjectOptions::project_type`].
     pub project_type: Option<ProjectType>,
+    /// See [`ProjectOptions::no_include`].
     pub no_include: Option<bool>,
+    /// See [`ProjectOptions::no_compiler_header`].
     pub no_compiler_header: Option<bool>,
+    /// See [`ProjectOptions::log_truthy_changes`].
     pub log_truthy_changes: Option<bool>,
+    /// See [`ProjectOptions::write_only_changed`].
     pub write_only_changed: Option<bool>,
+    /// See [`ProjectOptions::write_transformed_files`].
     pub write_transformed_files: Option<bool>,
+    /// See [`ProjectOptions::optimized_loops`].
     pub optimized_loops: Option<bool>,
+    /// See [`ProjectOptions::allow_comment_directives`].
     pub allow_comment_directives: Option<bool>,
+    /// See [`ProjectOptions::luau`].
     pub luau: Option<bool>,
 }
 
@@ -152,10 +175,12 @@ impl ProjectOptions {
 /// A setup failure: roblox-ts's `ProjectError` / `DiagnosticError` (one or more text diagnostics). The build stops.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProjectError {
+    /// The messages, in report order.
     pub messages: Vec<String>,
 }
 
 impl ProjectError {
+    /// An error with one message.
     pub fn new(message: impl Into<String>) -> Self {
         ProjectError { messages: vec![message.into()] }
     }
@@ -169,16 +194,21 @@ impl std::fmt::Display for ProjectError {
 
 impl std::error::Error for ProjectError {}
 
+/// A [`ProjectDiagnostic`]'s severity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Severity {
+    /// Fails the build.
     Error,
+    /// Reported; the build goes on.
     Warning,
 }
 
 /// A diagnostic from setup that names no source position (roblox-ts's text diagnostics).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProjectDiagnostic {
+    /// Whether it fails the build.
     pub severity: Severity,
+    /// The text, as roblox-ts prints it.
     pub message: String,
 }
 
@@ -335,6 +365,7 @@ fn read_tsconfig_plugins_rec(config_path: &str, depth: usize) -> Result<Option<V
 /// The result of reading the `rbxts` sections of a tsconfig and the configs it extends.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RbxtsConfig {
+    /// The options the sections set, the tsconfig's own over those of the configs it extends.
     pub options: ProjectOptionLayer,
     /// Unsupported keys, ignored.
     pub warnings: Vec<String>,
@@ -431,6 +462,7 @@ fn read_own_options(
 /// roblox-ts's `ProjectData` for one project.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProjectData {
+    /// The tsconfig's path, absolute.
     pub tsconfig_path: String,
     /// The tsconfig's directory.
     pub project_path: String,
@@ -440,6 +472,7 @@ pub struct ProjectData {
     pub node_modules_path: String,
     /// With `include_path` resolved.
     pub options: ProjectOptions,
+    /// The Rojo project file the build uses (the option, or the one found in the project directory); None without one.
     pub rojo_config_path: Option<String>,
     /// From looking for the Rojo config.
     pub warnings: Vec<String>,
@@ -833,8 +866,11 @@ fn file_name_warning(base_name: &str) -> Option<String> {
 /// A program source file as setup needs it.
 #[derive(Clone, Copy, Debug)]
 pub struct InputFile<'a> {
+    /// Its path, as the program spells it.
     pub file_name: &'a str,
+    /// A `.d.ts` (or another declaration file).
     pub is_declaration: bool,
+    /// Loaded from a package (`isSourceFileFromExternalLibrary`).
     pub is_external_library: bool,
 }
 
@@ -842,7 +878,9 @@ pub struct InputFile<'a> {
 /// values `compileFiles` builds before transforming.
 #[derive(Debug)]
 pub struct ProjectServices {
+    /// The project data (options, paths).
     pub data: ProjectData,
+    /// Source to output paths.
     pub path_translator: PathTranslator,
     /// The project's Rojo resolver (`synthetic(outDir)` without a Rojo config).
     pub rojo_resolver: RojoResolver,
@@ -850,10 +888,13 @@ pub struct ProjectServices {
     pub pkg_rojo_resolvers: Vec<RojoResolver>,
     /// Canonical types entry → main file (`createNodeModulesPathMapping`).
     pub node_modules_path_mapping: HashMap<String, String>,
+    /// The project type: the option, else inferred (`package.json` without a Rojo tree: a package; a DataModel tree: a game; else a model).
     pub project_type: ProjectType,
     /// The runtime library's instance path (None for packages).
     pub runtime_lib_rbx_path: Option<RbxPath>,
+    /// The program's type roots (`typeRoots`, or TypeScript's defaults), absolute.
     pub type_roots: Vec<String>,
+    /// Whether file names compare case-sensitively (TypeScript's `useCaseSensitiveFileNames`).
     pub use_case_sensitive_file_names: bool,
     /// Warnings so far (Rojo config search, resolver warnings), in roblox-ts's order.
     pub warnings: Vec<String>,
@@ -870,6 +911,7 @@ pub struct ProjectServices {
 /// reports before transforming.
 #[derive(Debug)]
 pub struct ProjectSetup {
+    /// What the setup computed.
     pub services: ProjectServices,
     /// From `checkRojoConfig` and `checkFileName`, in that order. Any error stops the build before transforming.
     pub diagnostics: Vec<ProjectDiagnostic>,
@@ -1059,11 +1101,15 @@ impl ProjectServices {
 /// Where a source file ends up: its output file and that file's place in the Rojo tree.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileRojoInfo {
+    /// The output file (Node spelling).
     pub out_path: String,
     /// None when the Rojo project does not sync the output (an import of it is an error).
     pub rbx_path: Option<RbxPath>,
+    /// The kind of script the output becomes in Roblox.
     pub rbx_type: crate::rojo::RbxType,
+    /// Which side its container runs on.
     pub network_type: NetworkType,
+    /// Whether its container is isolated (`StarterPack`, `StarterGui`, the `StarterPlayer` script folders): an import into it from outside is an error.
     pub is_isolated: bool,
     /// Code here should not use the runtime library (roblox-ts warns where it would).
     pub in_replicated_first: bool,

@@ -25,50 +25,72 @@ use crate::util::traversal::{get_module_ancestor, skip_upwards};
 /// `TryUses`
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TryUses {
+    /// A `return` inside the try statement leaves it.
     pub uses_return: bool,
+    /// A `break` inside it leaves it.
     pub uses_break: bool,
+    /// A `continue` inside it leaves it.
     pub uses_continue: bool,
 }
 
 /// Which exit a try statement uses (`keyof TryUses`).
 #[derive(Clone, Copy, Debug)]
 pub enum TryUse {
+    /// `usesReturn`
     Return,
+    /// `usesBreak`
     Break,
+    /// `usesContinue`
     Continue,
 }
 
 /// `TransformState`: everything the transform of one source file reads and records.
 pub struct TransformState<'a> {
+    /// The program.
     pub program: &'static Program,
     /// rbxts-rs: the resolver for `$getModuleTree` specifiers no import resolves (`ts.resolveModuleName` with
     /// `ts.sys`): the project's ([`rbxts_project::Project::module_resolver`]).
     pub module_resolver: &'a rbxts_project::ModuleResolver,
+    /// The checker this file is transformed on (its owner).
     pub checker: &'a mut Checker,
+    /// The project's setup (`data`, `pathTranslator`, the Rojo resolvers, …).
     pub services: &'a ProjectServices,
+    /// The program's compiler options.
     pub compiler_options: P<CompilerOptions>,
+    /// The macros, by symbol.
     pub macro_manager: &'a MacroManager,
+    /// The caches shared by the files of this checker.
     pub multi_transform_state: &'a mut MultiTransformState,
+    /// The file transformed.
     pub source_file: P<SourceFile>,
     /// The emit resolver, for import elision on the original program (DESIGN §9).
     pub resolver: P<EmitResolver>,
+    /// The file's diagnostics.
     pub diagnostics: DiagnosticService,
 
     source_file_text: &'static str,
+    /// `hasExportEquals`: the file has `export =`.
     pub has_export_equals: bool,
+    /// `hasExportFrom`: the file has `export … from`.
     pub has_export_from: bool,
+    /// `classIdentifierMap`: the identifier each class is known by inside its own body.
     pub class_identifier_map: FxHashMap<P<Node>, AnyIdentifier>,
+    /// `tryUsesStack`: the exits of the enclosing try statements, innermost last.
     pub try_uses_stack: Vec<TryUses>,
+    /// `hoistsByStatement`: the identifiers whose declarations hoist before each statement.
     pub hoists_by_statement: FxHashMap<P<Node>, Vec<P<Node>>>,
+    /// `isHoisted`: the symbols already hoisted.
     pub is_hoisted: FxHashMap<P<Symbol>, bool>,
     /// rbxts-rs: per switch statement, the flag its `continue`s set (see `create_continue`).
     pub switch_continue_flags: FxHashMap<P<Node>, TemporaryIdentifier>,
     get_type_cache: FxHashMap<P<Node>, P<Type>>,
+    /// `usesRuntimeLib`: the file needs the `TS` import.
     pub uses_runtime_lib: bool,
     /// rbxts-rs: how many times `TS` was used, so that an import elided for a plugin at the end of the file can take
     /// back its uses.
     pub runtime_lib_uses: u32,
     module_id_by_symbol: FxHashMap<P<Symbol>, AnyIdentifier>,
+    /// `symbolToIdMap`: symbols whose identifier is replaced by a temporary (a `for` loop variable copied per iteration).
     pub symbol_to_id_map: FxHashMap<P<Symbol>, TemporaryIdentifier>,
     class_element_to_object_key_map: FxHashMap<P<Node>, Expr>,
     is_in_replicated_first: bool,
@@ -79,6 +101,7 @@ pub struct TransformState<'a> {
 }
 
 impl<'a> TransformState<'a> {
+    /// The state for transforming `source_file` on `checker`.
     pub fn new(
         project: &'a rbxts_project::Project,
         checker: &'a mut Checker,

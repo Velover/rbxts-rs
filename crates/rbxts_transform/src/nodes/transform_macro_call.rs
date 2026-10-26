@@ -17,7 +17,9 @@ use crate::util::wrap_return_if_lua_tuple::wrap_return_if_lua_tuple;
 /// Which table the macro came from.
 #[derive(Clone, Copy)]
 pub enum MacroKind {
+    /// A call macro (`typeIs(…)`).
     Call(Macro<CallMacro>),
+    /// A property call macro (`array.push(…)`).
     PropertyCall(Macro<PropertyCallMacro>),
 }
 

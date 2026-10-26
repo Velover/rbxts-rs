@@ -48,7 +48,9 @@ impl PathInfo {
 /// Maps between a project's source tree (`root_dir`) and its output tree (`out_dir`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PathTranslator {
+    /// The source root: the common ancestor of the common source directory (`rootDir`, or TypeScript's computed one) and the `rootDirs`.
     pub root_dir: String,
+    /// The output root: `outDir`.
     pub out_dir: String,
     /// Where the TypeScript build info is written, if anywhere (recorded, not used by the mappings).
     pub build_info_output_path: Option<String>,
@@ -59,6 +61,7 @@ pub struct PathTranslator {
 }
 
 impl PathTranslator {
+    /// A translator for these roots. `build_info_output_path` is roblox-ts's own build info of an incremental build (`<tsBuildInfoFile>.rbxtsc.tsbuildinfo`).
     pub fn new(
         root_dir: String,
         out_dir: String,

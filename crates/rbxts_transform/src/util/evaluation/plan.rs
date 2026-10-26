@@ -14,7 +14,9 @@ use crate::util::wrap_expression_statement::wrap_expression_statement;
 
 /// `EvaluationOperand`
 pub struct EvaluationOperand {
+    /// The operand's value.
     pub expression: Expr,
+    /// The statements that compute it.
     pub prereqs: Vec<Stmt>,
 }
 

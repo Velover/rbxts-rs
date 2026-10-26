@@ -8,6 +8,7 @@
 //!   `RBXTS_RS_FIXTURE_REQUIRE=1` or `CI` is set: then the test fails.
 //! - [`TempDir`] is a temporary directory removed on drop, panics included, with its links removed as links first
 //!   ([`TempDir::link`]), never followed into the shared `node_modules`.
+#![warn(missing_docs)]
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};

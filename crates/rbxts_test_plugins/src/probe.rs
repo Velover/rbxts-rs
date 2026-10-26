@@ -90,6 +90,7 @@ use rbxts_plugin::{
 /// How a probe misbehaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
+    /// Behaves.
     Normal,
     /// `@probe boom` panics.
     Panic,
@@ -121,11 +122,14 @@ pub enum Mode {
 
 /// The probe factory. Two probes with different names can be registered together (claim order tests).
 pub struct Probe {
+    /// The plugin's name.
     pub name: &'static str,
+    /// How it misbehaves.
     pub mode: Mode,
 }
 
 impl Probe {
+    /// A probe named `name`.
     pub fn new(name: &'static str, mode: Mode) -> Probe {
         Probe { name, mode }
     }
@@ -207,6 +211,7 @@ fn op(tag: Tag) -> &'static str {
     OPS.get(tag.0 as usize).copied().unwrap_or("?")
 }
 
+/// The name and mode, for every instance.
 pub struct ProbeShared {
     name: &'static str,
     mode: Mode,
@@ -215,11 +220,15 @@ pub struct ProbeShared {
 /// One file's claims and late keys.
 #[derive(Debug, Default)]
 pub struct ProbePart {
+    /// The file.
     pub file: String,
+    /// The calls it claimed.
     pub claims: u32,
+    /// The late-string keys it used.
     pub late_keys: Vec<String>,
 }
 
+/// The per-checker instance.
 pub struct ProbeInstance {
     name: &'static str,
     mode: Mode,

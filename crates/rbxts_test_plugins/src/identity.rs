@@ -39,14 +39,17 @@ pub enum IdentityMode {
     Fallback,
 }
 
+/// The `identity` plugin, lowering what it claims in one [`IdentityMode`].
 pub struct Identity(pub IdentityMode);
 
+/// What setup decided: the mode and its markers.
 pub struct IdentityShared {
     mode: IdentityMode,
     /// [`IdentityMode::Key`]: the markers (every accessed property name).
     markers: Vec<&'static str>,
 }
 
+/// The per-checker instance.
 pub struct IdentityInstance(Arc<IdentityShared>);
 
 /// The kinds [`IdentityMode::Fallback`] claims.

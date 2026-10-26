@@ -58,19 +58,50 @@ pub(crate) struct ActivePlugin<'p> {
 /// What a plugin read in `setup`: recorded so incremental and watch builds can rebuild when one changes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BuildInput {
-    /// A file read through `read_input` (its absolute path, whether it existed, and the version of its text).
-    File { plugin: &'static str, path: String, exists: bool, version: Option<crate::build::graph::Version> },
+    /// A file read through `read_input`.
+    File {
+        /// The plugin's name.
+        plugin: &'static str,
+        /// The file, absolute.
+        path: String,
+        /// Whether it existed.
+        exists: bool,
+        /// The version of its text, `None` when it could not be read.
+        version: Option<crate::build::graph::Version>,
+    },
     /// An environment variable read through `env`.
-    Env { plugin: &'static str, name: String, value: Option<String> },
+    Env {
+        /// The plugin's name.
+        plugin: &'static str,
+        /// The variable.
+        name: String,
+        /// Its value, `None` when unset.
+        value: Option<String>,
+    },
     /// A `resolve_module` from `setup`.
-    Resolution { plugin: &'static str, specifier: String, from: String, resolved: Option<String> },
-    /// A glob matched through `record_glob`, with its matcher and answer.
-    Glob { plugin: &'static str, glob: RecordedGlob },
+    Resolution {
+        /// The plugin's name.
+        plugin: &'static str,
+        /// The specifier resolved.
+        specifier: String,
+        /// The file it was resolved from.
+        from: String,
+        /// The file it resolved to, `None` when it did not resolve.
+        resolved: Option<String>,
+    },
+    /// A glob matched through `record_glob`.
+    Glob {
+        /// The plugin's name.
+        plugin: &'static str,
+        /// The glob, with its matcher and answer.
+        glob: RecordedGlob,
+    },
 }
 
 /// One plugin's hook times.
 #[derive(Clone, Debug)]
 pub struct PluginTimings {
+    /// The plugin's name.
     pub name: &'static str,
     /// Per hook kind: calls and time, without the compiler work hooks asked for.
     pub hooks: Vec<(HookKind, HookTime)>,

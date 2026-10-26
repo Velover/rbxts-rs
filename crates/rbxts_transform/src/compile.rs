@@ -46,6 +46,7 @@ use crate::shared::diagnostics::internal_error;
 pub struct CompileOptions {
     /// The tsconfig, absolute or relative to `cwd`.
     pub tsconfig: String,
+    /// The directory relative paths resolve against.
     pub cwd: String,
     /// Command-line project options (`--optimizedLoops`, `--allowCommentDirectives`, …) over the tsconfig's
     /// `rbxts` section.
@@ -111,26 +112,35 @@ impl CompileOptions {
 /// Wall time per phase.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Timings {
+    /// Reading and parsing the tsconfig.
     pub config: Duration,
+    /// Loading the program (reading, parsing, binding, module resolution).
     pub program: Duration,
+    /// The project setup (Rojo resolvers, path translator, roblox-ts's checks).
     pub setup: Duration,
     /// File facts and the invalidation rules (incremental and watch builds), with the missing-output checks.
     pub invalidate: Duration,
+    /// Type checking (the program's pre-emit diagnostics).
     pub check: Duration,
     /// Plugin `setup` (all plugins).
     pub plugin_setup: Duration,
+    /// Transforming the files to Luau trees (plugin hooks included).
     pub transform: Duration,
     /// Plugin `finish` (all plugins) and the late-string key check.
     pub plugin_finish: Duration,
+    /// Rendering the Luau trees to text.
     pub render: Duration,
     /// Luau's compiler on the files plugins emitted into (`plugins::spill`), and how many were checked.
     pub load_check: Duration,
+    /// The number of files the load check compiled.
     pub load_checked: u32,
+    /// Writing the outputs, assets and state, and removing stale outputs.
     pub write: Duration,
 }
 
 /// One project file's outcome.
 pub struct FileOutcome {
+    /// The source file, as the program spells it.
     pub file_name: String,
     /// Where the output goes (after `out_dir_override`).
     pub out_path: String,
@@ -154,6 +164,7 @@ impl FileOutcome {
 /// What a build did.
 #[derive(Default)]
 pub struct CompileReport {
+    /// The time each phase took.
     pub timings: Timings,
     /// Config, program, setup and checker diagnostics (the transform's are per file).
     pub diagnostics: Vec<P<Diagnostic>>,
@@ -168,6 +179,7 @@ pub struct CompileReport {
     pub out_dir: String,
     /// Files in the program, and project files transformed.
     pub program_files: usize,
+    /// Project files transformed.
     pub project_files: usize,
     /// The plugins that were on, in registration order.
     pub plugins: Vec<&'static str>,
@@ -179,6 +191,7 @@ pub struct CompileReport {
     pub build_inputs: Vec<BuildInput>,
     /// Plugin artifacts and state files written, and files plugins removed.
     pub artifacts_written: Vec<String>,
+    /// Artifacts of the last build this one did not write, and files plugins removed.
     pub artifacts_deleted: Vec<String>,
     /// A build with project references: each project that builds, in build order, with its output roots and whether
     /// its build succeeded (a project whose references failed is not built: blocked). Empty otherwise.
@@ -192,6 +205,7 @@ pub struct CompileReport {
 /// One project of a build with project references.
 #[derive(Clone, Debug)]
 pub struct ProjectOutcome {
+    /// The project's tsconfig.
     pub tsconfig: String,
     /// Its outDir and `declarationDir`.
     pub output_roots: Vec<String>,

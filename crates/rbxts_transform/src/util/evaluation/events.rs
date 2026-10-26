@@ -10,15 +10,21 @@ use super::node::{LuauNode, for_each_child};
 
 /// `EvaluationReference`: an opaque operand standing in for `expression`.
 pub struct EvaluationReference {
+    /// The operand it stands for.
     pub operand_index: usize,
+    /// The operand's expression.
     pub expression: Expr,
+    /// What evaluating it does.
     pub effects: Effects,
 }
 
 /// `EvaluationEvent`
 pub struct EvaluationEvent {
+    /// What the event does.
     pub effects: Effects,
+    /// The operand it evaluates, if it is one.
     pub operand_index: Option<usize>,
+    /// It may not happen (inside a branch).
     pub conditional: bool,
 }
 

@@ -74,6 +74,7 @@ impl Version {
 pub struct FileFacts {
     /// The file name as the program spells it.
     pub file_name: String,
+    /// The version of its text.
     pub version: Version,
     /// The keys ([`FileFacts`] map keys: the program's `Path`s) of the files it references, sorted; unresolved
     /// module names as `?name`, so that a name that starts resolving changes the set.
@@ -198,7 +199,9 @@ pub struct Invalidation {
     pub affected: FxHashSet<String>,
     /// File names: changed text, added, deleted (program spelling; deleted ones from the old facts).
     pub changed: Vec<String>,
+    /// Files added to the program.
     pub added: Vec<String>,
+    /// Files gone from the program.
     pub deleted: Vec<String>,
 }
 

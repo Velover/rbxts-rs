@@ -14,7 +14,9 @@ use crate::util::traversal::get_ancestor;
 /// `BindingUsage`
 #[derive(Default)]
 pub struct BindingUsage {
+    /// Bindings of the file used in another function than the one declaring them.
     pub captured: FxHashSet<P<Symbol>>,
+    /// Those of them assigned there.
     pub written_by_closure: FxHashSet<P<Symbol>>,
 }
 

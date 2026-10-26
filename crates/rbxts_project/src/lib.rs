@@ -1,6 +1,7 @@
 //! A roblox-ts project as a tsrs program, loaded in-process: the tsconfig, the program, and type checking of the
 //! project's own files; and the project setup that precedes transforming (`setup`): the Rojo resolver (`rojo`), the
 //! path translator (`path_translator`) and roblox-ts's checks, shared with plugins as `ProjectServices`.
+#![warn(missing_docs)]
 
 pub mod graph;
 pub mod nodepath;
@@ -36,9 +37,11 @@ use tsrs_vfs::{FS, bundled, osvfs};
 /// Stack size for any thread that loads, checks or transforms: checking recurses deeply (tsrs's CLI uses the same).
 pub const STACK_SIZE: usize = 512 << 20;
 
+/// What [`load`] loads: a tsconfig, from a working directory, with a checker count.
 pub struct LoadOptions {
     /// Path to tsconfig.json, absolute or relative to `cwd`.
     pub tsconfig: String,
+    /// The directory relative paths resolve against (the process's working directory, for `rbxtsc`).
     pub cwd: String,
     /// Number of checkers. 1 gives one checker over every file (symbol identity holds across files).
     pub checkers: usize,
@@ -46,10 +49,15 @@ pub struct LoadOptions {
     pub lazy_dts: bool,
 }
 
+/// A loaded project: its parsed tsconfig and its tsrs program, with the time each took.
 pub struct Project {
+    /// The parsed tsconfig, with the checker count override.
     pub config: P<ParsedCommandLine>,
+    /// The program (leaked: tsrs programs live for the process).
     pub program: &'static Program,
+    /// The number of checkers the program was made with.
     pub checkers: usize,
+    /// Reading and parsing the tsconfig and the configs it extends.
     pub config_time: Duration,
     /// `new_program`: reading, parsing, binding and module resolution of every file.
     pub program_time: Duration,

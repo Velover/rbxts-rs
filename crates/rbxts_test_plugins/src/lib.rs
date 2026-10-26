@@ -19,7 +19,10 @@
 //! - [`transformer`]: claims a tsconfig transform and does nothing (the `--writeTransformedFiles` fixture).
 //! - [`scan`]: a `Shared` that depends on whether the plugin's own state file exists, as Flamework's candidate scan's;
 //!   `scan-reader`, one that depends on the bytes of `scan`'s state file.
+#![warn(missing_docs)]
 
+// `rbxts_plugin`'s own file, documented there
+#[allow(missing_docs)]
 #[path = "../../rbxts_plugin/tests/support/stamp.rs"]
 pub mod stamp;
 

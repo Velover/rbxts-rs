@@ -43,23 +43,31 @@ pub type RbxPath = Vec<String>;
 /// One step of a relative Roblox path: up to the parent, or down to a child.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RelativeRbxPathPart {
+    /// Up to the parent instance (`script.Parent`).
     Parent,
+    /// Down to the child of that name.
     Child(String),
 }
 
 /// The script class a file syncs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RbxType {
+    /// A `ModuleScript` (a module, `init.luau`, a `.luau` file).
     ModuleScript,
+    /// A server `Script` (`.server.luau`).
     Script,
+    /// A `LocalScript` (`.client.luau`).
     LocalScript,
 }
 
 /// Where code in a container runs (game projects only).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkType {
+    /// Runs on both sides (or the side is not known).
     Unknown,
+    /// Client only (`StarterPack`, `StarterGui`, `StarterPlayer`).
     Client,
+    /// Server only (`ServerScriptService`, `ServerStorage`).
     Server,
 }
 
@@ -79,7 +87,9 @@ pub enum FileRelation {
 /// A directory or file synced as a subtree at `rbx_path`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Partition {
+    /// Where the subtree sits in the Roblox tree.
     pub rbx_path: RbxPath,
+    /// The synced directory or file on disk (resolved, Node spelling).
     pub fs_path: String,
 }
 
@@ -164,7 +174,9 @@ pub(crate) fn js_object_keys(map: &Map<String, Value>) -> Vec<&String> {
 /// The result of looking for a project's Rojo config.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FoundRojoConfig {
+    /// The project file found; None without one.
     pub path: Option<String>,
+    /// What the search warned about (several project files in the directory: the first one is used).
     pub warnings: Vec<String>,
 }
 

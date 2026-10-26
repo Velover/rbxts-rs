@@ -58,6 +58,7 @@ macro_rules! factories {
     ($category:ident: $($(#[$meta:meta])* $name:ident = [$($line:expr),+ $(,)?];)*) => {
         $(
             $(#[$meta])*
+            #[doc = concat!("roblox-ts's `", stringify!($category), "` diagnostic `", stringify!($name), "` at `node`.")]
             pub fn $name(node: P<Node>) -> P<Diagnostic> {
                 static MESSAGE: OnceLock<&'static Message> = OnceLock::new();
                 let message = MESSAGE.get_or_init(|| {

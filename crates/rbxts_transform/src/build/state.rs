@@ -37,9 +37,11 @@ const FORMAT: u64 = 3;
 pub struct DiskDiagnostic {
     /// The span in the file (UTF-8 byte offsets).
     pub pos: u32,
+    /// Where the span ends.
     pub end: u32,
     /// `tsrs_diagnostics::Category` as a number: 0 warning, 1 error, 2 suggestion, 3 message.
     pub category: u8,
+    /// The message text.
     pub text: String,
     /// A plugin diagnostic's source (the reporter's code slot).
     pub source: Option<String>,
@@ -107,6 +109,7 @@ pub struct DiskState {
     pub compiler: String,
     /// (name, version) of each active plugin, in registration order.
     pub plugins: Vec<(String, String)>,
+    /// The salt: a change of it transforms every file (the compiler binary, options, tsconfig and Rojo texts, the plugin list and tsconfig entries).
     pub salt: Version,
     /// By path key.
     pub files: FxHashMap<String, FileFacts>,

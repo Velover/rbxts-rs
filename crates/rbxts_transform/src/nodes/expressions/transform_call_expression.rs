@@ -95,7 +95,9 @@ pub fn transform_call_expression_inner(
 
 /// The key of an ordered property call: a name, or a computed index.
 pub enum PropertyKey {
+    /// A method name (`a.name(…)`).
     Name(String),
+    /// A computed index (`a[index](…)`), already transformed.
     Index(Expr),
 }
 

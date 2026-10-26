@@ -11,8 +11,10 @@ use rbxts_plugin::{
 /// The tsconfig transform it claims.
 pub const TRANSFORM: &str = "./identity.cjs";
 
+/// The `transformer` plugin.
 pub struct Transformer;
 
+/// Its per-checker instance (no hooks).
 pub struct TransformerInstance;
 
 impl Plugin for Transformer {

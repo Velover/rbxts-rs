@@ -15,9 +15,12 @@ pub use posix::*;
 pub enum Relation {
     /// The same path (`relative` is empty).
     Same,
-    /// Below `from`; `dotdot_name` when the first step is a name starting with `..` (such as `..x`), which a
-    /// `startsWith("..")` test mistakes for "outside".
-    Inside { dotdot_name: bool },
+    /// Below `from`.
+    Inside {
+        /// The first step is a name starting with `..` (such as `..x`), which a `startsWith("..")` test mistakes for
+        /// "outside".
+        dotdot_name: bool,
+    },
     /// Elsewhere on the same root (`relative` starts with a `..` step).
     Outside,
     /// On another root (`relative` is absolute: `to` itself).

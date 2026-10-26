@@ -23,6 +23,8 @@ pub type PropertyCallMacro = fn(&mut TransformState<'_>, &mut Prereqs, P<Node>, 
 /// A macro table entry: its name (`Array.push`, `typeIs`; plugins see it) and its transform.
 #[derive(Clone, Copy)]
 pub struct Macro<F> {
+    /// The name: the function (`typeIs`), class (`ArrayConstructor`) or `Class.method` (`Array.push`).
     pub name: &'static str,
+    /// Its transform.
     pub transform: F,
 }

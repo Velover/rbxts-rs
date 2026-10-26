@@ -88,9 +88,13 @@ pub fn transform_writable_expression(
 
 /// The result of `transformWritableAssignment`. `readable_is_writable` is TypeScript's `readable === writable`.
 pub struct WritableAssignment {
+    /// What to assign to.
     pub writable: Expr,
+    /// What to read the current value from.
     pub readable: Expr,
+    /// `readable` is `writable` itself.
     pub readable_is_writable: bool,
+    /// The transformed right-hand side.
     pub value: Expr,
 }
 

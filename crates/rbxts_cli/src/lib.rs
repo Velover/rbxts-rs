@@ -25,6 +25,7 @@
 //! checker resolved it first (tsrs `notes/open-history-dependence.md`).
 //!
 //! `RBXTS_PLUGIN_CLAIMS=all` asks every matching plugin for each claimable node and reports double claims.
+#![warn(missing_docs)]
 
 mod pretty;
 pub mod watch;
@@ -75,8 +76,11 @@ pub struct Cli {
 /// Parsed `build` arguments.
 #[derive(Debug, Default, PartialEq)]
 pub struct BuildArgs {
+    /// `-p` / `--project`: the tsconfig, or the directory holding it.
     pub project: String,
+    /// `--verbose`: roblox-ts's verbose log lines, and rbxts-rs's file counts.
     pub verbose: bool,
+    /// `--timings`: the time each build phase took.
     pub timings: bool,
     /// `-w` / `--watch`.
     pub watch: bool,
@@ -86,14 +90,18 @@ pub struct BuildArgs {
     pub events_json: bool,
     /// `--checkers <n>`.
     pub checkers: Option<usize>,
+    /// The project options the command line sets (`--type`, `--includePath`, `--rojo`, …).
     pub options: ProjectOptionLayer,
 }
 
 /// What the arguments ask for.
 #[derive(Debug, PartialEq)]
 pub enum Command {
+    /// `rbxtsc build` (or no command): build the project.
     Build(BuildArgs),
+    /// `--help`: print the usage.
     Help,
+    /// `--version`: print the version.
     Version,
 }
 

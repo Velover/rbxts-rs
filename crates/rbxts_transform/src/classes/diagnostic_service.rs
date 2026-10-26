@@ -17,6 +17,7 @@ use tsrs_diagnostics::Category;
 /// `DiagnosticService`
 #[derive(Default)]
 pub struct DiagnosticService {
+    /// The file's diagnostics, in report order.
     pub diagnostics: Vec<P<Diagnostic>>,
     /// rbxts-rs: the diagnostics reported once per compilation, with their keys ([`drop_reported_earlier`]).
     pub once: Vec<(ReportOnce, P<Diagnostic>)>,

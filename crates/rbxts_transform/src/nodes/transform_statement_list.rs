@@ -12,7 +12,9 @@ use crate::util::traversal::{get_start, source_file_of};
 
 /// Namespace export handling: the container and the names each statement exports.
 pub struct ExportInfo<'m> {
+    /// The namespace's container.
     pub id: AnyIdentifier,
+    /// Per statement, the names it exports.
     pub mapping: &'m FxHashMap<P<Node>, Vec<String>>,
 }
 

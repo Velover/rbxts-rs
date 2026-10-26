@@ -116,7 +116,9 @@ pub fn transform_object_literal_expression(
 /// written one, and the value used instead of compiling the initializer (which is then not evaluated).
 #[derive(Clone, Debug, Default)]
 pub struct FieldEdit {
+    /// The key to emit instead of the written one.
     pub key: Option<Expr>,
+    /// The value to use instead of the initializer.
     pub value: Option<Expr>,
 }
 

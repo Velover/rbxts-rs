@@ -6,12 +6,15 @@ use rbxts_luau::{AnyIdentifier, ElseBody, Expr, IfStatement, InterpolatedStringP
 /// Any Luau node the evaluation code visits.
 #[derive(Clone, Copy)]
 pub enum LuauNode<'a> {
+    /// An expression.
     Expr(&'a Expr),
+    /// A statement.
     Stmt(&'a Stmt),
     /// A declared identifier: a local, a loop variable or a parameter.
     Id(&'a AnyIdentifier),
     /// An `elseif`: an `IfStatement` that is not an element of a statement list.
     ElseIf(&'a IfStatement),
+    /// A field of a map literal.
     MapField(&'a MapField),
     /// A literal part of an interpolated string (`InterpolatedStringPart`).
     StringPart,

@@ -224,7 +224,7 @@ struct Committed {
     /// Every output the build left (Luau, declarations and their maps, transformed files, assets): one gone since
     /// makes the project dirty in a build with project references ([`BuildSession::needs_build`]).
     outputs: Vec<String>,
-    /// By path key: each output's size and modification time as the build left it. An output changed or deleted
+    /// By path key: each output's size and content hash as the build left it. An output changed or deleted
     /// since (by hand) has its source transformed again ([`outputs::Listing::intact`]), as a clean build would
     /// write it; a watcher counts an event on one that leaves it otherwise ([`BuildSession::committed_outputs`]).
     output_stamps: FxHashMap<String, outputs::Stamp>,
@@ -232,6 +232,7 @@ struct Committed {
 
 /// One project's builds: the committed state, the parsed files and the last program, across builds.
 pub struct BuildSession<'p> {
+    /// What every build of the session compiles (tsconfig, directory, options).
     pub options: CompileOptions,
     plugins: &'p PluginOptions<'p>,
     /// Keep what watch rebuilds need in memory (the Luau of files using late strings).
@@ -298,6 +299,7 @@ impl Replay {
 /// What one build decided, for reports and events.
 #[derive(Clone, Debug, Default)]
 pub struct BuildSummary {
+    /// The kind of build (clean, incremental, watch rebuild), once decided.
     pub kind: Option<BuildKind>,
     /// Every project file was transformed.
     pub all: bool,
@@ -307,6 +309,7 @@ pub struct BuildSummary {
     pub rerendered: Vec<String>,
     /// Outputs written (Luau, assets, artifacts, state files) and deleted.
     pub written: Vec<String>,
+    /// Outputs and artifacts deleted.
     pub deleted: Vec<String>,
     /// The changes since the last committed build.
     pub changes: ChangeSet,

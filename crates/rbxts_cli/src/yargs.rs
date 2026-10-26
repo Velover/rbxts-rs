@@ -27,8 +27,11 @@ use std::collections::{HashMap, HashSet};
 /// A parsed value (a JavaScript value as yargs-parser leaves it).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
+    /// A boolean option, or a negated one (`--no-x`).
     Bool(bool),
+    /// A string option's value.
     Str(String),
+    /// A number: an untyped option whose value reads as one (`--checkers 4`).
     Num(f64),
     /// A repeated non-boolean option.
     Arr(Vec<Value>),

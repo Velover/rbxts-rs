@@ -61,14 +61,18 @@ pub enum IncludeSource {
 pub struct IncludeFile {
     /// The source path (`<embedded>/…` for an embedded file).
     pub input: String,
+    /// Where it is copied to.
     pub output: String,
+    /// Its bytes.
     pub bytes: Cow<'static, [u8]>,
 }
 
 /// The include copy of a build: the files, read before anything is written.
 #[derive(Debug)]
 pub struct IncludeCopy {
+    /// Where the files come from.
     pub source: IncludeSource,
+    /// The files.
     pub files: Vec<IncludeFile>,
     luau: bool,
 }

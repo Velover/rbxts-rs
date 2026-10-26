@@ -26,8 +26,10 @@ pub const ANCESTOR_FILE: &str = "scan-ancestor.txt";
 
 const SCAN: Tag = Tag(0);
 
+/// The `scan` plugin.
 pub struct Scan;
 
+/// `scan`'s per-checker instance.
 pub struct ScanInstance(Arc<String>);
 
 impl Plugin for Scan {
@@ -103,6 +105,7 @@ impl PluginInstance for ScanInstance {
 /// at every build, so its output depends on bytes another plugin's commit changes.
 pub struct ScanReader;
 
+/// `scan-reader`'s per-checker instance.
 pub struct ScanReaderInstance(Arc<String>);
 
 const READER: Tag = Tag(0);

@@ -23,8 +23,11 @@ use tsrs_core::{CompilerOptions, JsxEmit, P, ResolutionMode, tspath};
 /// One rewrite: the byte range of a string literal token (quotes included) and its new text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rewrite {
+    /// Where the literal starts (a byte offset).
     pub start: u32,
+    /// Where it ends.
     pub end: u32,
+    /// Its new text, quotes included.
     pub text: String,
 }
 

@@ -17,36 +17,63 @@ const TYPES_NOTICE: &str = "\nYou may need to update your @rbxts/compiler-types!
 
 /// `SYMBOL_NAMES`
 pub mod symbol_names {
+    /// The global `globalThis`.
     pub const GLOBAL_THIS: &str = "globalThis";
 
+    /// The global `ArrayConstructor`.
     pub const ARRAY_CONSTRUCTOR: &str = "ArrayConstructor";
+    /// The global `SetConstructor`.
     pub const SET_CONSTRUCTOR: &str = "SetConstructor";
+    /// The global `MapConstructor`.
     pub const MAP_CONSTRUCTOR: &str = "MapConstructor";
+    /// The global `WeakSetConstructor`.
     pub const WEAK_SET_CONSTRUCTOR: &str = "WeakSetConstructor";
+    /// The global `WeakMapConstructor`.
     pub const WEAK_MAP_CONSTRUCTOR: &str = "WeakMapConstructor";
+    /// The global `ReadonlyMapConstructor`.
     pub const READONLY_MAP_CONSTRUCTOR: &str = "ReadonlyMapConstructor";
+    /// The global `ReadonlySetConstructor`.
     pub const READONLY_SET_CONSTRUCTOR: &str = "ReadonlySetConstructor";
 
+    /// The global `Array`.
     pub const ARRAY: &str = "Array";
+    /// The global `Generator`.
     pub const GENERATOR: &str = "Generator";
+    /// The global `IterableFunction`.
     pub const ITERABLE_FUNCTION: &str = "IterableFunction";
+    /// The global `LuaTuple`.
     pub const LUA_TUPLE: &str = "LuaTuple";
+    /// The global `Map`.
     pub const MAP: &str = "Map";
+    /// The global `Object`.
     pub const OBJECT: &str = "Object";
+    /// The global `ReadonlyArray`.
     pub const READONLY_ARRAY: &str = "ReadonlyArray";
+    /// The global `ReadonlyMap`.
     pub const READONLY_MAP: &str = "ReadonlyMap";
+    /// The global `ReadonlySet`.
     pub const READONLY_SET: &str = "ReadonlySet";
+    /// The global `ReadVoxelsArray`.
     pub const READ_VOXELS_ARRAY: &str = "ReadVoxelsArray";
+    /// The global `Set`.
     pub const SET: &str = "Set";
+    /// The global `SharedTable`.
     pub const SHARED_TABLE: &str = "SharedTable";
+    /// The global `String`.
     pub const STRING: &str = "String";
+    /// The global `TemplateStringsArray`.
     pub const TEMPLATE_STRINGS_ARRAY: &str = "TemplateStringsArray";
+    /// The global `WeakMap`.
     pub const WEAK_MAP: &str = "WeakMap";
+    /// The global `WeakSet`.
     pub const WEAK_SET: &str = "WeakSet";
 
+    /// The global `Iterable`.
     pub const ITERABLE: &str = "Iterable";
 
+    /// The global `$range`.
     pub const RANGE: &str = "$range";
+    /// The global `$tuple`.
     pub const TUPLE: &str = "$tuple";
 
     /// Every name, in `Object.values(SYMBOL_NAMES)` order.

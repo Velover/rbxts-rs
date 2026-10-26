@@ -97,9 +97,11 @@ pub struct RecordedGlob {
     pub plugin: usize,
     /// Absolute, normalized, `/` separators.
     pub root: String,
+    /// The pattern, relative to the root.
     pub pattern: String,
     /// `None` when read from the incremental state (a new process has no matcher).
     pub matcher: Option<Matcher>,
+    /// The matches, as the matcher gave them.
     pub answer: Vec<String>,
 }
 
@@ -143,6 +145,7 @@ impl RecordedGlob {
 pub struct FileInputs {
     /// (plugin, name, value), each name once per plugin.
     pub env: Vec<(usize, String, Option<String>)>,
+    /// The globs it recorded, each `(plugin, root, pattern)` once.
     pub globs: Vec<RecordedGlob>,
 }
 
@@ -176,10 +179,35 @@ pub type ReadAnswer = Result<Option<Version>, io::ErrorKind>;
 /// A read `finish` made through the compiler, with its answer: in watch, a different answer runs `finish` again.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FinishRead {
+    /// A glob matched through `record_glob`.
     Glob(RecordedGlob),
-    ReadDir { plugin: usize, path: String, answer: Option<Vec<DirEntry>> },
-    Exists { plugin: usize, path: String, answer: bool },
-    ReadFile { plugin: usize, path: String, answer: ReadAnswer },
+    /// A directory listed through `read_dir`.
+    ReadDir {
+        /// The plugin's index among the build's active plugins.
+        plugin: usize,
+        /// The directory, absolute.
+        path: String,
+        /// Its entries, `None` when it could not be listed.
+        answer: Option<Vec<DirEntry>>,
+    },
+    /// A path tested through `exists`.
+    Exists {
+        /// The plugin's index among the build's active plugins.
+        plugin: usize,
+        /// The path, absolute.
+        path: String,
+        /// Whether it existed.
+        answer: bool,
+    },
+    /// A file read through `read_file`.
+    ReadFile {
+        /// The plugin's index among the build's active plugins.
+        plugin: usize,
+        /// The file, absolute.
+        path: String,
+        /// The version of its text, or the error.
+        answer: ReadAnswer,
+    },
 }
 
 /// What a watcher watches for a recorded input.
@@ -290,10 +318,46 @@ fn parent_of(path: &str) -> Option<&str> {
 /// A setup input as the incremental state keeps it: [`BuildInput`] with the plugin's name, without a matcher.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DiskInput {
-    File { plugin: String, path: String, version: Option<String> },
-    Env { plugin: String, name: String, value: Option<String> },
-    Resolution { plugin: String, specifier: String, from: String, resolved: Option<String> },
-    Glob { plugin: String, root: String, pattern: String, answer: Vec<String> },
+    /// [`BuildInput::File`].
+    File {
+        /// The plugin's name.
+        plugin: String,
+        /// The file, absolute.
+        path: String,
+        /// The version of its text as hex ([`crate::build::graph::Version::to_hex`]), `None` when it was missing.
+        version: Option<String>,
+    },
+    /// [`BuildInput::Env`].
+    Env {
+        /// The plugin's name.
+        plugin: String,
+        /// The variable.
+        name: String,
+        /// Its value, `None` when unset.
+        value: Option<String>,
+    },
+    /// [`BuildInput::Resolution`].
+    Resolution {
+        /// The plugin's name.
+        plugin: String,
+        /// The specifier resolved.
+        specifier: String,
+        /// The file it was resolved from.
+        from: String,
+        /// The file it resolved to, `None` when it did not resolve.
+        resolved: Option<String>,
+    },
+    /// [`BuildInput::Glob`].
+    Glob {
+        /// The plugin's name.
+        plugin: String,
+        /// The glob's root (absolute, normalized, `/` separators).
+        root: String,
+        /// The pattern, relative to the root.
+        pattern: String,
+        /// The matches it gave.
+        answer: Vec<String>,
+    },
 }
 
 impl DiskInput {
@@ -331,6 +395,7 @@ impl DiskInput {
         all
     }
 
+    /// The input as the incremental state writes it: `[kind, plugin, …]`.
     pub fn to_json(&self) -> Value {
         match self {
             DiskInput::File { plugin, path, version } => json!(["file", plugin, path, version]),
@@ -342,6 +407,7 @@ impl DiskInput {
         }
     }
 
+    /// An input [`DiskInput::to_json`] wrote; `None` for anything else.
     pub fn from_json(value: &Value) -> Option<DiskInput> {
         let items = value.as_array()?;
         let text = |i: usize| items.get(i)?.as_str().map(str::to_owned);

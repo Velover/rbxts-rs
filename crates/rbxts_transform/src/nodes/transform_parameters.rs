@@ -18,8 +18,11 @@ use crate::util::symbols::validate_identifier;
 
 /// The parameters of a lowered function.
 pub struct TransformedParameters {
+    /// The Luau parameters (temporaries for destructured ones).
     pub parameters: Vec<AnyIdentifier>,
+    /// The statements the body starts with (defaults, destructuring).
     pub statements: Vec<Stmt>,
+    /// The function takes `...` (a rest parameter).
     pub has_dot_dot_dot: bool,
 }
 

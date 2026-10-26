@@ -168,8 +168,8 @@
 
 pub mod backend;
 pub mod dispatch;
-pub mod file_state;
-pub mod host;
+pub(crate) mod file_state;
+pub(crate) mod host;
 pub mod lifecycle;
 
 mod facts;
@@ -191,17 +191,29 @@ pub use lifecycle::{BuildInput, PluginOptions, PluginTimings};
 /// The hooks a plugin has, for timings and messages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HookKind {
+    /// `setup`.
     Setup,
+    /// `classify_symbol`.
     Classify,
+    /// `begin_file`.
     BeginFile,
+    /// `call`.
     Call,
+    /// `property_key`.
     PropertyKey,
+    /// `assignment`.
     Assignment,
+    /// `class`.
     Class,
+    /// `expression`.
     Expression,
+    /// `statement`.
     Statement,
+    /// `end_file`.
     EndFile,
+    /// `explain`.
     Explain,
+    /// `finish`.
     Finish,
 }
 

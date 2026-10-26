@@ -61,6 +61,7 @@ pub struct ProjectNode {
     pub config: P<ParsedCommandLine>,
     /// Its compiler options as built with (the `rootDir` above).
     pub options: CompilerOptions,
+    /// Its project data (roblox-ts's `createProjectData`).
     pub data: ProjectData,
     /// The keys of the projects it references, in order.
     pub dependencies: Vec<String>,
@@ -150,7 +151,9 @@ impl ParseConfigHost for ConfigHost {
 /// A graph error: roblox-ts's text diagnostics, or TypeScript's (a tsconfig that cannot be parsed, a cycle).
 #[derive(Debug)]
 pub enum GraphError {
+    /// A roblox-ts text diagnostic (an unreadable tsconfig, an invalid `rbxts` option, a project reference roblox-ts refuses).
     Project(ProjectError),
+    /// TypeScript's own diagnostics for a tsconfig (parse errors, a reference cycle).
     Diagnostics(Vec<P<Diagnostic>>),
 }
 

@@ -70,6 +70,7 @@ pub(super) fn is_descendant_key(path: &str, root: &str) -> bool {
 
 /// What [`get_project_outputs`] needs to know of the build.
 pub struct OutputInputs<'a> {
+    /// The project's setup (paths, the path translator).
     pub services: &'a ProjectServices,
     /// The program's compiler options (root directories, declarations).
     pub options: &'a tsrs_core::CompilerOptions,
@@ -478,7 +479,9 @@ pub struct Listing {
 /// A file's size and modification time (nanoseconds since the Unix epoch, 0 when unknown).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Found {
+    /// The size in bytes.
     pub size: u64,
+    /// The modification time, in nanoseconds since the Unix epoch (0 when unknown).
     pub modified: u128,
 }
 
@@ -504,8 +507,11 @@ impl Found {
 /// file with the size and modification time the stamp was made with is not read again.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stamp {
+    /// The size in bytes.
     pub size: u64,
+    /// [`content_hash`] of the bytes.
     pub hash: u64,
+    /// The modification time the stamp was made with (nanoseconds since the Unix epoch), 0 when unknown.
     pub modified: u128,
 }
 
