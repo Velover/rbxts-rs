@@ -35,7 +35,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use rbxts_project::{ProjectServices, nodepath};
 
-use crate::plugins::lifecycle::{commit_staged, remove_file, stage_if_changed};
+use crate::plugins::lifecycle::{commit_staged, remove_file, stage_if_changed_timed};
 use crate::project::copy_include::effective_include_path;
 
 /// The outputs of one build.
@@ -292,13 +292,13 @@ pub fn read_assets(
 /// the new ones are removed, the case renames are undone, the directories staging created are removed. The tree is
 /// then the last build's again, one rename at a time as it was written (no file system renames several files at
 /// once, and Rojo syncs each rename as it sees it). Only a rollback step the file system refuses too leaves a file of
-/// this build in place; the error says which, and the next build repairs it. Per file, in `files` order: whether it
-/// was written, or the error (a file not written because another failed: `Ok(false)`).
+/// this build in place; the error says which, and the next build repairs it. Per file, in `files` order: what the
+/// commit did ([`Written`]), or the error (a file not written because another failed: `Ok` without a stamp).
 pub fn write_outputs(
     services: &ProjectServices,
     listing: Option<&Listing>,
     files: &[(&str, &[u8], bool)],
-) -> Vec<Result<bool, String>> {
+) -> Vec<Result<Written, String>> {
     let error = |path: &str, e: io::Error| format!("could not write {path}: {e}");
     // the directories staging may create, deepest first, to remove again when it fails
     let mut created: Vec<&Path> = Vec::new();
@@ -315,24 +315,25 @@ pub fn write_outputs(
         }
     }
     created.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
-    let staged = super::parallel::map(files, |&(path, bytes, _)| stage_if_changed(Path::new(path), bytes));
+    let staged = super::parallel::map(files, |&(path, bytes, _)| stage_if_changed_timed(Path::new(path), bytes));
     let remove_created = || {
         for dir in &created {
             let _ = std::fs::remove_dir(dir);
         }
     };
     if staged.iter().any(Result::is_err) {
-        for temp in staged.iter().filter_map(|s| s.as_ref().ok().and_then(Option::as_ref)) {
+        for temp in staged.iter().filter_map(|s| s.as_ref().ok().and_then(|(temp, _)| temp.as_ref())) {
             let _ = std::fs::remove_file(temp);
         }
         remove_created();
         return files
             .iter()
             .zip(staged)
-            .map(|(&(path, _, _), s)| s.map(|_| false).map_err(|e| error(path, e)))
+            .map(|(&(path, _, _), s)| s.map(|_| Written::default()).map_err(|e| error(path, e)))
             .collect();
     }
-    let staged: Vec<Option<PathBuf>> = staged.into_iter().map(Result::unwrap_or_default).collect();
+    let (staged, modified): (Vec<Option<PathBuf>>, Vec<u128>) =
+        staged.into_iter().map(Result::unwrap_or_default).unzip();
     let mut rollback = Rollback::default();
     // a failure before the renames into place: the files that failed, with their errors
     let mut failed: Vec<(usize, String)> = Vec::new();
@@ -365,7 +366,15 @@ pub fn write_outputs(
     };
     if failed.is_empty() && results.iter().all(Result::is_ok) {
         rollback.discard();
-        return files.iter().zip(&staged).map(|(_, temp)| Ok(temp.is_some())).collect();
+        // the stamp of the bytes each path holds now: this build's, with the time they were staged or found with
+        return files
+            .iter()
+            .zip(staged.iter().zip(modified))
+            .map(|(&(_, bytes, _), (temp, modified))| {
+                let stamp = Stamp { size: bytes.len() as u64, hash: content_hash(bytes), modified };
+                Ok(Written { written: temp.is_some(), stamp: Some(stamp) })
+            })
+            .collect();
     }
     let committed: Vec<&str> =
         jobs.iter().zip(&results).filter(|(_, result)| result.is_ok()).map(|(&(_, path, _), _)| path).collect();
@@ -380,7 +389,7 @@ pub fn write_outputs(
     }
     let left = rollback.undo(&committed);
     remove_created();
-    let mut out: Vec<Result<bool, String>> = vec![Ok(false); files.len()];
+    let mut out: Vec<Result<Written, String>> = vec![Ok(Written::default()); files.len()];
     for (i, mut message) in failed {
         if !left.is_empty() {
             message.push_str(&format!("; rolling back left this build's {}", left.join(", ")));
@@ -388,6 +397,17 @@ pub fn write_outputs(
         out[i] = Err(message);
     }
     out
+}
+
+/// What [`write_outputs`] did for one file.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Written {
+    /// The file was written (its bytes were missing or differed).
+    pub written: bool,
+    /// The stamp of the bytes the commit left at the path, made from the bytes given (never read back after the
+    /// commit, where a hand edit landing after the rename would pass for the commit's bytes); `None` when the commit
+    /// failed.
+    pub stamp: Option<Stamp>,
 }
 
 /// What [`write_outputs`] undoes when it fails after it started renaming.
@@ -530,11 +550,13 @@ impl Stamp {
     pub fn read(path: &str) -> Option<Stamp> {
         let found = Found::at(path)?;
         let bytes = std::fs::read(path).ok()?;
-        Some(Stamp { size: bytes.len() as u64, hash: content_hash(&bytes), modified: found.modified })
+        let modified = crate::plugins::lifecycle::settled_time(found.modified);
+        Some(Stamp { size: bytes.len() as u64, hash: content_hash(&bytes), modified })
     }
 
     /// The file at `path` (`found` as its metadata) still holds what this stamp describes: the stamp to keep for it
-    /// (with its modification time now), `None` when it changed or is gone.
+    /// (with its modification time now, unless too recent to tell a later edit apart: `settled_time`), `None` when it
+    /// changed or is gone.
     pub fn check(&self, path: &str, found: Option<Found>) -> Option<Stamp> {
         let found = found?;
         if found.size != self.size {
@@ -545,7 +567,7 @@ impl Stamp {
         }
         let bytes = std::fs::read(path).ok()?;
         (bytes.len() as u64 == self.size && content_hash(&bytes) == self.hash)
-            .then_some(Stamp { modified: found.modified, ..*self })
+            .then(|| Stamp { modified: crate::plugins::lifecycle::settled_time(found.modified), ..*self })
     }
 }
 

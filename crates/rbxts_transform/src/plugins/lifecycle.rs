@@ -822,12 +822,57 @@ pub fn stage(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
     Ok(temp)
 }
 
+/// A file's modification time in nanoseconds since the Unix epoch, 0 when unknown.
+pub fn modified_nanos(metadata: &std::fs::Metadata) -> u128 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos())
+}
+
+/// How close to now a modification time must not be for a stamp to keep it: an edit within the same tick of the file
+/// system's clock would get the same time (git's "racily clean" entries). Such a stamp keeps no time, so the next
+/// check compares the bytes.
+const RACY: Duration = Duration::from_secs(2);
+
+/// `modified` (nanoseconds since the Unix epoch) when it is far enough in the past to tell a later edit apart, else 0.
+pub fn settled_time(modified: u128) -> u128 {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    if modified != 0 && now >= modified + RACY.as_nanos() { modified } else { 0 }
+}
+
+/// The modification time of the file at `path` when it holds exactly `bytes` (0 when unknown or too recent:
+/// [`settled_time`]), `None` otherwise (missing, or other bytes). The time is taken from the open file before its
+/// bytes are read, so an edit after that shows as a later time, never as these bytes with the edit's time.
+fn holds(path: &Path, bytes: &[u8]) -> Option<u128> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() || metadata.len() != bytes.len() as u64 {
+        return None;
+    }
+    let modified = modified_nanos(&metadata);
+    let mut existing = Vec::with_capacity(bytes.len());
+    file.read_to_end(&mut existing).ok()?;
+    (existing == bytes).then(|| settled_time(modified))
+}
+
 /// [`stage`] when the file is missing or its bytes differ (`None`: it holds them already).
 pub fn stage_if_changed(path: &Path, bytes: &[u8]) -> io::Result<Option<PathBuf>> {
-    if std::fs::read(path).is_ok_and(|existing| existing == bytes) {
-        return Ok(None);
+    stage_if_changed_timed(path, bytes).map(|(temp, _)| temp)
+}
+
+/// [`stage_if_changed`], with the modification time to stamp the bytes `path` holds once a commit renames the staged
+/// file into place: when nothing is staged, the existing file's as it was read ([`holds`]); a staged file's is too
+/// recent to tell a later edit apart, so 0 (the next check compares its bytes). With `bytes`, it makes the stamp of
+/// what the commit leaves, never read back from the disk after the commit (where a hand edit landing after the rename
+/// would be taken for the commit's bytes).
+pub fn stage_if_changed_timed(path: &Path, bytes: &[u8]) -> io::Result<(Option<PathBuf>, u128)> {
+    if let Some(modified) = holds(path, bytes) {
+        return Ok((None, modified));
     }
-    stage(path, bytes).map(Some)
+    stage(path, bytes).map(|temp| (Some(temp), 0))
 }
 
 /// [`write_atomic`]'s second half: renames the [`stage`]d `temp` into place (`MoveFileExW` with
@@ -859,6 +904,17 @@ pub fn write_if_changed(path: &Path, bytes: &[u8]) -> io::Result<bool> {
     }
     write_atomic(path, bytes)?;
     Ok(true)
+}
+
+/// [`write_if_changed`], with the modification time of the bytes it leaves at `path` ([`stage_if_changed_timed`]).
+pub fn write_if_changed_timed(path: &Path, bytes: &[u8]) -> io::Result<(bool, u128)> {
+    match stage_if_changed_timed(path, bytes)? {
+        (None, modified) => Ok((false, modified)),
+        (Some(temp), modified) => {
+            commit_staged(&temp, path)?;
+            Ok((true, modified))
+        }
+    }
 }
 
 /// Deletes a file, retrying while another process holds it; a missing file is fine.
@@ -929,7 +985,39 @@ pub(crate) fn output_key(services: &ProjectServices, path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{node_load, resolve_sync};
+    use super::{node_load, resolve_sync, settled_time, write_if_changed_timed};
+    use crate::build::outputs::{Found, Stamp, content_hash};
+
+    /// The stamp of a committed file is made from the bytes written, with no time while the write is recent: a hand
+    /// edit landing right after the commit (same size, same clock tick) is found by its bytes, never taken for the
+    /// commit's.
+    #[test]
+    fn stamps_come_from_the_bytes_written() {
+        let dir = rbxts_test_support::TempDir::new("stamp-bytes");
+        let path = dir.path().join("a.luau");
+        let path_text = path.to_string_lossy().into_owned();
+        let bytes = b"return 1
+";
+        let stamp = |modified| Stamp { size: bytes.len() as u64, hash: content_hash(bytes), modified };
+        assert_eq!(write_if_changed_timed(&path, bytes).unwrap(), (true, 0), "a new write keeps no time");
+        // the edit lands right after the commit: the stamp has the commit's bytes, not the edit's
+        std::fs::write(&path, b"return 2
+").unwrap();
+        assert_eq!(stamp(0).check(&path_text, Found::at(&path_text)), None);
+        // the bytes as committed, written an hour ago: an unchanged commit keeps that time
+        assert_eq!(write_if_changed_timed(&path, bytes).unwrap(), (true, 0));
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options().write(true).open(&path).unwrap().set_modified(old).unwrap();
+        let (written, modified) = write_if_changed_timed(&path, bytes).unwrap();
+        assert!(!written);
+        let found = Found::at(&path_text).unwrap();
+        assert_eq!(modified, found.modified, "the time of the bytes found");
+        assert_eq!(stamp(modified).check(&path_text, Some(found)), Some(stamp(modified)));
+        assert_eq!(settled_time(found.modified), found.modified);
+        // a time a moment ago is not one to trust
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        assert_eq!(settled_time(now), 0);
+    }
 
     /// `resolve.sync` 1.22's answers for the same layout (checked with roblox-ts's own `resolve`).
     #[test]

@@ -104,14 +104,58 @@ pub fn from_disk(kept: &DiskDiagnostic, file: P<SourceFile>, program: &Program) 
             .insert(std::ptr::from_ref(message) as usize, source);
     }
     if !kept.related.is_empty() {
+        // related information at a file the program no longer has: as for the diagnostic's own file, the owner is
+        // transformed again rather than reporting it without its file
         let related: Vec<P<Diagnostic>> = kept
             .related
             .iter()
             .map(|(name, pos, end, category, text)| {
-                make(name.as_deref().and_then(|n| program.get_source_file(n)), *pos, *end, *category, text)
+                let file = match name {
+                    Some(name) => Some(program.get_source_file(name)?),
+                    None => None,
+                };
+                Some(make(file, *pos, *end, *category, text))
             })
-            .collect();
+            .collect::<Option<_>>()?;
         d.set_related_info(&related);
     }
     Some(d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::from_disk;
+    use crate::build::state::DiskDiagnostic;
+
+    /// A kept diagnostic is made again only when the program has every file it names: its own and its related
+    /// information's. One at a file the program no longer has makes its owner be transformed again (`None`), never a
+    /// diagnostic that lost its file.
+    #[test]
+    fn related_information_at_a_missing_file_is_not_replayed() {
+        let dir = rbxts_test_support::TempDir::new("replay-related");
+        std::fs::write(dir.path().join("tsconfig.json"), r#"{ "files": ["a.ts", "b.ts"] }"#).unwrap();
+        std::fs::write(dir.path().join("a.ts"), "export const a = 1;\n").unwrap();
+        std::fs::write(dir.path().join("b.ts"), "export const b = 2;\n").unwrap();
+        let cwd = dir.path().to_string_lossy().replace('\\', "/");
+        let options =
+            rbxts_project::LoadOptions { tsconfig: "tsconfig.json".into(), cwd: cwd.clone(), checkers: 1, lazy_dts: false };
+        let project = rbxts_project::load(&options).ok().expect("the project loads");
+        let program = project.program;
+        let a = program.get_source_file(&format!("{cwd}/a.ts")).expect("a.ts");
+        let kept = |related_file: &str| DiskDiagnostic {
+            file: None,
+            pos: 0,
+            end: 6,
+            category: 0,
+            text: "kept".into(),
+            source: None,
+            plugin: false,
+            related: vec![(Some(format!("{cwd}/{related_file}")), 0, 6, 3, "related".into())],
+        };
+        let replayed = from_disk(&kept("b.ts"), a, program).expect("both files are there");
+        let related = replayed.related_information();
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].file().map(|f| f.get().file_name().to_owned()), Some(format!("{cwd}/b.ts")));
+        assert!(from_disk(&kept("gone.ts"), a, program).is_none(), "the related file is gone");
+    }
 }

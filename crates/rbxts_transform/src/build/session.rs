@@ -1738,60 +1738,75 @@ impl<'p> BuildSession<'p> {
                 asset_paths.zip(&asset_bytes).map(|((_, output), bytes)| (output.as_str(), bytes.as_slice(), true)),
             );
             let mut results = outputs::write_outputs(services, Some(&listing), &to_write).into_iter();
+            // the stamps of the bytes this build left, made from those bytes (never read back after the commit)
+            let mut fresh: FxHashMap<String, outputs::Stamp> = FxHashMap::default();
+            let mut note = |path: &str, result: Result<outputs::Written, String>, report: &mut CompileReport| match result {
+                Ok(done) => {
+                    if let Some(stamp) = done.stamp {
+                        fresh.insert(path_key_of(services, path), stamp);
+                    }
+                    done.written
+                }
+                Err(message) => {
+                    report.fatal.push(message);
+                    false
+                }
+            };
             let indices: Vec<usize> = luau.iter().map(|&(i, _, _)| i).collect();
             for (i, result) in indices.into_iter().zip(results.by_ref()) {
-                let outcome = &mut report.files[i];
-                match result {
-                    Ok(written) => {
-                        outcome.written = written;
-                        if written {
-                            summary.written.push(outcome.out_path.clone());
-                        }
-                    }
-                    Err(message) => report.fatal.push(message),
+                let path = report.files[i].out_path.clone();
+                let written = note(&path, result, &mut report);
+                report.files[i].written = written;
+                if written {
+                    summary.written.push(path);
                 }
             }
             if rerender {
                 for ((path, _), result) in rerendered.iter().zip(results.by_ref().take(rerendered_count)) {
-                    match result {
-                        Ok(true) => summary.written.push(path.clone()),
-                        Ok(false) => {}
-                        Err(message) => report.fatal.push(message),
+                    if note(path, result, &mut report) {
+                        summary.written.push(path.clone());
                     }
                 }
                 summary.rerendered = rerendered.iter().map(|(p, _)| p.clone()).collect();
             }
             for ((path, _), result) in extra_outputs.iter().zip(results.by_ref()) {
-                match result {
-                    Ok(true) => summary.written.push(path.clone()),
-                    Ok(false) => {}
-                    Err(message) => report.fatal.push(message),
+                if note(path, result, &mut report) {
+                    summary.written.push(path.clone());
                 }
             }
             let asset_paths = project_outputs.assets.iter().chain(&project_outputs.declaration_assets);
             for ((_, path), result) in asset_paths.zip(results) {
-                match result {
-                    Ok(true) => summary.written.push(path.clone()),
-                    Ok(false) => {}
-                    Err(message) => report.fatal.push(message),
+                if note(path, result, &mut report) {
+                    summary.written.push(path.clone());
                 }
             }
-            // what the outputs are now: the committed stamp of one this build left as it was, a new one for one it
-            // wrote (or one no stamp is known of)
-            let written: FxHashSet<String> = summary.written.iter().map(|p| path_key_of(services, p)).collect();
+            // what the outputs are now: the stamp of the bytes this build left, else the committed stamp of one it left
+            // as it was (or, for one no stamp is known of, what is there)
             output_stamps = project_outputs
                 .files
                 .iter()
                 .filter_map(|path| {
                     let key = path_key_of(services, path);
+                    if let Some(stamp) = fresh.get(&key) {
+                        return Some((key, *stamp));
+                    }
                     let kept = committed.as_ref().and_then(|c| c.output_stamps.get(&key));
-                    let stamp = match kept {
-                        Some(stamp) if !written.contains(&key) => listing.checked(&key, stamp),
-                        _ => None,
-                    };
+                    let stamp = kept.and_then(|stamp| listing.checked(&key, stamp));
                     stamp.or_else(|| outputs::Stamp::read(path)).map(|stamp| (key, stamp))
                 })
                 .collect();
+            // the runtime include files are outputs too, stamped from the bytes copied: one edited or deleted by hand
+            // is written again (the commit adds the times it wrote them with)
+            if let Some(include) = &include {
+                for file in &include.files {
+                    let stamp = outputs::Stamp {
+                        size: file.bytes.len() as u64,
+                        hash: outputs::content_hash(&file.bytes),
+                        modified: 0,
+                    };
+                    output_stamps.insert(path_key_of(services, &file.output), stamp);
+                }
+            }
             if success && report.fatal.is_empty() {
                 let artifacts: Vec<String> = queue.artifacts.iter().map(|(_, p, _)| p.clone()).collect();
                 let stale: Vec<String> = committed
@@ -1854,7 +1869,7 @@ impl<'p> BuildSession<'p> {
                     };
                     (path.as_str(), state)
                 });
-                if let Err(message) = self.commit_rest(
+                match self.commit_rest(
                     &mut report,
                     &mut summary,
                     &loaded,
@@ -1866,7 +1881,12 @@ impl<'p> BuildSession<'p> {
                     &rules,
                     disk.as_ref().map(|(path, state)| (*path, state)),
                 ) {
-                    report.fatal.push(message);
+                    Ok(include_stamps) => {
+                        for (path, stamp) in include_stamps {
+                            output_stamps.insert(path_key_of(services, &path), stamp);
+                        }
+                    }
+                    Err(message) => report.fatal.push(message),
                 }
                 if let Some((_, state)) = disk {
                     records = state.records;
@@ -2028,7 +2048,12 @@ impl<'p> BuildSession<'p> {
             from_disk: false,
             setup_inputs: None,
             state_files,
-            outputs: project_outputs.files.clone(),
+            outputs: project_outputs
+                .files
+                .iter()
+                .cloned()
+                .chain(include.iter().flat_map(|include| include.files.iter().map(|f| f.output.clone())))
+                .collect(),
             output_stamps,
         };
         summary.changes = changes;
@@ -2036,7 +2061,8 @@ impl<'p> BuildSession<'p> {
         (report, summary, Some(committed), Some(loaded))
     }
 
-    /// Commit steps 1 (assets, the runtime include files), 2, 3 and 4 after the Luau outputs.
+    /// Commit steps 1 (assets, the runtime include files), 2, 3 and 4 after the Luau outputs. Returns the stamps of
+    /// the runtime include files as the commit left them.
     #[allow(clippy::too_many_arguments)]
     fn commit_rest(
         &self,
@@ -2050,7 +2076,7 @@ impl<'p> BuildSession<'p> {
         listing: &outputs::Listing,
         rules: &DirRules,
         disk: Option<(&str, &DiskState)>,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<(String, outputs::Stamp)>, String> {
         let services = &loaded.services;
         // this build's artifacts, state files and incremental state are kept too
         for path in queue
@@ -2063,8 +2089,14 @@ impl<'p> BuildSession<'p> {
             outputs.keep.insert(outputs::path_key(services, path));
         }
         // 1. the runtime include (the Luau and the assets are written)
+        let mut include_stamps = Vec::new();
         if let Some(include) = include {
-            summary.written.extend(include.commit()?);
+            for (path, written, stamp) in include.commit_stamped()? {
+                if written {
+                    summary.written.push(path.clone());
+                }
+                include_stamps.push((path, stamp));
+            }
         }
         // 2. artifacts
         let written = commit_artifacts(queue)?;
@@ -2088,7 +2120,7 @@ impl<'p> BuildSession<'p> {
         {
             summary.written.push(path.to_owned());
         }
-        Ok(())
+        Ok(include_stamps)
     }
 
     /// roblox-ts's `getProjectOutputs` for this build: the output roots, the keep set (without this build's plugin

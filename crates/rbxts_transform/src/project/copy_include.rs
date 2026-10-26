@@ -36,7 +36,8 @@ use std::path::Path;
 use rbxts_project::setup::is_path_descendant_of;
 use rbxts_project::{ProjectOptions, ProjectServices, ProjectType, nodepath};
 
-use crate::plugins::lifecycle::{remove_file, write_if_changed};
+use crate::build::outputs::{Stamp, content_hash};
+use crate::plugins::lifecycle::{remove_file, write_if_changed_timed};
 
 const LUA_EXT: &str = ".lua";
 const LUAU_EXT: &str = ".luau";
@@ -222,7 +223,13 @@ impl IncludeCopy {
     /// Writes the files whose bytes differ, each after deleting its output's alternate extension (`.lua` beside a
     /// `.luau` output, or the reverse). Returns the files written.
     pub fn commit(&self) -> Result<Vec<String>, String> {
-        let mut written = Vec::new();
+        Ok(self.commit_stamped()?.into_iter().filter(|(_, written, _)| *written).map(|(path, _, _)| path).collect())
+    }
+
+    /// [`IncludeCopy::commit`], returning every output with whether it was written and the stamp of the bytes it
+    /// holds now, made from the bytes copied (a watcher restores an include file edited by hand as any other output).
+    pub fn commit_stamped(&self) -> Result<Vec<(String, bool, Stamp)>, String> {
+        let mut done = Vec::with_capacity(self.files.len());
         for file in &self.files {
             if file.input.ends_with(LUAU_EXT) {
                 // Rojo must not see both extensions as competing instances after an option change
@@ -232,13 +239,12 @@ impl IncludeCopy {
                     remove_file(Path::new(&alternate)).map_err(|e| format!("could not delete {alternate}: {e}"))?;
                 }
             }
-            if write_if_changed(Path::new(&file.output), &file.bytes)
-                .map_err(|e| format!("could not write {}: {e}", file.output))?
-            {
-                written.push(file.output.clone());
-            }
+            let (written, modified) = write_if_changed_timed(Path::new(&file.output), &file.bytes)
+                .map_err(|e| format!("could not write {}: {e}", file.output))?;
+            let stamp = Stamp { size: file.bytes.len() as u64, hash: content_hash(&file.bytes), modified };
+            done.push((file.output.clone(), written, stamp));
         }
-        Ok(written)
+        Ok(done)
     }
 }
 

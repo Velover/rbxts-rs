@@ -1130,6 +1130,22 @@ fn outputs_changed_by_hand_are_written_again() {
     assert_eq!(std::fs::read(&asset).unwrap(), asset_before);
     watcher.assert_quiet(Duration::from_millis(1500));
 
+    // a runtime include file
+    let runtime = ["include/RuntimeLib.luau", "include/RuntimeLib.lua"]
+        .iter()
+        .map(|p| root.join(p))
+        .find(|p| p.is_file())
+        .expect("the include copy");
+    let runtime_before = std::fs::read(&runtime).unwrap();
+    std::fs::write(&runtime, "-- edited by hand\n").unwrap();
+    assert_eq!(watcher.build_end(4)["ok"], true);
+    assert_eq!(std::fs::read(&runtime).unwrap(), runtime_before);
+    watcher.assert_quiet(Duration::from_millis(1500));
+    std::fs::remove_file(&runtime).unwrap();
+    assert_eq!(watcher.build_end(5)["ok"], true);
+    assert_eq!(std::fs::read(&runtime).unwrap(), runtime_before);
+    watcher.assert_quiet(Duration::from_millis(1500));
+
     for link in links {
         unlink(&link);
     }
