@@ -44,7 +44,11 @@ fn node_modules() -> Option<PathBuf> {
 }
 
 fn fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/plugin_fixtures/probe")
+    fixture_dir_of("probe")
+}
+
+fn fixture_dir_of(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/plugin_fixtures").join(name)
 }
 
 fn copy_dir(from: &Path, to: &Path) {
@@ -68,6 +72,16 @@ struct Project {
 impl Project {
     /// `None` (the test is skipped) without a `node_modules` to link.
     fn new(label: &str) -> Option<Project> {
+        Project::of("probe", label)
+    }
+
+    /// A copy of the fixture `plugin_fixtures/<fixture>`.
+    fn of(fixture: &str, label: &str) -> Option<Project> {
+        Project::copy_of(&fixture_dir_of(fixture), &["src", "tsconfig.json", "default.project.json", "package.json"], label)
+    }
+
+    /// A copy of the entries `names` of the fixture at `fixture`, with a `node_modules` junction.
+    fn copy_of(fixture: &Path, names: &[&str], label: &str) -> Option<Project> {
         let Some(node_modules) = node_modules() else {
             eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
             return None;
@@ -75,8 +89,8 @@ impl Project {
         let root = std::env::temp_dir().join(format!("rbxts-rs-plugins-{label}-{}", std::process::id()));
         let project = Project { root };
         project.clean();
-        let fixture = fixture_dir();
-        for name in ["src", "tsconfig.json", "default.project.json", "package.json"] {
+        std::fs::create_dir_all(&project.root).unwrap();
+        for &name in names {
             let from = fixture.join(name);
             if from.is_dir() {
                 copy_dir(&from, &project.root.join(name));
@@ -188,8 +202,13 @@ fn assert_expected(report: &CompileReport) {
 
 /// Compares the build's Luau with `expected/`, but for the files in `except`.
 fn assert_expected_except(report: &CompileReport, except: &[&str]) {
+    assert_expected_of("probe", report, except);
+}
+
+/// Compares the build's Luau with `plugin_fixtures/<fixture>/expected/`, but for the files in `except`.
+fn assert_expected_of(fixture: &str, report: &CompileReport, except: &[&str]) {
     let mut failures = Vec::new();
-    let expected_dir = fixture_dir().join("expected");
+    let expected_dir = fixture_dir_of(fixture).join("expected");
     for file in &report.files {
         let relative = Path::new(&file.out_path)
             .strip_prefix(&report.out_dir)
@@ -1019,4 +1038,43 @@ fn every_ts_nocheck_pragma_is_reported() {
     };
     assert_eq!(count("twice.ts"), 2, "{errors:?}");
     assert_eq!(count("overridden.ts"), 1, "{errors:?}");
+}
+
+/// Offering a node and getting a clean decline changes nothing: over the area fixtures, `decline-all` (offered every
+/// call, access, assignment, class, expression and statement it can be, declining all of it) and the identity plugins
+/// (claiming and lowering as roblox-ts would) write what a plugin build with nothing to do (`inert`) writes, file for
+/// file, with the same diagnostics. (A build with plugins differs from one without only in numeric literals with
+/// separators, which it prints as their value, as stock roblox-ts's reprint does.)
+#[test]
+fn declining_or_lowering_as_roblox_ts_changes_no_output() {
+    let areas = ["binding", "classes", "contextual_this", "exprs", "jsx", "literals", "loops", "macros", "stmts", "stockfix"];
+    let modes = ["decline-all", "identity-expr", "identity-call", "identity-key", "identity-assign", "identity-fallback"];
+    for area in areas {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(area);
+        let names: Vec<String> = std::fs::read_dir(&fixture)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| !n.starts_with("expected") && n != "runtime")
+            .collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let Some(project) = Project::copy_of(&fixture, &names, &format!("decline-{area}")) else { return };
+        let outputs = |plugin: &str| {
+            let report = project.build(&[plugin], |_| {});
+            let _ = std::fs::remove_dir_all(project.root.join("out"));
+            let mut files: Vec<(String, Option<String>)> =
+                report.files.iter().map(|f| (f.out_path.clone(), f.luau.clone())).collect();
+            files.sort();
+            (files, diagnostics(&report))
+        };
+        let baseline = outputs("inert");
+        assert!(!baseline.0.is_empty(), "{area}: no files");
+        for mode in modes {
+            let (files, diagnostics) = outputs(mode);
+            assert_eq!(diagnostics, baseline.1, "{area}, {mode}: diagnostics");
+            for ((path, luau), (_, expected)) in files.iter().zip(&baseline.0) {
+                assert_eq!(luau, expected, "{area}, {mode}: {path}");
+            }
+            assert_eq!(files.len(), baseline.0.len(), "{area}, {mode}: files");
+        }
+    }
 }

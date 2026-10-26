@@ -7,6 +7,9 @@
 //! for every class, and the expression and statement fallbacks for every expression and statement kind the program's
 //! files contain. Every hook declines without touching the compiler (the class hook adds no statements).
 //!
+//! **`inert`** is active but registers nothing: the baseline a plugin build is compared with (a build with plugins
+//! prints a numeric literal with separators as its value, as stock roblox-ts's reprint does).
+//!
 //! **`decline-audit`** is the same plugin, recording what it was offered: at the end of each file it lists the
 //! file's expression nodes the expression hooks were not offered, its statements the statement hooks were not
 //! offered, and (for calls, accesses and assignments) the nodes of those shapes the call, `property_key` and
@@ -24,13 +27,15 @@ use rbxts_plugin::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
-/// `decline-all` (`audit` false) or `decline-audit`.
+/// `decline-all` (`audit` false) or `decline-audit`; `inert` registers nothing at all (a plugin build's baseline).
 pub struct DeclineAll {
     pub audit: bool,
+    pub inert: bool,
 }
 
 pub struct DeclineShared {
     audit: bool,
+    inert: bool,
     markers: Vec<&'static str>,
     expressions: Vec<Kind>,
     statements: Vec<Kind>,
@@ -86,14 +91,18 @@ impl Plugin for DeclineAll {
     type Instance = DeclineInstance;
 
     fn info(&self) -> PluginInfo {
-        let name = if self.audit { "decline-audit" } else { "decline-all" };
+        let name = match (self.inert, self.audit) {
+            (true, _) => "inert",
+            (false, true) => "decline-audit",
+            (false, false) => "decline-all",
+        };
         PluginInfo { name, version: "0.1.0", tsconfig_transform: None }
     }
 
     fn setup(&self, cx: &mut SetupCx<'_>, _: &mut ()) -> Result<Arc<DeclineShared>, Fatal> {
         let markers = crate::identity::accessed_names(cx);
         let (expressions, statements) = kinds(cx);
-        Ok(Arc::new(DeclineShared { audit: self.audit, markers, expressions, statements }))
+        Ok(Arc::new(DeclineShared { audit: self.audit, inert: self.inert, markers, expressions, statements }))
     }
 
     fn instance(&self, shared: Arc<DeclineShared>, _: CheckerInfo) -> DeclineInstance {
@@ -229,6 +238,9 @@ impl PluginInstance for DeclineInstance {
     type FilePart = ();
 
     fn interest(&self, interest: &mut Interest) {
+        if self.shared.inert {
+            return;
+        }
         interest.calls_by_symbol();
         for &marker in &self.shared.markers {
             interest.accesses_by_marker(marker, Tag(0));

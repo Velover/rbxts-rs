@@ -1382,6 +1382,11 @@ fn lower_call(
                 }
                 CallShape::New => {
                     let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
+                    // as `transform_new_expression` (stockfix): the constructor is read before the arguments run, so
+                    // it is captured when their prerequisites could change it (`new C((C = B, x))`)
+                    if !effects_commute(&get_effects(&base), &get_effects_of_statements(&arg_prereqs.statements)) {
+                        base = prereqs.push_to_var(base, "class");
+                    }
                     prereqs.push_list(arg_prereqs.statements);
                     Ok(create::call(create::property(base, "new"), values))
                 }

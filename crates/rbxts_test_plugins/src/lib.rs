@@ -13,7 +13,7 @@
 //!   equal a build without plugins.
 //! - [`decline`]: `decline-all`, offered everything (every call, access, assignment, class, expression and statement
 //!   kind) and declining it all: its output must equal a build without plugins; `decline-audit` also reports what it
-//!   was not offered.
+//!   was not offered; `inert`, active with no interest, the baseline of a plugin build.
 //! - [`inputs`]: `probe-inputs`, every build input and persistence method of DESIGN §14 (environment, globs,
 //!   recorded finish reads, `remove_empty_dir`, encoded file parts, a diagnostic source).
 //! - [`transformer`]: claims a tsconfig transform and does nothing (the `--writeTransformedFiles` fixture).
@@ -56,6 +56,7 @@ pub const NAMES: &[&str] = &[
     "identity-fallback",
     "decline-all",
     "decline-audit",
+    "inert",
     "probe-inputs",
     "scan",
     "scan-reader",
@@ -86,8 +87,9 @@ pub fn by_name(name: &str) -> Option<Box<dyn DynPlugin>> {
         "identity-key" => erase(identity::Identity(identity::IdentityMode::Key)),
         "identity-assign" => erase(identity::Identity(identity::IdentityMode::Assign)),
         "identity-fallback" => erase(identity::Identity(identity::IdentityMode::Fallback)),
-        "decline-all" => erase(decline::DeclineAll { audit: false }),
-        "decline-audit" => erase(decline::DeclineAll { audit: true }),
+        "decline-all" => erase(decline::DeclineAll { audit: false, inert: false }),
+        "decline-audit" => erase(decline::DeclineAll { audit: true, inert: false }),
+        "inert" => erase(decline::DeclineAll { audit: false, inert: true }),
         "probe-inputs" => erase(inputs::InputsProbe),
         "scan" => erase(scan::Scan),
         "scan-reader" => erase(scan::ScanReader),
