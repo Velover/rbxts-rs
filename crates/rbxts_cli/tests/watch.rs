@@ -1003,3 +1003,30 @@ fn edits_in_a_referenced_project_are_seen() {
     drop(watcher);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// One build at startup: the folders the first build makes for its outputs (`out` above the outDir `out/game`, a
+/// `cache` for the build infos; `rbxts_transform`'s `midsolution` watch fixture) are its own writes, not changes made
+/// before their directory was watched.
+#[test]
+fn the_first_build_starts_no_second_one() {
+    let node_modules = fixture_node_modules();
+    if !node_modules.join("@rbxts").join("compiler-types").is_dir() {
+        eprintln!("skipped: no node_modules with @rbxts/compiler-types (set RBXTS_RS_FIXTURE_NODE_MODULES)");
+        return;
+    }
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../rbxts_transform/tests/watch_fixtures/midsolution");
+    let base = std::env::temp_dir().join(format!("rbxts-rs-cli-watch-first-{}", std::process::id()));
+    let root = base.join("project");
+    let _ = std::fs::remove_dir_all(&base);
+    copy_dir(&fixture, &root);
+    let links = link_packages(&root.join("node_modules/@rbxts"));
+    let watcher = start(&root);
+    assert_eq!(watcher.build_end(0)["ok"], true);
+    assert!(root.join("cache").is_dir() && root.join("out/game").is_dir());
+    watcher.assert_quiet(Duration::from_secs(3));
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}

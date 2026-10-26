@@ -26,7 +26,8 @@
 //!   anything; in the directory of a program file or one the include globs listed, a directory or a file the
 //!   tsconfig could take in (lockfiles in the project directory never count). A directory's own modification never
 //!   counts (its entries' events say more; a directory created or moved in does), nor do rbxts-rs's temporary files
-//!   or this watcher's own artifacts as it wrote them.
+//!   or this watcher's own artifacts as it wrote them, nor a directory holding nothing but this watcher's own
+//!   outputs and build infos (the `out` or `cache` folder its build made: no second build at startup).
 //! - **New watches.** The watched directories are brought up to date after each build, before it is reported. A
 //!   directory watched for the first time is compared with the build: a file written or created, or a directory
 //!   created, since the build started; for a module, package or root directory its own modification time (an entry
@@ -349,6 +350,29 @@ fn holds_project_file(dir: &Path, own: &Own) -> bool {
         }
         Err(_) => true,
     })
+}
+
+/// Whether a directory holds this watcher's own outputs and nothing else: every file below it written by this
+/// watcher as it is now, or a build info (the incremental state and tsc's build info, which the build writes
+/// beside each other), and at least one. A folder the build created for its outputs (`out`, a `cache` for the
+/// build infos) is its own write: its creation starts nothing.
+fn holds_only_own(dir: &Path, own: &Own) -> bool {
+    fn walk(dir: &Path, own: &Own, files: &mut usize) -> bool {
+        let Ok(entries) = std::fs::read_dir(dir) else { return false };
+        entries.flatten().all(|entry| match entry.file_type() {
+            Ok(t) if t.is_symlink() => false,
+            Ok(t) if t.is_dir() => walk(&entry.path(), own, files),
+            Ok(_) => {
+                *files += 1;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let path = path_text(&entry.path());
+                name.ends_with(".tsbuildinfo") || name.ends_with(".rbxts-rs.buildinfo") || is_own(&path, &key(&path), own)
+            }
+            Err(_) => false,
+        })
+    }
+    let mut files = 0;
+    walk(dir, own, &mut files) && files > 0
 }
 
 /// Whether the file at `path` now is the one a load read as `spelled` (its name spelled the same on disk, so not a
@@ -1045,9 +1069,11 @@ impl<'a> Scan<'a> {
             return;
         }
         let Ok(metadata) = std::fs::metadata(dir) else { return };
-        // the directory itself is new since the build started
+        // the directory itself is new since the build started (not one the build made for its outputs)
         if metadata.created().is_ok_and(|t| t >= self.since) {
-            stale.push(text);
+            if !holds_only_own(dir, self.own) {
+                stale.push(text);
+            }
             return;
         }
         if whole && metadata.modified().is_ok_and(|t| t >= self.since) && !self.own_dirs.contains(&k) {
@@ -1073,7 +1099,10 @@ impl<'a> Scan<'a> {
             let Ok(metadata) = entry.metadata() else { continue };
             let path = entry.path();
             let path_string = path_text(&path);
-            if self.recent(&metadata) && relevant(&path_string, false, self.watched, self.own) {
+            if self.recent(&metadata)
+                && relevant(&path_string, false, self.watched, self.own)
+                && !(metadata.is_dir() && holds_only_own(&path, self.own))
+            {
                 stale.push(path_string.clone());
             }
             let name = entry.file_name();
@@ -1146,9 +1175,12 @@ fn watch(
             let Some(events) = collect(&receiver) else { return 0 };
             // a directory watched from now on is compared with the disk from here (the answers below read it)
             let since = SystemTime::now();
-            let (relevant, dropped): (Vec<BurstPath>, Vec<BurstPath>) = events
-                .into_iter()
-                .partition(|(p, folder_modify)| p == RESCAN || relevant(p, *folder_modify, watched.current(), &own));
+            // a folder the last build made for its outputs (`out`, `cache`) is its own write
+            let (relevant, dropped): (Vec<BurstPath>, Vec<BurstPath>) = events.into_iter().partition(|(p, folder_modify)| {
+                p == RESCAN
+                    || (relevant(p, *folder_modify, watched.current(), &own)
+                        && !(!*folder_modify && Path::new(p).is_dir() && holds_only_own(Path::new(p), &own)))
+            });
             let mut paths: Vec<String> = relevant.into_iter().map(|(p, _)| p).collect();
             // what only a plugin's recorded input may care about: with a rebuild anyway, or when an answer changed
             let candidates = inputs::candidates(dropped, &watched.current().inputs, &own);
