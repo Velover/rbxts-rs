@@ -970,7 +970,8 @@ fn checker_errors_are_explained_by_plugins() {
 
 /// A tsconfig transformer no registered plugin claims: as in stock roblox-ts 3.0.0 (`createTransformerList`), one Node
 /// can't resolve from the project directory is a warning with stock's text, and the build goes on without it; one
-/// Node would load (stock would run it) is an error.
+/// Node loads a factory function from (stock would run it) is an error; one Node fails to load is a warning with Node's
+/// error.
 #[test]
 fn tsconfig_plugins_must_be_compiled_in() {
     let Some(project) = Project::new("activation") else { return };
@@ -989,8 +990,37 @@ fn tsconfig_plugins_must_be_compiled_in() {
     let found = errors(&report);
     assert!(found[0].starts_with("error fallbacks.ts: `debugger` is not supported!"), "{found:?}");
 
-    // a transformer Node would load
     let tsconfig = std::fs::read_to_string(fixture_dir().join("tsconfig.json")).unwrap();
+    // one that throws when loaded, and one resolve.sync can't find (it tries `.js` only)
+    project.write("throws.js", "throw new Error(\"boom\");\n");
+    project.write("data.json", "{}\n");
+    let two = "[{ \"transform\": \"./throws\" }, { \"transform\": \"./data\" }]";
+    project.write(
+        "tsconfig.json",
+        &tsconfig.replace("[{ \"transform\": \"rbxts-transform-stamp\", \"prefix\": \"fixture \" }]", two),
+    );
+    let report = project.build(&[], |_| {});
+    assert!(report.fatal.is_empty(), "{:?}", report.fatal);
+    let warnings: Vec<String> = diagnostics(&report).into_iter().filter(|d| d.starts_with("warning")).collect();
+    if warnings.len() == 2 {
+        assert_eq!(
+            warnings,
+            vec![
+                "warning : Transformer `./throws` was not found!\nMore info: Error: boom\nSuggestion: Did you forget to \
+                 install the package?"
+                    .to_owned(),
+                format!(
+                    "warning : Transformer `./data` was not found!\nMore info: Error: Cannot find module './data' from \
+                     '{project_dir}'\nSuggestion: Did you forget to install the package?"
+                ),
+            ]
+        );
+    } else {
+        // no Node to load `./throws` with: it is taken for a transformer stock would run
+        assert_eq!(report.fatal.len() + warnings.len(), 2, "{:?} {warnings:?}", report.fatal);
+    }
+
+    // a transformer Node would load
     project.write("transformer.js", "module.exports = () => (context) => (file) => file;\n");
     project.write("tsconfig.json", &tsconfig.replace("\"rbxts-transform-stamp\"", "\"./transformer\""));
     let report = project.build(&[], |_| {});

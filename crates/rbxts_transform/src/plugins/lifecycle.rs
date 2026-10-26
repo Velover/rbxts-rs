@@ -17,13 +17,13 @@ use serde_json::{Map, Value};
 use rbxts_luau::LateStrings;
 use rbxts_plugin::erased::{DynPlugin, ErasedPart, ErasedShared, ErasedState};
 use rbxts_plugin::{
-    BuildKind, ChangeSet, DirEntry, FileIndex, FinishBackend, FinishCx, GlobMatcher, PluginInfo, SetupBackend,
-    SetupCx, StateOrigin, Utf16Pos,
+    BuildKind, ChangeSet, DirEntry, FileIndex, FinishBackend, FinishCx, GlobMatcher, PluginInfo, SetupBackend, SetupCx,
+    StateOrigin, Utf16Pos,
 };
 
 use crate::build::plugin_inputs::{
-    DirRules, EnvSnapshot, FinishRead, RecordedGlob, plain, read_answer, read_dir_now, read_file_now,
-    record_read, valid_env_name,
+    DirRules, EnvSnapshot, FinishRead, RecordedGlob, plain, read_answer, read_dir_now, read_file_now, record_read,
+    valid_env_name,
 };
 use rbxts_project::{ModuleResolver, ProjectServices, ResolvedModuleInfo, nodepath};
 use tsrs_ast::SourceFile;
@@ -39,7 +39,7 @@ pub struct PluginOptions<'p> {
     /// Registered plugins, in registration order (the claim order).
     pub plugins: &'p [Box<dyn DynPlugin>],
     /// A tsconfig `plugins` entry whose `transform` no registered plugin claims is an error ("not compiled into
-    /// this toolchain") when Node would load it, else a warning as in stock roblox-ts (`activate`); with this set it
+    /// this toolchain") when stock would run it, else a warning as in stock roblox-ts (`activate`); with this set it
     /// is ignored (measurement runs on a project's own tsconfig).
     pub ignore_unknown_tsconfig_plugins: bool,
     /// `RBXTS_PLUGIN_CLAIMS=all`: ask every matching plugin, and report a double claim as an error. The
@@ -90,9 +90,11 @@ pub(crate) fn plain_late_key(key: &str) -> &str {
 /// with that `transform`, with the warnings to report. Errors: an entry no registered plugin claims that Node would
 /// load (unless ignored), two plugins with one name.
 ///
-/// An entry no registered plugin claims and that Node can't resolve from the project directory is stock roblox-ts
-/// 3.0.0's case too (`createTransformerList`): a warning, `transformerNotFound`'s text, and the build goes on
-/// without it. One Node would load is an error: stock would run that transformer, which rbxts-rs can't.
+/// An entry no registered plugin claims goes as stock roblox-ts 3.0.0's `createTransformerList` goes: when
+/// `resolve.sync` can't find it from the project directory ([`resolve_sync`]), or Node can't `require` it or finds
+/// no factory function in it ([`node_load`]), a warning with `transformerNotFound`'s text and the error, and the build
+/// goes on without it. One whose factory Node finds is an error: stock would run that transformer, which rbxts-rs
+/// can't (also when Node can't be run to tell).
 pub(crate) fn activate<'p>(
     options: &PluginOptions<'p>,
     tsconfig_path: &str,
@@ -114,10 +116,18 @@ pub(crate) fn activate<'p>(
         if claimed || options.ignore_unknown_tsconfig_plugins {
             continue;
         }
-        if !node_resolves(transform, &project_dir) {
+        let import = entry.get("import").and_then(Value::as_str);
+        let failed = match resolve_sync(transform, &project_dir) {
+            Err(error) => Some(error),
+            Ok(module) => match node_load(&module, import, &project_dir) {
+                Some(Err(error)) => Some(error),
+                Some(Ok(())) | None => None,
+            },
+        };
+        if let Some(error) = failed {
             warnings.push(format!(
-                "Transformer `{transform}` was not found!\nMore info: Error: Cannot find module '{transform}' from \
-                 '{project_dir}'\nSuggestion: Did you forget to install the package?"
+                "Transformer `{transform}` was not found!\nMore info: {error}\nSuggestion: Did you forget to install \
+                 the package?"
             ));
         } else {
             errors.push(format!(
@@ -146,40 +156,207 @@ pub(crate) fn activate<'p>(
     Ok((active, warnings))
 }
 
-/// Whether Node's `resolve.sync(specifier, { basedir })` (roblox-ts's transformer lookup) finds a file: a relative or
-/// absolute path, or a package in a `node_modules` of `basedir` or an ancestor; as a file (also with `.js`,
-/// `.json` or `.node`), or as a directory with a `package.json` `main` or an `index` file.
-fn node_resolves(specifier: &str, basedir: &str) -> bool {
-    fn as_file(path: &str) -> bool {
-        ["", ".js", ".json", ".node"].iter().any(|ext| Path::new(&format!("{path}{ext}")).is_file())
+/// Node's core modules (`is-core-module` for the Node versions roblox-ts runs on): `resolve.sync` returns their name
+/// before looking in any `node_modules`.
+const NODE_CORE_MODULES: &[&str] = &[
+    "assert",
+    "assert/strict",
+    "async_hooks",
+    "buffer",
+    "child_process",
+    "cluster",
+    "console",
+    "constants",
+    "crypto",
+    "dgram",
+    "diagnostics_channel",
+    "dns",
+    "dns/promises",
+    "domain",
+    "events",
+    "fs",
+    "fs/promises",
+    "http",
+    "http2",
+    "https",
+    "inspector",
+    "inspector/promises",
+    "module",
+    "net",
+    "os",
+    "path",
+    "path/posix",
+    "path/win32",
+    "perf_hooks",
+    "process",
+    "punycode",
+    "querystring",
+    "readline",
+    "readline/promises",
+    "repl",
+    "stream",
+    "stream/consumers",
+    "stream/promises",
+    "stream/web",
+    "string_decoder",
+    "sys",
+    "timers",
+    "timers/promises",
+    "tls",
+    "trace_events",
+    "tty",
+    "url",
+    "util",
+    "util/types",
+    "v8",
+    "vm",
+    "wasi",
+    "worker_threads",
+    "zlib",
+    "_http_agent",
+    "_http_client",
+    "_http_common",
+    "_http_incoming",
+    "_http_outgoing",
+    "_http_server",
+    "_stream_duplex",
+    "_stream_passthrough",
+    "_stream_readable",
+    "_stream_transform",
+    "_stream_wrap",
+    "_stream_writable",
+    "_tls_common",
+    "_tls_wrap",
+];
+
+/// `isCore` of `resolve` (`is-core-module`): a core module's name, or a `node:` one.
+fn is_node_core_module(specifier: &str) -> bool {
+    specifier.starts_with("node:") || NODE_CORE_MODULES.contains(&specifier)
+}
+
+/// roblox-ts's transformer lookup, `resolve.sync(specifier, { basedir })` of `resolve` 1.22 with its defaults
+/// (`extensions: [".js"]`, symlinks kept): the module path, a core module's name, or the error roblox-ts reports
+/// (`String(err)`).
+///
+/// - a path (`./x`, `../x`, `.`, `..`, `/x`, `\x`, `C:\x`): resolved against `basedir`, as a file (`x`, then `x.js`)
+///   or as a directory;
+/// - a core module: its name;
+/// - otherwise `<dir>/node_modules/<specifier>` for `basedir` and each ancestor (when that `node_modules` is a
+///   directory), then `~/.node_modules` and `~/.node_libraries`.
+///
+/// A directory: its `package.json` `main` (`.` or `./` is `index`) as a file, then as a directory, then `index.js`;
+/// a `main` that isn't a string is a TypeError.
+fn resolve_sync(specifier: &str, basedir: &str) -> Result<String, String> {
+    fn is_file(path: &str) -> bool {
+        std::fs::metadata(path).is_ok_and(|m| m.is_file())
     }
-    fn as_dir(path: &str) -> bool {
-        let main = std::fs::read_to_string(nodepath::join(&[path, "package.json"]))
+    fn load_as_file(path: &str) -> Option<String> {
+        [path.to_owned(), format!("{path}.js")].into_iter().find(|candidate| is_file(candidate))
+    }
+    fn js_string(value: &Value) -> String {
+        match value {
+            Value::String(text) => text.clone(),
+            other => other.to_string(),
+        }
+    }
+    fn load_as_directory(path: &str) -> Result<Option<String>, String> {
+        let package = std::fs::read_to_string(nodepath::join(&[path, "/package.json"]))
             .ok()
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-            .and_then(|json| json.get("main").and_then(Value::as_str).map(str::to_owned));
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+        // a falsy `main` (missing, "", 0, false, null) is none
+        let main = package.as_ref().and_then(|p| p.get("main")).filter(|main| match main {
+            Value::Null | Value::Bool(false) => false,
+            Value::String(text) => !text.is_empty(),
+            Value::Number(n) => n.as_f64() != Some(0.0),
+            _ => true,
+        });
         if let Some(main) = main {
-            let main = nodepath::join(&[path, &main]);
-            if as_file(&main) || as_file(&nodepath::join(&[&main, "index"])) {
-                return true;
+            let Value::String(main) = main else {
+                let name = package.as_ref().and_then(|p| p.get("name")).map_or("undefined".to_owned(), js_string);
+                return Err(format!("TypeError: package \u{201c}{name}\u{201d} `main` must be a string"));
+            };
+            let main = if main == "." || main == "./" { "index" } else { main.as_str() };
+            let main = nodepath::resolve(&[path, main]);
+            // resolve swallows errors here
+            if let Some(found) = load_as_file(&main).or_else(|| load_as_directory(&main).ok().flatten()) {
+                return Ok(Some(found));
             }
         }
-        as_file(&nodepath::join(&[path, "index"]))
+        Ok(load_as_file(&nodepath::join(&[path, "/index"])))
     }
-    let found = |path: &str| as_file(path) || as_dir(path);
-    let relative = specifier.starts_with("./") || specifier.starts_with("../") || specifier.starts_with('/');
-    if relative || nodepath::is_absolute(specifier) {
-        return found(&nodepath::resolve(&[basedir, specifier]));
-    }
-    let mut dir = Some(basedir.to_owned());
-    while let Some(d) = dir {
-        if nodepath::basename(&d) != "node_modules" && found(&nodepath::join(&[&d, "node_modules", specifier])) {
-            return true;
+    let absolute_start = nodepath::resolve(&[basedir]);
+    let bytes = specifier.as_bytes();
+    let relative = specifier == "."
+        || specifier == ".."
+        || specifier.starts_with("./")
+        || specifier.starts_with("../")
+        || matches!(bytes.first(), Some(b'/' | b'\\'))
+        || (bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && matches!(bytes[2], b'/' | b'\\'));
+    if relative {
+        let mut path = nodepath::resolve(&[&absolute_start, specifier]);
+        if specifier == "." || specifier == ".." || specifier.ends_with('/') {
+            path.push('/');
         }
-        let parent = nodepath::dirname(&d).to_owned();
-        dir = (parent != d).then_some(parent);
+        if let Some(found) = load_as_file(&path) {
+            return Ok(found);
+        }
+        if let Some(found) = load_as_directory(&path)? {
+            return Ok(found);
+        }
+    } else if is_node_core_module(specifier) {
+        return Ok(specifier.to_owned());
+    } else {
+        let mut dirs = Vec::new();
+        let mut dir = absolute_start.clone();
+        loop {
+            dirs.push(nodepath::resolve(&[&dir, "node_modules"]));
+            let parent = nodepath::dirname(&dir).to_owned();
+            if parent == dir {
+                break;
+            }
+            dir = parent;
+        }
+        if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+            let home = home.to_string_lossy().into_owned();
+            dirs.push(nodepath::join(&[&home, ".node_modules"]));
+            dirs.push(nodepath::join(&[&home, ".node_libraries"]));
+        }
+        for modules in dirs {
+            let candidate = nodepath::join(&[&modules, specifier]);
+            if !std::fs::metadata(nodepath::dirname(&candidate)).is_ok_and(|m| m.is_dir()) {
+                continue;
+            }
+            if let Some(found) = load_as_file(&candidate) {
+                return Ok(found);
+            }
+            if let Some(found) = load_as_directory(&candidate)? {
+                return Ok(found);
+            }
+        }
     }
-    false
+    Err(format!("Error: Cannot find module '{specifier}' from '{basedir}'"))
+}
+
+/// What roblox-ts's `createTransformerList` does after resolving a transformer, run by Node: `require` it and take its
+/// factory (`config.import`, else `default`; a module that is a function is the default). The error roblox-ts would
+/// report (`String(err)`, "Error: factory not a function" included), `Ok` when the factory is a function (stock then
+/// calls it with the program, which rbxts-rs can't), or `None` when Node can't be run.
+fn node_load(module_path: &str, import: Option<&str>, cwd: &str) -> Option<Result<(), String>> {
+    const SCRIPT: &str = "let r;try{const m=require(process.argv[1]);const f=typeof m==='function'?{default:m}:m;\
+        const factory=f[process.argv[2]];if(!factory||typeof factory!=='function')throw new Error('factory not a \
+        function');r='ok'}catch(e){r='error:'+e}process.stdout.write(JSON.stringify(r))";
+    let output = std::process::Command::new("node")
+        .args(["-e", SCRIPT, module_path, import.unwrap_or("default")])
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let answer: String = serde_json::from_slice(&output.stdout).ok()?;
+    Some(match answer.strip_prefix("error:") {
+        Some(error) => Err(error.to_owned()),
+        None => Ok(()),
+    })
 }
 
 /// A path a plugin named: absolute, or relative to the project directory.
@@ -709,4 +886,67 @@ pub(crate) fn commit_state_files(queue: &CommitQueue) -> Result<Vec<String>, Str
 /// The key for a Luau output path, to keep artifacts off them.
 pub(crate) fn output_key(services: &ProjectServices, path: &str) -> String {
     real_key(services, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{node_load, resolve_sync};
+
+    /// `resolve.sync` 1.22's answers for the same layout (checked with roblox-ts's own `resolve`).
+    #[test]
+    fn transformer_lookup_is_resolve_sync() {
+        let dir = rbxts_test_support::TempDir::new("resolve-sync");
+        let root = dir.path().to_string_lossy().replace('\\', "/");
+        let write = |relative: &str, text: &str| {
+            let path = dir.path().join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("project/local.js", "");
+        write("project/data.json", "{}");
+        write("node_modules/main-file/package.json", r#"{ "main": "lib/main" }"#);
+        write("node_modules/main-file/lib/main.js", "");
+        write("node_modules/main-dir/package.json", r#"{ "main": "lib" }"#);
+        write("node_modules/main-dir/lib/index.js", "");
+        write("node_modules/main-number/package.json", r#"{ "name": "n", "main": 5 }"#);
+        write("node_modules/json-index/index.json", "{}");
+        write("node_modules/dot-main/package.json", r#"{ "main": "./" }"#);
+        write("node_modules/dot-main/index.js", "");
+        write("node_modules/fs/index.js", "");
+        let project = format!("{root}/project");
+        let found = |specifier: &str| resolve_sync(specifier, &project).map(|p| p.replace('\\', "/"));
+        let missing = |specifier: &str| Err(format!("Error: Cannot find module '{specifier}' from '{project}'"));
+        assert_eq!(found("./local"), Ok(format!("{root}/project/local.js")));
+        // `.js` only, as resolve's default extensions
+        assert_eq!(found("./data"), missing("./data"));
+        assert_eq!(found("main-file"), Ok(format!("{root}/node_modules/main-file/lib/main.js")));
+        assert_eq!(found("main-dir"), Ok(format!("{root}/node_modules/main-dir/lib/index.js")));
+        assert_eq!(found("main-number"), Err("TypeError: package \u{201c}n\u{201d} `main` must be a string".into()));
+        assert_eq!(found("json-index"), missing("json-index"));
+        assert_eq!(found("dot-main"), Ok(format!("{root}/node_modules/dot-main/index.js")));
+        // a core module wins over a package of its name
+        assert_eq!(found("fs"), Ok("fs".into()));
+        // `.\` is no path for resolve: a package name
+        assert_eq!(found(r".\local"), missing(r".\local"));
+    }
+
+    /// Node's `require` of a resolved transformer, when Node is there.
+    #[test]
+    fn transformer_load_errors_are_node_s() {
+        let dir = rbxts_test_support::TempDir::new("node-load");
+        let cwd = dir.path().to_string_lossy().into_owned();
+        let write = |name: &str, text: &str| {
+            std::fs::write(dir.path().join(name), text).unwrap();
+            dir.path().join(name).to_string_lossy().into_owned()
+        };
+        let function = write("function.js", "module.exports = () => () => (file) => file;\n");
+        let Some(loaded) = node_load(&function, None, &cwd) else { return };
+        assert_eq!(loaded, Ok(()));
+        let named = write("named.js", "exports.transformer = () => () => (file) => file;\n");
+        assert_eq!(node_load(&named, Some("transformer"), &cwd), Some(Ok(())));
+        assert_eq!(node_load(&named, None, &cwd), Some(Err("Error: factory not a function".into())));
+        let throws = write("throws.js", "throw new Error(\"boom\");\n");
+        assert_eq!(node_load(&throws, None, &cwd), Some(Err("Error: boom".into())));
+        assert_eq!(node_load("fs", None, &cwd), Some(Err("Error: factory not a function".into())));
+    }
 }
