@@ -847,6 +847,11 @@ pub struct ProjectServices {
     pub warnings: Vec<String>,
     /// package.json lookups for plugins (`declaring_package`, version checks).
     pub packages: crate::packages::PackageJsonCache,
+    /// `projectReferencePaths` (`ProjectGraph.mapReferencePaths`): for each file of the projects this one references,
+    /// directly or not (sources, declaration files inside their root, and the `.d.ts` TypeScript emits for their
+    /// sources), keyed by [`crate::graph::reference_key`], the output an import of it names. Empty without project
+    /// references.
+    pub project_reference_paths: HashMap<String, String>,
 }
 
 /// The outcome of `ProjectSetup::new` when the project could be read: the services, plus what `compileFiles`
@@ -1006,6 +1011,7 @@ impl ProjectSetup {
             use_case_sensitive_file_names,
             warnings,
             packages: Default::default(),
+            project_reference_paths: HashMap::new(),
         };
         Ok(ProjectSetup { services, diagnostics, fatal: fatal.map(str::to_owned) })
     }

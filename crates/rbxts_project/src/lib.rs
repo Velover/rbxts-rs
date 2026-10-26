@@ -2,6 +2,7 @@
 //! project's own files; and the project setup that precedes transforming (`setup`): the Rojo resolver (`rojo`), the
 //! path translator (`path_translator`) and roblox-ts's checks, shared with plugins as `ProjectServices`.
 
+pub mod graph;
 pub mod nodepath;
 pub mod packages;
 pub mod path_translator;
@@ -202,11 +203,10 @@ impl Project {
         diags
     }
 
-    /// What TypeScript's `getPreEmitDiagnostics` reports for `files` (roblox-ts's check; declaration diagnostics,
-    /// which it adds when declaration emit is on, are not included yet): syntactic diagnostics, then
+    /// What TypeScript's `getPreEmitDiagnostics` reports for `files` (roblox-ts's check): syntactic diagnostics, then
     /// bind and semantic diagnostics with `@ts-ignore` / `@ts-expect-error` / `@ts-nocheck` and `skipLibCheck`
-    /// applied (tsrs's `get_semantic_diagnostics_with_checker`), then the global diagnostics; sorted and
-    /// deduplicated. With one checker every file is checked on the calling thread; with more, one task per checker
+    /// applied (tsrs's `get_semantic_diagnostics_with_checker`), in a declaration build the declaration diagnostics,
+    /// then the global diagnostics; sorted and deduplicated. With one checker every file is checked on the calling thread; with more, one task per checker
     /// (as tsrs's type-check pass, without its work stealing). Unlike the tsrs CLI, semantic diagnostics are reported
     /// even when a file has syntax errors, as `getPreEmitDiagnostics` does.
     pub fn check_files(&self, ctx: &Context, files: &[P<SourceFile>]) -> Vec<P<Diagnostic>> {
@@ -229,6 +229,12 @@ impl Project {
             assert!(ran, "the program has no checker pool of its own");
             for (i, diags) in results.into_inner().unwrap() {
                 per_file[i].extend(diags);
+            }
+        }
+        if program.options().get_emit_declarations() {
+            // each takes its file's checker (none is held here)
+            for (diags, &f) in per_file.iter_mut().zip(files) {
+                diags.extend(program.get_declaration_diagnostics(ctx, Some(f)));
             }
         }
         let mut diags: Vec<P<Diagnostic>> = per_file.into_iter().flatten().collect();
@@ -286,6 +292,14 @@ impl Project {
         let reads = self.reads.as_deref();
         let mut data = setup::create_project_data_recorded(&tsconfig_path, options, reads)?;
         data.warnings.splice(0..0, rbxts.warnings);
+        self.setup_with_data(data)
+    }
+
+    /// [`Project::setup`] from project data made already: by [`graph::ProjectGraph`] for a project of a build with
+    /// project references, whose options and Rojo file depend on the graph.
+    pub fn setup_with_data(&self, data: ProjectData) -> Result<ProjectSetup, ProjectError> {
+        let reads = self.reads.as_deref();
+        let tsconfig_path = data.tsconfig_path.clone();
         let raw_options = self.program.options();
         // getParsedCommandLine: a composite project without rootDir gets the tsconfig's directory, before validation
         // and for everything after it (the build info path was already computed from the raw options)
