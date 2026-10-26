@@ -468,7 +468,11 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
             match options.node_modules_mode {
                 // the packages the script wrote into the watched copy, the others linked
                 NodeModules::LinkPackages => link_packages(&work.join("node_modules"), &clean.join("node_modules"))?,
-                _ => junction(&clean.join("node_modules"), &node_modules)?,
+                // copied as the watched copy's was: a linked `node_modules` resolves its packages outside the copy,
+                // which changes what the checker sees (the roblox-ts tests project's types; stock agrees)
+                NodeModules::Copy => copy_tree_all(&node_modules, &clean.join("node_modules"))
+                    .map_err(|e| format!("copying {}: {e}", node_modules.display()))?,
+                NodeModules::Link => junction(&clean.join("node_modules"), &node_modules)?,
             }
             let (report, _) =
                 BuildSession::new(compile_options(&clean, None), &plugin_options, false).with_seed(seed).build(&[]);
