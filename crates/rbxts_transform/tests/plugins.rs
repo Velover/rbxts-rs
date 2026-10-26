@@ -807,28 +807,51 @@ fn checker_errors_are_explained_by_plugins() {
     assert!(!project.out_exists());
 }
 
+/// A tsconfig transformer no registered plugin claims: as in stock roblox-ts 3.0.0 (`createTransformerList`), one Node
+/// can't resolve from the project directory is a warning with stock's text, and the build goes on without it; one
+/// Node would load (stock would run it) is an error.
 #[test]
 fn tsconfig_plugins_must_be_compiled_in() {
     let Some(project) = Project::new("activation") else { return };
     let report = project.build(&[], |_| {});
+    assert!(report.fatal.is_empty(), "{:?}", report.fatal);
+    let project_dir = project.root.to_string_lossy().replace('/', "\\");
+    let warnings: Vec<String> = diagnostics(&report).into_iter().filter(|d| d.starts_with("warning")).collect();
+    assert_eq!(
+        warnings,
+        vec![format!(
+            "warning : Transformer `rbxts-transform-stamp` was not found!\nMore info: Error: Cannot find module \
+             'rbxts-transform-stamp' from '{project_dir}'\nSuggestion: Did you forget to install the package?"
+        )]
+    );
+    // the build without the transformer compiles the plugin calls as plain calls (the `debugger` is roblox-ts's error)
+    let found = errors(&report);
+    assert!(found[0].starts_with("error fallbacks.ts: `debugger` is not supported!"), "{found:?}");
+
+    // a transformer Node would load
+    let tsconfig = std::fs::read_to_string(fixture_dir().join("tsconfig.json")).unwrap();
+    project.write("transformer.js", "module.exports = () => (context) => (file) => file;\n");
+    project.write("tsconfig.json", &tsconfig.replace("\"rbxts-transform-stamp\"", "\"./transformer\""));
+    let report = project.build(&[], |_| {});
     assert_eq!(
         report.fatal,
         vec![
-            "tsconfig plugin \"rbxts-transform-stamp\" is not compiled into this toolchain (no registered plugin has \
-             that tsconfig_transform)"
+            "tsconfig plugin \"./transformer\" is not compiled into this toolchain (no registered plugin has that \
+             tsconfig_transform)"
         ]
     );
+
     // a plugin with a tsconfig_transform is off without its entry
     project.write(
         "tsconfig.json",
-        &std::fs::read_to_string(fixture_dir().join("tsconfig.json")).unwrap().replace(
+        &tsconfig.replace(
             ",\n\t\t\"plugins\": [{ \"transform\": \"rbxts-transform-stamp\", \"prefix\": \"fixture \" }]",
             "",
         ),
     );
     let report = project.build(&["stamp"], |_| {});
     assert!(report.plugins.is_empty(), "{:?}", report.plugins);
-    // and the build without plugins compiles the plugin calls as plain calls (the `debugger` is roblox-ts's error)
+    // and the build without plugins compiles the plugin calls as plain calls
     assert_eq!(errors(&report).len(), 1, "{:?}", errors(&report));
     assert!(
         errors(&report)[0].starts_with("error fallbacks.ts: `debugger` is not supported!"),

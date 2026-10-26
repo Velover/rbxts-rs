@@ -128,6 +128,12 @@ so the include folder equals stock's; without one, from the files embedded from 
 `moduleResolution: "bundler"`, `paths` instead of `baseUrl`, no `downlevelIteration`, and `types` listed (TypeScript 7
 includes no type roots by default), e.g. `"types": ["types", "compiler-types"]`.
 
+A tsconfig `plugins` entry (`transform`) that no compiled-in plugin claims is handled as stock roblox-ts 3.0.0 handles
+a transformer it can't load: when Node can't resolve it from the project folder, a warning with stock's text
+("Transformer `…` was not found!") and the build goes on without it; when Node would load it (stock would run it,
+rbxts-rs can't), the build fails ("not compiled into this toolchain"). `rbxts-bench --ignore-unknown-plugins` ignores
+both.
+
 `rbxts-bench build --plugin <name>` registers the test
 plugins of `crates/rbxts_test_plugins` (the `rbxts_plugin` crate's `stamp`, and `probe`, which reaches every compiler
 primitive), with `--timings` for per-plugin hook times and `--claims-all` (or `RBXTS_PLUGIN_CLAIMS=all`) to report

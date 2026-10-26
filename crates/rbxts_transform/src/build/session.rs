@@ -631,7 +631,10 @@ impl<'p> BuildSession<'p> {
             self.options.out_dir_override.clone().unwrap_or_else(|| services.path_translator.out_dir.clone());
         let tsconfig_path = self.tsconfig_path();
         let active = match activate(self.plugins, &tsconfig_path) {
-            Ok(active) => active,
+            Ok((active, warnings)) => {
+                report.diagnostics.extend(warnings.iter().map(|w| text_diagnostic(w, Category::Warning)));
+                active
+            }
             Err(errors) => {
                 report.fatal = errors;
                 return (report, summary, committed, Some(loaded));

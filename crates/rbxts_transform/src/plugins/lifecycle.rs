@@ -39,7 +39,8 @@ pub struct PluginOptions<'p> {
     /// Registered plugins, in registration order (the claim order).
     pub plugins: &'p [Box<dyn DynPlugin>],
     /// A tsconfig `plugins` entry whose `transform` no registered plugin claims is an error ("not compiled into
-    /// this toolchain"); with this set it is ignored (measurement runs on a project's own tsconfig).
+    /// this toolchain") when Node would load it, else a warning as in stock roblox-ts (`activate`); with this set it
+    /// is ignored (measurement runs on a project's own tsconfig).
     pub ignore_unknown_tsconfig_plugins: bool,
     /// `RBXTS_PLUGIN_CLAIMS=all`: ask every matching plugin, and report a double claim as an error. The
     /// environment variable turns it on too.
@@ -86,13 +87,20 @@ pub(crate) fn plain_late_key(key: &str) -> &str {
 }
 
 /// The registered plugins that are on for the project: `tsconfig_transform: None`, or a tsconfig `plugins` entry
-/// with that `transform`. Errors: an entry no registered plugin claims (unless ignored), two plugins with one name.
+/// with that `transform`, with the warnings to report. Errors: an entry no registered plugin claims that Node would
+/// load (unless ignored), two plugins with one name.
+///
+/// An entry no registered plugin claims and that Node can't resolve from the project directory is stock roblox-ts
+/// 3.0.0's case too (`createTransformerList`): a warning, `transformerNotFound`'s text, and the build goes on
+/// without it. One Node would load is an error: stock would run that transformer, which rbxts-rs can't.
 pub(crate) fn activate<'p>(
     options: &PluginOptions<'p>,
     tsconfig_path: &str,
-) -> Result<Vec<ActivePlugin<'p>>, Vec<String>> {
+) -> Result<(Vec<ActivePlugin<'p>>, Vec<String>), Vec<String>> {
     let entries = rbxts_project::setup::read_tsconfig_plugins(tsconfig_path).map_err(|e| e.messages)?;
     let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    let project_dir = nodepath::resolve(&[nodepath::dirname(&nodepath::resolve(&[tsconfig_path]))]);
     let mut names = FxHashSet::default();
     for plugin in options.plugins {
         let name = plugin.info().name;
@@ -103,7 +111,15 @@ pub(crate) fn activate<'p>(
     for entry in &entries {
         let Some(transform) = entry.get("transform").and_then(Value::as_str) else { continue };
         let claimed = options.plugins.iter().any(|p| p.info().tsconfig_transform == Some(transform));
-        if !claimed && !options.ignore_unknown_tsconfig_plugins {
+        if claimed || options.ignore_unknown_tsconfig_plugins {
+            continue;
+        }
+        if !node_resolves(transform, &project_dir) {
+            warnings.push(format!(
+                "Transformer `{transform}` was not found!\nMore info: Error: Cannot find module '{transform}' from \
+                 '{project_dir}'\nSuggestion: Did you forget to install the package?"
+            ));
+        } else {
             errors.push(format!(
                 "tsconfig plugin \"{transform}\" is not compiled into this toolchain (no registered plugin has \
                  that tsconfig_transform)"
@@ -127,7 +143,43 @@ pub(crate) fn activate<'p>(
         };
         active.push(ActivePlugin { plugin: &**plugin, info, entry });
     }
-    Ok(active)
+    Ok((active, warnings))
+}
+
+/// Whether Node's `resolve.sync(specifier, { basedir })` (roblox-ts's transformer lookup) finds a file: a relative or
+/// absolute path, or a package in a `node_modules` of `basedir` or an ancestor; as a file (also with `.js`,
+/// `.json` or `.node`), or as a directory with a `package.json` `main` or an `index` file.
+fn node_resolves(specifier: &str, basedir: &str) -> bool {
+    fn as_file(path: &str) -> bool {
+        ["", ".js", ".json", ".node"].iter().any(|ext| Path::new(&format!("{path}{ext}")).is_file())
+    }
+    fn as_dir(path: &str) -> bool {
+        let main = std::fs::read_to_string(nodepath::join(&[path, "package.json"]))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|json| json.get("main").and_then(Value::as_str).map(str::to_owned));
+        if let Some(main) = main {
+            let main = nodepath::join(&[path, &main]);
+            if as_file(&main) || as_file(&nodepath::join(&[&main, "index"])) {
+                return true;
+            }
+        }
+        as_file(&nodepath::join(&[path, "index"]))
+    }
+    let found = |path: &str| as_file(path) || as_dir(path);
+    let relative = specifier.starts_with("./") || specifier.starts_with("../") || specifier.starts_with('/');
+    if relative || nodepath::is_absolute(specifier) {
+        return found(&nodepath::resolve(&[basedir, specifier]));
+    }
+    let mut dir = Some(basedir.to_owned());
+    while let Some(d) = dir {
+        if nodepath::basename(&d) != "node_modules" && found(&nodepath::join(&[&d, "node_modules", specifier])) {
+            return true;
+        }
+        let parent = nodepath::dirname(&d).to_owned();
+        dir = (parent != d).then_some(parent);
+    }
+    false
 }
 
 /// A path a plugin named: absolute, or relative to the project directory.
