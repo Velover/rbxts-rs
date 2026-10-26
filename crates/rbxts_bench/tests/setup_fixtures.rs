@@ -43,6 +43,7 @@ fn check(name: &'static str) {
     assert_eq!(report.load_failures, 0, "{name}: tsrs could not load the project");
     assert!(report.compared > 0, "{name}: nothing compared");
     assert!(report.differences == 0, "{name}: {} differences:\n{}", report.differences, report.first.join("\n"));
+    assert_eq!(report.file_set, 0, "{name}: the two programs hold other files");
 }
 
 #[test]

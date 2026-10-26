@@ -270,6 +270,10 @@ pub struct Report {
     pub first: Vec<String>,
     /// Projects tsrs could not load.
     pub load_failures: usize,
+    /// File-set mismatches, counted apart from `differences` (TypeScript 7's programs may hold other files: its
+    /// `types` default is `[]`): files in only one of the two programs, and resolve probes whose `from` file the
+    /// tsrs program lacks (not compared).
+    pub file_set: usize,
 }
 
 /// Compares one dump with the port and prints the results. `timing_runs` 0 skips the timing.
@@ -282,6 +286,7 @@ pub fn compare_dump(dump: &Value, max_diffs: usize, timing_runs: usize) -> Repor
     let cwd = dump["cwd"].as_str().unwrap_or(".").to_owned();
     let mut total_diff = Diff { compared: 0, differences: 0, first: Vec::new(), max: args.max_diffs };
     let mut load_failures = 0;
+    let mut file_set = 0;
 
     if !dump["error"].is_null() {
         // The JavaScript setup failed: the port must fail with the same messages.
@@ -437,9 +442,13 @@ pub fn compare_dump(dump: &Value, max_diffs: usize, timing_runs: usize) -> Repor
         // resolve_module probes (TypeScript 5's resolveModuleName against Project::resolve_module)
         let mut probe_diff = Diff { compared: 0, differences: 0, first: Vec::new(), max: args.max_diffs };
         let probes = p["moduleProbes"].as_array().cloned().unwrap_or_default();
+        let mut probes_without_from = 0;
         for probe in &probes {
             let from_name = probe["from"].as_str().unwrap_or_default();
-            let Some(from) = project.program.get_source_file(from_name) else { continue };
+            let Some(from) = project.program.get_source_file(from_name) else {
+                probes_without_from += 1;
+                continue;
+            };
             let specifier = probe["specifier"].as_str().unwrap_or_default();
             let rs = project.resolve_module(specifier, from).map(|r| {
                 json!({"fileName": r.file_name, "isExternalLibraryImport": r.is_external_library_import, "packageName": r.package_name})
@@ -447,7 +456,7 @@ pub fn compare_dump(dump: &Value, max_diffs: usize, timing_runs: usize) -> Repor
             probe_diff.compare(&format!("resolve {specifier}"), &probe["resolved"], &rs.unwrap_or(Value::Null));
         }
         println!(
-            "  resolve_module probes: {}, values compared {}, differences {}",
+            "  resolve_module probes: {}, values compared {}, differences {}, skipped (no from file) {probes_without_from}",
             probes.len(),
             probe_diff.compared,
             probe_diff.differences
@@ -538,7 +547,9 @@ pub fn compare_dump(dump: &Value, max_diffs: usize, timing_runs: usize) -> Repor
             }
         }
 
-        // Programs can differ (TypeScript 7 defaults `types` to []); that is not the port's to match.
+        // Programs can differ (TypeScript 7 defaults `types` to []); that is not the port's to match, so it is counted
+        // apart
+        file_set += only_js.len() + only_rs.len() + probes_without_from;
         total_diff.compared += diff.compared + probe_diff.compared;
         total_diff.differences += diff.differences + probe_diff.differences;
         for d in diff.first.into_iter().chain(probe_diff.first) {
@@ -547,11 +558,15 @@ pub fn compare_dump(dump: &Value, max_diffs: usize, timing_runs: usize) -> Repor
             }
         }
     }
-    println!("total: {} values compared, {} differences", total_diff.compared, total_diff.differences);
+    println!(
+        "total: {} values compared, {} differences, {file_set} file-set mismatches",
+        total_diff.compared, total_diff.differences
+    );
     Report {
         compared: total_diff.compared,
         differences: total_diff.differences,
         first: total_diff.first,
         load_failures,
+        file_set,
     }
 }
