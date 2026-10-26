@@ -261,6 +261,10 @@ fn probe_and_stamp_match_the_expected_luau() {
             "warning calls.ts: `mystery` has an unknown @stamp mode; the call is left as it is",
             // asked once: the call hook compiling the call itself does not ask the expression hook again
             "warning s2chains.ts: probe-exprcall: asked about probeAskOnce",
+            // a plugin warning identical to roblox-ts's own at the same node, and one at a node in another file
+            // that two files report: each once in the build
+            "warning seamdiag.ts: Value will be checked against 0, NaN",
+            "warning probe.d.ts: probe: at the declaration, once in the build",
             // reported twice at the same node, then as a message and with related information: kept once
             "warning seamnames.ts: probe: reported twice, kept once",
             // with a hint, and the same text without one: kept once
@@ -288,6 +292,7 @@ fn probe_and_stamp_match_the_expected_luau() {
          {\"file\":\"src/shared/s2calls.ts\",\"claims\":11},{\"file\":\"src/shared/s2chains.ts\",\"claims\":1},\
          {\"file\":\"src/shared/s2locals.ts\",\"claims\":4},{\"file\":\"src/shared/s2objects.ts\",\"claims\":4},\
          {\"file\":\"src/shared/s2spill.ts\",\"claims\":7},{\"file\":\"src/shared/seambefore.ts\",\"claims\":9},\
+         {\"file\":\"src/shared/seamdiag.ts\",\"claims\":2},{\"file\":\"src/shared/seamdiag2.ts\",\"claims\":1},\
          {\"file\":\"src/shared/seamimports.ts\",\"claims\":5},\
          {\"file\":\"src/shared/seamkeys.ts\",\"claims\":3},{\"file\":\"src/shared/seamnames.ts\",\"claims\":7},\
          {\"file\":\"src/shared/seamorder.ts\",\"claims\":2},{\"file\":\"src/shared/selfcalls.ts\",\"claims\":5}]\n"
@@ -1115,5 +1120,34 @@ fn declining_or_lowering_as_roblox_ts_changes_no_output() {
             }
             assert_eq!(files.len(), baseline.0.len(), "{area}, {mode}: files");
         }
+    }
+}
+
+/// A plugin diagnostic identical to roblox-ts's own at the same node (here its `logTruthyChanges` warning), or to
+/// one another file's hook reported at a node in a third file, is kept once in the build, as TypeScript's
+/// DiagnosticCollection keeps one of each; for any checker count.
+#[test]
+fn a_plugin_diagnostic_is_kept_once_in_the_build() {
+    let probe = fixture_dir_of("probe");
+    let Some(project) = Project::copy_of(&probe, &["default.project.json", "package.json"], "diagonce") else {
+        return;
+    };
+    let tsconfig = std::fs::read_to_string(probe.join("tsconfig.json")).unwrap();
+    project.write("tsconfig.json", &tsconfig.replacen('{', "{\n\t\"rbxts\": { \"logTruthyChanges\": true },", 1));
+    std::fs::create_dir_all(project.root.join("src/shared")).unwrap();
+    for name in ["probe.d.ts", "seamdiag.ts", "seamdiag2.ts"] {
+        std::fs::copy(probe.join("src/shared").join(name), project.root.join("src/shared").join(name)).unwrap();
+    }
+    for checkers in [1, 2] {
+        let report = project.build_with(&["stamp", "probe"], Some(checkers), |_| {});
+        assert!(report.fatal.is_empty(), "{:?}", report.fatal);
+        assert_eq!(
+            diagnostics(&report),
+            vec![
+                "warning seamdiag.ts: Value will be checked against 0, NaN",
+                "warning probe.d.ts: probe: at the declaration, once in the build",
+            ],
+            "{checkers} checkers"
+        );
     }
 }

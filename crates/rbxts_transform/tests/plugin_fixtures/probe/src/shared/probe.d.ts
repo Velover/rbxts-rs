@@ -320,3 +320,9 @@ declare function probeImportAfter<T>(a: T): [T, number];
 /** `import_named(path, export)` of its two string literal arguments. */
 /** @probe importfrom */
 declare function probeImportFrom(path: string, name: string): unknown;
+/** A warning at the call with the text of `text`, then the value. */
+/** @probe diagsame */
+declare function probeDiagSame<T>(value: T, text: string): T;
+/** A warning at this declaration. */
+/** @probe diagdecl */
+declare function probeDiagDecl(): undefined;

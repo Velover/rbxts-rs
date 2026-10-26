@@ -327,7 +327,10 @@ pub trait CxBackend {
     /// keeps one of each (`compareDiagnosticsSkipRelatedInformation`). Equal means the same node range, the same
     /// source (the plugin's [`crate::Plugin::diagnostic_source`] standing in for a `None` source; it renders as the
     /// code) and the same message text, the hint included as the line under the message. The category and the
-    /// related information are not compared: the first one recorded is kept.
+    /// related information are not compared: the first one recorded is kept. The build then drops one equal to a
+    /// compiler diagnostic of any file (roblox-ts's own at the same node), or to one a hook of an earlier file
+    /// recorded (a node in another file, such as a declaration, that several files report at): one of each in the
+    /// build, for any checker count.
     fn report(&mut self, diagnostic: PluginDiagnostic);
 
     // --- build inputs (DESIGN §14) ---

@@ -1155,6 +1155,8 @@ impl<'p> BuildSession<'p> {
         let mut file_late_keys: Vec<Vec<(usize, String)>> = Vec::with_capacity(to_transform.len());
         let mut load_checks = Vec::with_capacity(to_transform.len());
         let mut file_inputs: Vec<FileInputs> = Vec::with_capacity(to_transform.len());
+        // per transformed file, what plugins reported into its diagnostics
+        let mut plugin_reported: Vec<Vec<P<Diagnostic>>> = Vec::with_capacity(to_transform.len());
         let hook_times = {
             // every file on the checker that checked it, one thread per checker (`checker_groups`)
             let file_diagnostics: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>> = match &run {
@@ -1197,6 +1199,7 @@ impl<'p> BuildSession<'p> {
                 file_inputs.push(transformed.inputs);
                 once.push(transformed.once);
                 classify.extend(transformed.classify);
+                plugin_reported.push(transformed.plugin_diagnostics);
                 report.files.push(FileOutcome {
                     file_name,
                     out_path,
@@ -1218,16 +1221,23 @@ impl<'p> BuildSession<'p> {
         report.timings.transform = start.elapsed();
         // the transform diagnostics of the project files not transformed again: their last transform's, so a rebuild
         // reports what a clean build would (a single project's, or a dirty project of a graph whose files all cached)
+        let mut cached = Vec::new();
         if let Some(c) = &committed {
             let transformed: FxHashSet<P<SourceFile>> = to_transform.iter().copied().collect();
             for &file in &files {
                 if !transformed.contains(&file)
                     && let Some(old) = c.files.get(&file.path().to_string())
                 {
-                    report.diagnostics.extend(old.diagnostics.iter().copied());
+                    cached.extend(old.diagnostics.iter().copied());
                 }
             }
         }
+        // a plugin diagnostic identical to another diagnostic of the build, once
+        crate::compile::drop_plugin_duplicates(
+            report.files.iter_mut().map(|f| &mut f.diagnostics).zip(plugin_reported.iter().map(Vec::as_slice)),
+            &cached,
+        );
+        report.diagnostics.extend(cached);
 
         let any_errors = report.has_errors();
         if any_errors && !self.options.write_partial {

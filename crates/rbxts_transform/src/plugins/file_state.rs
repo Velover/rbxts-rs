@@ -183,6 +183,9 @@ pub struct PluginFileState {
     /// What `classify_symbol` reported while this file was transformed (refused primitives' internal errors, at the
     /// symbol's declaration): the build reports each once, apart from the files (`backend::run_classify`).
     pub classify_diagnostics: Vec<P<tsrs_ast::Diagnostic>>,
+    /// The diagnostics plugins reported for the file's list (each once): the build drops one identical to another
+    /// diagnostic of the build (`compile::drop_plugin_duplicates`).
+    pub plugin_diagnostics: Vec<P<tsrs_ast::Diagnostic>>,
     /// The number of Luau comments of the file's header comment (TypeScript's detached comments), which the first
     /// top-level statement emitted ahead of its root insertions; plugin imports go after them.
     pub detached_comments: usize,

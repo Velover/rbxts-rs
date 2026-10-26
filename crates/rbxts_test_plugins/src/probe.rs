@@ -48,6 +48,8 @@
 //! - `props`: the names of `ts5_properties_of_type` of the argument's type, joined;
 //! - `importafter`: `compile_expr(a)`, then `import_named("./runtime", "other")` (plugin imports are ordered by
 //!   where they were asked for, not when);
+//! - `diagsame`: a warning at the call with the text of its second argument, then `compile_expr(a)`; `diagdecl`: a
+//!   warning at the callee's declaration (each kept once in the build, beside roblox-ts's own and across files);
 //! - `importfrom`: `import_named(path, export)` of its two string literal arguments (plugin imports are grouped by
 //!   path, in the order each path was first asked for);
 //! - `boom`: panics in [`Mode::Panic`]; `fail`: an error in [`Mode::Fail`]; `err`: `Err` with no new error in
@@ -184,6 +186,8 @@ const OPS: &[&str] = &[
     "props",
     "importafter",
     "importfrom",
+    "diagsame",
+    "diagdecl",
 ];
 const RECEIVER: Tag = Tag(100);
 const CALLEE: Tag = Tag(101);
@@ -625,6 +629,21 @@ impl ProbeInstance {
                 let t = cx.checker().get_type_at_location(a);
                 let names: Vec<&str> = cx.ts5_properties_of_type(t).iter().map(|p| p.name()).collect();
                 self.claimed(text_literal(&names.join(",")))
+            }
+            "diagsame" => {
+                // `probeDiagSame(value, "<text>")`: a warning with that text at the call, which roblox-ts also
+                // reports there (once in the build)
+                let text = arg(1).expect("two arguments").text();
+                cx.warning(call.node, text);
+                let value = cx.compile_expr(arg(0).expect("an argument"))?;
+                self.claimed(value)
+            }
+            "diagdecl" => {
+                // a warning at the callee's declaration, in another file: once in the build, whichever files ask
+                let symbol = call.symbol.expect("a callee symbol");
+                let declaration = symbol.declarations()[0];
+                cx.warning(declaration, "probe: at the declaration, once in the build");
+                self.claimed(create::nil())
             }
             "importfrom" => {
                 // `probeImportFrom("<path>", "<export>")`: the import's value

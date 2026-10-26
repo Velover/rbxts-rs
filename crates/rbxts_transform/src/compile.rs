@@ -317,6 +317,38 @@ pub(crate) struct FileTransform {
     /// What plugins' `classify_symbol` reported while it was transformed (not in `diagnostics`): the build's, once
     /// each ([`classify_diagnostics`]).
     pub classify: Vec<P<Diagnostic>>,
+    /// What plugins reported into `diagnostics` ([`drop_plugin_duplicates`]).
+    pub plugin_diagnostics: Vec<P<Diagnostic>>,
+}
+
+/// Drops each plugin diagnostic identical to another diagnostic of the build, as TypeScript's DiagnosticCollection
+/// keeps one of each: identical to a compiler diagnostic of any file (`files`, then `cached`, the transform
+/// diagnostics of the files not transformed again), or to a plugin diagnostic kept before it (files in transform
+/// order). Identical is as a plugin's own reports are deduplicated in a file (`backend::report`): the same file,
+/// range, code (a plugin diagnostic's source) and message text; the category and related information do not count.
+/// Within a file plugins' reports are already one of each; across files only a node in another file can repeat one.
+pub(crate) fn drop_plugin_duplicates<'a>(
+    files: impl Iterator<Item = (&'a mut Vec<P<Diagnostic>>, &'a [P<Diagnostic>])>,
+    cached: &[P<Diagnostic>],
+) {
+    type Key = (Option<String>, Option<u32>, Option<u32>, Option<&'static str>, i32, String);
+    let key = |d: P<Diagnostic>| -> Key {
+        let source = crate::plugins::backend::diagnostic_source(d);
+        (d.file().map(|f| f.file_name().to_owned()), d.pos(), d.end(), source, d.code(), d.localize())
+    };
+    let files: Vec<_> = files.collect();
+    let mut seen: FxHashSet<Key> = FxHashSet::default();
+    for (diagnostics, plugin) in &files {
+        let plugin: FxHashSet<P<Diagnostic>> = plugin.iter().copied().collect();
+        seen.extend(diagnostics.iter().filter(|d| !plugin.contains(d)).map(|&d| key(d)));
+    }
+    seen.extend(cached.iter().map(|&d| key(d)));
+    for (diagnostics, plugin) in files {
+        let dropped: FxHashSet<P<Diagnostic>> = plugin.iter().copied().filter(|&d| !seen.insert(key(d))).collect();
+        if !dropped.is_empty() {
+            diagnostics.retain(|d| !dropped.contains(d));
+        }
+    }
 }
 
 /// The diagnostics `classify_symbol` reported in all files, once each and sorted (file, position, message): which
@@ -385,6 +417,7 @@ pub(crate) fn transform_file(
     let inputs = std::mem::take(&mut state.plugin_file.inputs);
     let once = std::mem::take(&mut state.diagnostics.once);
     let classify = std::mem::take(&mut state.plugin_file.classify_diagnostics);
+    let plugin_diagnostics = std::mem::take(&mut state.plugin_file.plugin_diagnostics);
     FileTransform {
         ast,
         diagnostics,
@@ -397,6 +430,7 @@ pub(crate) fn transform_file(
         inputs,
         once,
         classify,
+        plugin_diagnostics,
     }
 }
 

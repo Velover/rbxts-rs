@@ -964,7 +964,9 @@ impl CxBackend for HookBackend<'_, '_> {
         if !self.state.plugin_file.reported.insert(diagnostic_key(&diagnostic, source)) {
             return;
         }
-        self.state.add_diagnostic(to_diagnostic(&diagnostic, self.host.sources[self.plugin]));
+        let diagnostic = to_diagnostic(&diagnostic, self.host.sources[self.plugin]);
+        self.state.plugin_file.plugin_diagnostics.push(diagnostic);
+        self.state.add_diagnostic(diagnostic);
     }
 
     // --- build inputs ---
