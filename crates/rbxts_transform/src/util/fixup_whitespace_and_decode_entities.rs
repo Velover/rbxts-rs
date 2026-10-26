@@ -149,6 +149,13 @@ fn decode_entities(text: &[u16]) -> Result<Vec<u16>, InvalidCodePoint> {
     Ok(out)
 }
 
+/// rbxts-rs: `decodeEntities` on a whole string, as TypeScript's JSX transform decodes an attribute's string value
+/// (`tryDecodeEntities`).
+pub fn decode_entities_in_text(text: &str) -> Result<String, InvalidCodePoint> {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    Ok(String::from_utf16_lossy(&decode_entities(&units)?))
+}
+
 /// `entities`: the named entities TypeScript decodes, sorted by name for a binary search.
 #[rustfmt::skip]
 const ENTITIES: &[(&str, u32)] = &[

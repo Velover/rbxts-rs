@@ -197,6 +197,8 @@ pub mod errors {
 
         // jsx
         no_preceding_jsx_spread_element = ["JSX spread expression must come last in children!"];
+        /// rbxts-rs: an entity past U+10FFFF (`&#x110000;`), where roblox-ts (and TypeScript's own JSX emit) crash
+        no_invalid_jsx_entity = ["JSX character entity is not a valid code point (above U+10FFFF)!"];
 
         // semantic
         expected_method_got_function = ["Attempted to assign non-method where method was expected."];

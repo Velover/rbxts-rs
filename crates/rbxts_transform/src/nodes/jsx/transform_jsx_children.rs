@@ -28,7 +28,9 @@ fn transform_jsx_text(state: &mut TransformState<'_>, node: P<Node>) -> Expr {
             return Expr::None;
         }
         Err(_) => {
-            state.internal_error(node, "Invalid code point in a JSX text entity");
+            // rbxts-rs: fixes roblox-ts crashing the whole build (a RangeError): an error for this file, which is not
+            // a compiler bug, so not an internal error
+            state.add_diagnostic(errors::no_invalid_jsx_entity(node));
             return Expr::None;
         }
     };

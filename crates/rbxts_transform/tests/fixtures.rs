@@ -39,7 +39,9 @@
 //!   CRLF line ends; `.gitattributes` keeps them in the checkout).
 //! - `jsx`: JSX elements, attributes (string, boolean, namespaced, with prerequisites), spread props (first, later,
 //!   possibly undefined, conditional), fragments, keyed, conditional, mapped and spread children, JSX text whitespace
-//!   and entities, `@jsx` / `@jsxFrag` pragmas, and the JSX factory import kept alive when only JSX uses it.
+//!   and entities, `@jsx` / `@jsxFrag` pragmas, and the JSX factory import kept alive when only JSX uses it. Two
+//!   lines are rbxts-rs's, not stock's (the `stockfix` fixture): `<_Inner />` is the component, not a host string, and
+//!   an attribute string's backslash is a backslash (`"a\\b"`).
 //! - `junction`: static and dynamic imports of packages behind junctions (symlinks elsewhere): `@rbxts/services`
 //!   in the shared `node_modules`, and `@rbxts/greeter` (the fixture's `packages/greeter`) outside any
 //!   `node_modules`, with either the packages or the whole `node_modules` linked. Imports keep their `node_modules`
@@ -74,6 +76,8 @@
 //! - `stockfix`: the roblox-ts bugs rbxts-rs fixes (each source file names its bug). `expected/` is rbxts-rs's output,
 //!   which differs from stock roblox-ts's exactly by those fixes, and `runtime/check.luau` runs it with Lune (when
 //!   `lune` is on the PATH) against JavaScript's results for the same calls (`runtime/<file>.luau`).
+//!   `tests/error_fixtures/jsx_entity` holds an input stock roblox-ts crashes on, which rbxts-rs reports as errors
+//!   (outside `tests/fixtures`, whose builds must succeed).
 //! - `transform_order`: imports, a triple-slash reference, a module augmentation, an ambient module import and a
 //!   module file augmenting that ambient module, whose files roblox-ts transforms in another order than the program's; [`transform_order`] also checks that order
 //!   (`order.txt`, stock roblox-ts's `getChangedSourceFiles`).
@@ -521,6 +525,26 @@ fn macros() {
 #[test]
 fn stmts() {
     check("stmts");
+}
+
+/// An entity past U+10FFFF, which crashes stock roblox-ts: one error per entity, and the file is not written.
+#[test]
+fn stockfix_jsx_entity() {
+    let node_modules = match node_modules() {
+        Ok(path) => path,
+        Err(why) => return skip("stockfix_jsx_entity", &why),
+    };
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/error_fixtures/jsx_entity");
+    let mut project = TempProject::copy_of(&fixture, "stockfix_jsx_entity");
+    project.link("node_modules", &node_modules);
+    let report = build(&project.root, false);
+    let message = "JSX character entity is not a valid code point (above U+10FFFF)!";
+    assert_eq!(
+        reported(&report, &project.root),
+        vec![format!("error src/shared/entity.tsx: {message}"), format!("error src/shared/entity.tsx: {message}")]
+    );
+    let entity = report.files.iter().find(|f| f.file_name.ends_with("entity.tsx")).expect("entity.tsx is reported");
+    assert!(!entity.is_clean() && !entity.written);
 }
 
 /// The outputs, then `runtime/check.luau` on them with Lune (`lune` on the PATH; skipped and said so without it).

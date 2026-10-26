@@ -9,20 +9,14 @@ use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
 
-/// JavaScript's `c === c.toLowerCase()` on the first UTF-16 unit of `text`.
-fn starts_with_lower_case(text: &str) -> bool {
-    let Some(first) = text.chars().next() else { return true };
-    // rbxts-rs: TypeScript reads one UTF-16 unit; half of a surrogate pair lower-cases to itself
-    if first.len_utf16() > 1 {
-        return true;
-    }
-    let mut lower = first.to_lowercase();
-    lower.next() == Some(first) && lower.next().is_none()
-}
-
 fn transform_jsx_tag_name_expression(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Expr {
     // host component
-    if node.kind() == Kind::Identifier && starts_with_lower_case(node.text()) {
+    // rbxts-rs: fixes roblox-ts taking every name whose first character lower-cases to itself (`c === c.toLowerCase()`)
+    // as a host component: `<_Inner />`, `<$x />` or `<éa />` became strings, where TypeScript checks (and emits) them
+    // as the components they name, and `<Foo-bar />` failed an assertion (an invalid Luau identifier), where TypeScript
+    // has a host element. TypeScript's own rule (`isIntrinsicJsxName`: a lower-case ASCII letter first, or a `-`)
+    // decides now.
+    if node.kind() == Kind::Identifier && tsrs_scanner::is_intrinsic_jsx_name(node.text()) {
         return create::string(node.text());
     }
 

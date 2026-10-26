@@ -83,7 +83,7 @@ local booleanAttribute = React.createElement("textbutton", {
 local stringAttributes = React.createElement("textlabel", {
 	Text = 'say "hi"',
 	Name = "it's",
-	Font = "a\b",
+	Font = "a\\b",
 })
 local expressionAttributes = React.createElement("frame", {
 	Size = count * 2,
@@ -95,7 +95,7 @@ local namespacedAttribute = React.createElement("frame", {
 })
 local namespacedTag = React.createElement("ns:frame")
 -- roblox-ts reads a tag starting with `_` as a host component, though TypeScript checks it as a value
-local underscoreTag = React.createElement("_Inner")
+local underscoreTag = React.createElement(_Inner)
 local elementAttribute = React.createElement("frame", {
 	Child = React.createElement("textlabel"),
 })

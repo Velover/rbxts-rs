@@ -8,7 +8,9 @@ use crate::classes::prereqs::{Prereqs, temp_id};
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::shared::diagnostics::errors;
+use crate::util::create_string_from_literal::create_string_from_value;
 use crate::util::create_truthiness_checks::create_truthiness_checks;
+use crate::util::fixup_whitespace_and_decode_entities::decode_entities_in_text;
 use crate::util::pointer::{MapPointer, assign_to_map_pointer, disable_map_inline};
 use crate::util::types::{get_first_defined_symbol, is_definitely_type, is_object_type};
 
@@ -64,6 +66,22 @@ fn transform_jsx_attribute(
 
     let mut init_prereqs = Prereqs::new();
     let init = match initializer {
+        // rbxts-rs: fixes roblox-ts reading an attribute's string (`Text="a\nb &amp; c"`) as a JavaScript string
+        // literal: JSX attribute strings have no escapes (`\n` is a backslash and an `n`), and their HTML entities are
+        // decoded (TypeScript's `tryDecodeEntities`). A line break inside one went into the quotes as it was, which
+        // Luau rejects. A string with none of these is spelled as before.
+        Some(initializer)
+            if initializer.kind() == Kind::StringLiteral
+                && initializer.text().contains(['\\', '&', '\n', '\r']) =>
+        {
+            match decode_entities_in_text(initializer.text()) {
+                Ok(value) => create_string_from_value(&value),
+                Err(_) => {
+                    state.add_diagnostic(errors::no_invalid_jsx_entity(initializer));
+                    Expr::None
+                }
+            }
+        }
         Some(initializer) => transform_expression(state, &mut init_prereqs, initializer),
         None => create::bool(true),
     };
