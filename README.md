@@ -195,16 +195,18 @@ resolution sees packages installed or upgraded since the last build.
   (a file, an environment variable, a module resolution, a glob's matches); otherwise roblox-ts's closure
   (changed files plus everything that reaches them through the reversed references), TypeScript's global rule (a
   changed or reached script file, `declare global` or ambient module declaration invalidates every file), the
-  augmentation edges, case-only renames, the files whose output is missing, the files without a cached part for
+  augmentation edges, case-only renames, the files whose output is missing or no longer holds what the last commit
+  wrote (changed by hand: its size and content hash are kept), the files without a cached part for
   every plugin, and the files whose hooks' recorded inputs changed (`Cx::env` in a new process; `Cx::record_glob`
   matched again in watch, and always in a new process, which has no matcher). `assumeChangesOnlyAffectDirectDependencies` is refused.
 - **What is kept:** each file's facts (text version, references, augmentations), its plugin file parts, the late
-  strings its Luau uses and what its hooks read (`Cx::env`, `Cx::record_glob`); in memory, its transform warnings (a
-  watch rebuild reports those of the files it does not transform again, as a clean build would; a new process
-  reports those of the files it transforms, as roblox-ts does), the Luau of files with late strings (for re-rendering), the plugins' committed states with the `Shared` made from them and the build
+  strings its Luau uses, what its hooks read (`Cx::env`, `Cx::record_glob`) and its transform warnings (a watch
+  rebuild or a new process reports those of the files it does not transform again, as a clean build would; roblox-ts's
+  incremental build reports only those of the files it transforms; a file with a warning that is not an ad hoc
+  message is transformed again in a new process); in memory, the Luau of files with late strings (for re-rendering), the plugins' committed states with the `Shared` made from them and the build
   inputs their `setup` read, and what the last `finish` read; and the artifacts of the last build. The incremental
   state keeps the facts, the parts as the plugins encode them (`Plugin::encode_file_part`), the late strings, the
-  hooks' and `setup`'s recorded inputs and the artifacts, so a new process transforms only what changed (a cached
+  hooks' and `setup`'s recorded inputs, the warnings, the artifacts and each output's size and content hash, so a new process transforms only what changed (a cached
   file whose late string changes value there, with no Luau kept, makes the build start over once, transforming it).
   Only a build without errors commits; a failing build writes nothing and changes none of it.
 - **The commit:** Luau and assets, plugin artifacts, then deletions (stale outputs, as roblox-ts's clean of the
@@ -228,7 +230,8 @@ resolution sees packages installed or upgraded since the last build.
   `paths`). Packages the build depends on (used, in a type root, named by an unresolved import or by a plugin's
   `resolve_module`) are watched recursively for their `package.json`, JSON, TypeScript and Luau files and folders;
   `node_modules`, its scopes and the type roots for packages added or removed, and for appearing or going themselves
-  (also before the first install). A directory watched for the first time is compared with what the build read
+  (also before the first install). An output the last commit wrote counts when an event leaves it otherwise (edited
+  or deleted by hand; the build writes it again); the watcher's own writes start nothing. A directory watched for the first time is compared with what the build read
   (entries created since the build started, the directory's own modification time, reads the disk now contradicts,
   program files' times and sizes). Plugins' recorded inputs are watched too (globs' roots recursively, what
   `finish` listed, tested or read): an event only they care about starts a rebuild when an answer changed (a file's
