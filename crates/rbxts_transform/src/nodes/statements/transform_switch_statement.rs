@@ -10,6 +10,7 @@ use tsrs_core::P;
 use crate::classes::prereqs::{Prereqs, temp_id};
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
+use crate::nodes::statements::transform_continue_statement::create_continue;
 use crate::nodes::transform_statement_list::transform_statement_list;
 use crate::util::create_hoist_declaration::create_hoist_declaration;
 use crate::util::expression_might_mutate::expression_might_mutate;
@@ -262,7 +263,23 @@ fn transform_switch_middle_default(
 }
 
 /// `transformSwitchStatement`
+/// `transformSwitchStatement`
 pub fn transform_switch_statement(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stmt> {
+    let mut result = transform_switch_statement_inner(state, node);
+    // rbxts-rs: a `continue` inside set this switch's flag and broke out of its block (`create_continue`); continue
+    // the loop after the block
+    if let Some(flag) = state.switch_continue_flags.remove(&node) {
+        let block = result.pop().expect("the switch's block");
+        result.push(create::local(flag.clone(), Some(Expr::False)));
+        result.push(block);
+        let continue_statements = create_continue(state, node);
+        result.push(create::if_stmt(Expr::TemporaryIdentifier(flag), continue_statements, ElseBody::default()));
+    }
+    result
+}
+
+/// The prerequisites, then the `repeat … until true` block (last).
+fn transform_switch_statement_inner(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stmt> {
     let switch = node.as_switch_statement();
     let mut prereqs = Prereqs::new();
     let switch_expression = transform_expression(state, &mut prereqs, switch.expression);

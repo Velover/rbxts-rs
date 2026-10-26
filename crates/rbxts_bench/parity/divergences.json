@@ -14,6 +14,7 @@
     "jsx-entity": "A JSX entity past U+10FFFF is an error, not a crash.",
     "luatuple-holes": "Holes in an optimized LuaTuple / array assignment declare their temporaries (`local _`) instead of writing globals.",
     "optional-chain-key": "An optional element call's key prerequisites run inside the receiver's nil check.",
+    "switch-continue": "`continue` inside a switch continues the loop (roblox-ts continued the switch's `repeat … until true` block, like `break`).",
     "control-strings": "Strings with a NUL or carriage return, and decoded values (enum constants, export names), are escaped where Luau would misread them."
   },
   "corpora": {

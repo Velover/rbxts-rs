@@ -9,6 +9,7 @@ use crate::classes::prereqs::{as_any_identifier, temp_id};
 use crate::classes::transform_state::{TransformState, TryUse, TryUses};
 use crate::nodes::binding::transform_binding_name::transform_binding_name;
 use crate::nodes::transform_statement_list::transform_statement_list;
+use crate::nodes::statements::transform_continue_statement::create_continue;
 use crate::util::is_blocked_by_try_statement::{is_break_blocked_by_try_statement, is_return_blocked_by_try_statement};
 
 fn transform_catch_clause(state: &mut TransformState<'_>, node: P<Node>) -> Expr {
@@ -171,7 +172,8 @@ fn transform_flow_control(
             if try_uses.uses_continue {
                 flow_control_cases.push(FlowControlCase {
                     condition: create_flow_control_condition(state, node, exit_type_id, "TRY_CONTINUE"),
-                    statements: vec![create::continue_stmt()],
+                    // rbxts-rs: a try statement inside a switch continues the loop, not the switch (`create_continue`)
+                    statements: create_continue(state, node),
                 });
             }
         }

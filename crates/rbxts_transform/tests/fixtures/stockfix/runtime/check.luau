@@ -24,6 +24,24 @@ local function loadModule(name: string)
 			local path = { ... }
 			return loadModule(path[#path])
 		end,
+		-- the runtime library's try statement (RuntimeLib's `TS.try`), without its error handling
+		TRY_RETURN = 1,
+		TRY_BREAK = 2,
+		TRY_CONTINUE = 3,
+		try = function(try, catch, finally)
+			local ok, exitType, returns = pcall(try)
+			if not ok then
+				assert(catch, exitType)
+				exitType, returns = catch(exitType)
+			end
+			if finally then
+				local newExitType, newReturns = finally()
+				if newExitType then
+					exitType, returns = newExitType, newReturns
+				end
+			end
+			return exitType, returns
+		end,
 	}
 	environment.script = {}
 	environment.game = {

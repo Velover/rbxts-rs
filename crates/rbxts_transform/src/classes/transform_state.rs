@@ -58,6 +58,8 @@ pub struct TransformState<'a> {
     pub try_uses_stack: Vec<TryUses>,
     pub hoists_by_statement: FxHashMap<P<Node>, Vec<P<Node>>>,
     pub is_hoisted: FxHashMap<P<Symbol>, bool>,
+    /// rbxts-rs: per switch statement, the flag its `continue`s set (see `create_continue`).
+    pub switch_continue_flags: FxHashMap<P<Node>, TemporaryIdentifier>,
     get_type_cache: FxHashMap<P<Node>, P<Type>>,
     pub uses_runtime_lib: bool,
     /// rbxts-rs: how many times `TS` was used, so that an import elided for a plugin at the end of the file can take
@@ -101,6 +103,7 @@ impl<'a> TransformState<'a> {
             try_uses_stack: Vec::new(),
             hoists_by_statement: FxHashMap::default(),
             is_hoisted: FxHashMap::default(),
+            switch_continue_flags: FxHashMap::default(),
             get_type_cache: FxHashMap::default(),
             uses_runtime_lib: false,
             runtime_lib_uses: 0,
