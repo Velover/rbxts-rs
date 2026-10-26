@@ -68,10 +68,13 @@ Re-check these after an update; they are where tsrs's behaviour reaches our outp
   underline matches stock's.
 - **Automatic type directives.** Without `types` in the tsconfig, TypeScript 5 includes every package of the type
   roots in the program; TypeScript 7 (tsrs `get_automatic_type_directive_names`) includes none (only `"types": ["*"]`
-  lists the type roots). rbxts-rs restores TypeScript 5's rule: `rbxts_project` lists the type roots' packages into
-  the parsed options' `types` when the tsconfig has none (`add_automatic_type_directives`), so a project, or a
-  referenced project, whose sources import no package still sees `@rbxts/compiler-types` (TypeScript 7 alone stops at
-  `TS2318: Cannot find global type 'Array'`). On the real project that loads 70 more declaration files, from 8
+  lists the type roots, by TypeScript 5's rule, with TypeScript 5's wording where the two differ: TS2688's "Entry
+  point for implicit type library", "Cannot find name 'process'" without "add node to the types field"). rbxts-rs
+  restores TypeScript 5's rule: `rbxts_project` puts `"types": ["*"]` into the parsed options when the tsconfig has
+  no `types` (`add_automatic_type_directives`; roblox-ts's own check of `types` still sees the tsconfig's), so a
+  project, or a referenced project, whose sources import no package still sees `@rbxts/compiler-types` (TypeScript 7
+  alone stops at `TS2318: Cannot find global type 'Array'`). The type roots are listed through the program's file
+  system, so watch and incremental builds see a package appear, change or go. On the real project that loads 70 more declaration files, from 8
   packages nothing imports, as TypeScript 5 does.
 - **Threading:** the checker is not `Send`, and `get_type_checker` takes a non-reentrant guard. Checking needs a
   512 MiB stack. Set only `checkers`: `single_threaded` also makes parsing and binding serial.

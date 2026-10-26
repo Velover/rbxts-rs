@@ -53,8 +53,11 @@ fn diagnostics_like_stock(name: &str) {
     let Some(node_modules) = node_modules_or_skip(&format!("cli::{name}")) else { return };
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);
     let mut root = TempDir::new(&format!("cli-{name}"));
-    for name in ["src", "tsconfig.json", "package.json"] {
+    for name in ["src", "tsconfig.json", "package.json", "typings"] {
         let from = fixture.join(name);
+        if !from.exists() {
+            continue;
+        }
         if from.is_dir() {
             copy_dir(&from, &root.path().join(name));
         } else {
@@ -88,6 +91,20 @@ fn diagnostics_print_as_stock_with_an_empty_span() {
 #[test]
 fn diagnostics_stop_at_the_first_file_with_an_error_as_stock() {
     diagnostics_like_stock("diagnostics_first_error");
+}
+
+/// A type-root package without declarations, the tsconfig without `types`: TypeScript 5's TS2688 wording ("Entry point
+/// for implicit type library").
+#[test]
+fn a_type_root_package_without_declarations_reports_as_stock() {
+    diagnostics_like_stock("automatic_types_no_declarations");
+}
+
+/// `"types": []`: roblox-ts makes its MacroManager before checking anything, so the compiler types it cannot find
+/// are its only error (no TS2318).
+#[test]
+fn empty_types_stop_at_the_macro_manager_as_stock() {
+    diagnostics_like_stock("types_empty");
 }
 
 /// Without `types` in the tsconfig, every package of the type roots is in the program, as in TypeScript 5: a project

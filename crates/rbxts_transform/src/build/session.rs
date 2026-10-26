@@ -1115,6 +1115,15 @@ impl<'p> BuildSession<'p> {
         // 3. check the files to transform
         let start = Instant::now();
         let ctx = Context::background();
+        // roblox-ts's `compileFiles` makes its MacroManager before checking anything: compiler types it cannot find
+        // (`"types": []`) stop the build there, with that error alone
+        if !to_transform.is_empty() {
+            let mut checker = project.program.get_type_checker_for_file_exclusive(&ctx, to_transform[0]);
+            if let Err(error) = crate::classes::macro_manager::MacroManager::new(&mut checker) {
+                report.fatal.extend(error.messages);
+                return (report, summary, committed, Some(loaded));
+            }
+        }
         // the checker diagnostics are `checked_from..checked_to` (a plugin error drops them: `first_error_cut`)
         let checked_from = report.diagnostics.len();
         report.diagnostics.extend(project.program_diagnostics());

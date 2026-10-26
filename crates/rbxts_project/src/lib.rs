@@ -65,6 +65,8 @@ pub struct Project {
     pub cwd: String,
     /// What the tsconfig parse and the program load read from the file system, when the load was asked to record it.
     pub reads: Option<Arc<ReadLog>>,
+    /// The tsconfig has no `types`, and the program has TypeScript 5's automatic type directives (`"types": ["*"]`).
+    pub automatic_types: bool,
     module_resolver: OnceLock<ModuleResolver>,
 }
 
@@ -85,37 +87,21 @@ impl ParseConfigHost for ConfigHost {
 
 /// TypeScript 5's automatic type directives (`getAutomaticTypeDirectiveNames`): without `types` in the tsconfig,
 /// every package of the type roots is in the program (one whose package.json has `"typings": null` excepted, and
-/// names starting with a dot). TypeScript 7 includes none then (only `"types": ["*"]` does), so a project, or a
-/// referenced project, whose sources import no package would not see the Roblox globals of `@rbxts/compiler-types`.
-/// The names go into the parsed options' `types`, which roblox-ts's own check of `types` accepts (each is a
-/// directory of a type root).
-fn add_automatic_type_directives(parsed: &mut ParsedCommandLine, fs: &dyn FS, cwd: &str) {
-    let Some(options) = parsed.parsed_config.compiler_options.as_ref() else { return };
+/// names starting with a dot). TypeScript 7 includes none then, so a project, or a referenced project, whose sources
+/// import no package would not see the Roblox globals of `@rbxts/compiler-types`. TypeScript 7's `"types": ["*"]` is
+/// TypeScript 5's rule, with TypeScript 5's wording where it differs (TS2688's "Entry point for implicit type library",
+/// "Cannot find name 'process'" without "add node to the types field"): it goes into the parsed options when the
+/// tsconfig has no `types`, and roblox-ts's own check of `types` sees the tsconfig's (`Project::automatic_types`).
+/// Whether it did.
+fn add_automatic_type_directives(parsed: &mut ParsedCommandLine) -> bool {
+    let Some(options) = parsed.parsed_config.compiler_options.as_ref() else { return false };
     if options.types.is_some() {
-        return;
-    }
-    let mut names = Vec::new();
-    for root in options.get_effective_type_roots(cwd).0 {
-        if !fs.directory_exists(&root) {
-            continue;
-        }
-        for directory in fs.get_accessible_entries(&root).directories {
-            let normalized = tspath::normalize_path(&directory);
-            let package_json = tspath::combine_paths(&root, &[&normalized, "package.json"]);
-            let not_needed = fs.file_exists(&package_json)
-                && fs
-                    .read_file(&package_json)
-                    .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-                    .is_some_and(|json| json.get("typings").is_some_and(serde_json::Value::is_null));
-            let name = tspath::get_base_file_name(&normalized);
-            if !not_needed && !name.starts_with('.') {
-                names.push(name);
-            }
-        }
+        return false;
     }
     let mut options = CompilerOptions::clone(options);
-    options.types = Some(names);
+    options.types = Some(vec!["*".to_owned()]);
     parsed.parsed_config.compiler_options = Some(P::new(options));
+    true
 }
 
 /// Parses the tsconfig and creates the program. Returns the config diagnostics when the config cannot be used.
@@ -150,7 +136,7 @@ pub fn load_cached(
     let Some(mut parsed) = parsed.filter(|_| errors.is_empty()) else {
         return Err(errors);
     };
-    add_automatic_type_directives(&mut parsed, fs.as_ref(), &cwd);
+    let automatic_types = add_automatic_type_directives(&mut parsed);
     let config = P::new(parsed);
 
     if opts.lazy_dts && tsrs_compiler::lazy_dts_allowed() {
@@ -169,6 +155,7 @@ pub fn load_cached(
         program_time,
         cwd,
         reads,
+        automatic_types,
         module_resolver: OnceLock::new(),
     })
 }
@@ -392,6 +379,10 @@ impl Project {
         let mut options = (*raw_options).clone();
         if options.composite.is_true() && options.root_dir.is_empty() {
             options.root_dir = nodepath::dirname(&tsconfig_path).to_owned();
+        }
+        // roblox-ts checks the tsconfig's `types`, not the automatic type directives
+        if self.automatic_types {
+            options.types = None;
         }
         setup::validate_compiler_options(&options, &data.project_path)?;
         let case_sensitive = osvfs::fs().use_case_sensitive_file_names();
