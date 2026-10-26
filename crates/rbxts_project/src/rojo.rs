@@ -490,14 +490,36 @@ impl Builder {
             self.rbx_path.push(name.to_owned());
         }
         // Children that are not objects only get past the schema under keys its pattern skips ("" and keys with
-        // line breaks).
-        // rbxts-rs: fixes the package crashing on them (`null`: a TypeError; a non-empty string: endless recursion
-        // through its characters) or reading them oddly (an array's items mount under their indexes; a number, a
-        // boolean or "" mount nothing): every one is an error now, as a tree entry must be an object.
-        let Value::Object(tree) = tree else {
-            let entry = Value::from(self.rbx_path.clone());
-            let file = self.config_paths.last().map(|p| format!(" in \"{p}\"")).unwrap_or_default();
-            return Err(RojoError(format!("the tree entry {entry}{file} is {tree}, not an object")));
+        // line breaks). The package reads them as JavaScript values: an array's items mount under their indexes, and
+        // a number, a boolean or "" has no members, so it mounts nothing.
+        let tree = match tree {
+            Value::Object(tree) => tree,
+            Value::Array(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    self.parse_tree(base_path, &index.to_string(), item, false)?;
+                }
+                if !do_not_push {
+                    self.rbx_path.pop();
+                }
+                return Ok(());
+            }
+            // rbxts-rs: fixes the package crashing on `null` (a TypeError reading `$path`) and on a non-empty string
+            // (endless recursion through its characters, each a string with itself at index 0): an error naming the
+            // entry (and the project file, when it is not the one the error is reported for)
+            Value::Null | Value::String(_) if !tree.as_str().is_some_and(str::is_empty) => {
+                let entry = Value::from(self.rbx_path.clone());
+                let file = match self.config_paths.as_slice() {
+                    [_, .., nested] => format!(" in \"{nested}\""),
+                    _ => String::new(),
+                };
+                return Err(RojoError(format!("the tree entry {entry}{file} is {tree}, which roblox-ts cannot read")));
+            }
+            _ => {
+                if !do_not_push {
+                    self.rbx_path.pop();
+                }
+                return Ok(());
+            }
         };
         if let Some(path) = tree.get("$path") {
             let path = match path {
@@ -744,25 +766,21 @@ mod tests {
     }
 
     #[test]
-    fn tree_entries_that_are_not_objects_are_errors() {
+    fn tree_entries_that_are_not_objects() {
         // the schema skips "" and keys with line breaks, so only those can hold anything else; the package crashes
-        // on `null` and on a non-empty string, mounts an array's items by index, and ignores the rest
-        for (value, text) in [
-            (json!(null), "null"),
-            (json!("abc"), "\"abc\""),
-            (json!([{"$path": "src"}]), "[{\"$path\":\"src\"}]"),
-            (json!(5), "5"),
-            (json!(false), "false"),
-        ] {
+        // on `null` and on a non-empty string (errors here), and ignores numbers, booleans and "" (here too)
+        for (value, text) in [(json!(null), "null"), (json!("abc"), "\"abc\""), (json!([null]), "null")] {
             let config = json!({"name": "x", "tree": {"$className": "DataModel", "A": {"": value.clone()}}});
             assert!(validate_rojo_config(&config).is_ok());
             let Err(error) = RojoResolver::from_tree("/p", &config["tree"]) else { panic!("an error") };
-            assert_eq!(error.0, format!("the tree entry [\"A\",\"\"] is {text}, not an object"));
+            let entry = if value.is_array() { "[\"A\",\"\",\"0\"]" } else { "[\"A\",\"\"]" };
+            assert_eq!(error.0, format!("the tree entry {entry} is {text}, which roblox-ts cannot read"));
         }
-        let config = json!({"name": "x", "tree": {"A\nB": 1}});
-        assert!(validate_rojo_config(&config).is_ok());
-        let Err(error) = RojoResolver::from_tree("/p", &config["tree"]) else { panic!("an error") };
-        assert_eq!(error.0, "the tree entry [\"A\\nB\"] is 1, not an object");
+        for value in [json!(5), json!(false), json!(""), json!([1, true])] {
+            let config = json!({"name": "x", "tree": {"$className": "DataModel", "A": {"": value}, "A\nB": 1}});
+            assert!(validate_rojo_config(&config).is_ok());
+            assert!(RojoResolver::from_tree("/p", &config["tree"]).is_ok());
+        }
     }
 
     #[test]
