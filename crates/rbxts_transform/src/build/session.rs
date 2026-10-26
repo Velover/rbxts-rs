@@ -1598,7 +1598,8 @@ impl<'p> BuildSession<'p> {
         if !self.options.no_write {
             // rbxts-rs: in parallel, all or nothing (`write_outputs`), errors in the order of `report.files`; a
             // case-only rename renames the output too (roblox-ts keeps the old name: its bug). The re-rendered files
-            // (a successful build's only) go in the same batch, without the case check.
+            // (a successful build's only) go in the same batch, without the case check, and so do a successful
+            // build's assets (`asset_bytes`: the assets, then the declaration assets).
             let luau: Vec<(usize, &str, &[u8])> = report
                 .files
                 .iter()
@@ -1613,6 +1614,10 @@ impl<'p> BuildSession<'p> {
             }
             let rerendered_count = to_write.len() - luau.len();
             to_write.extend(extra_outputs.iter().map(|(p, s)| (p.as_str(), s.as_bytes(), true)));
+            let asset_paths = project_outputs.assets.iter().chain(&project_outputs.declaration_assets);
+            to_write.extend(
+                asset_paths.zip(&asset_bytes).map(|((_, output), bytes)| (output.as_str(), bytes.as_slice(), true)),
+            );
             let mut results = outputs::write_outputs(services, Some(&listing), &to_write).into_iter();
             let indices: Vec<usize> = luau.iter().map(|&(i, _, _)| i).collect();
             for (i, result) in indices.into_iter().zip(results.by_ref()) {
@@ -1637,7 +1642,15 @@ impl<'p> BuildSession<'p> {
                 }
                 summary.rerendered = rerendered.iter().map(|(p, _)| p.clone()).collect();
             }
-            for ((path, _), result) in extra_outputs.iter().zip(results) {
+            for ((path, _), result) in extra_outputs.iter().zip(results.by_ref()) {
+                match result {
+                    Ok(true) => summary.written.push(path.clone()),
+                    Ok(false) => {}
+                    Err(message) => report.fatal.push(message),
+                }
+            }
+            let asset_paths = project_outputs.assets.iter().chain(&project_outputs.declaration_assets);
+            for ((_, path), result) in asset_paths.zip(results) {
                 match result {
                     Ok(true) => summary.written.push(path.clone()),
                     Ok(false) => {}
@@ -1682,7 +1695,6 @@ impl<'p> BuildSession<'p> {
                     &mut summary,
                     &loaded,
                     &mut project_outputs,
-                    &asset_bytes,
                     include.as_ref(),
                     &queue,
                     &stale,
@@ -1856,7 +1868,6 @@ impl<'p> BuildSession<'p> {
         summary: &mut BuildSummary,
         loaded: &Loaded,
         outputs: &mut outputs::ProjectOutputs,
-        asset_bytes: &[Vec<u8>],
         include: Option<&IncludeCopy>,
         queue: &CommitQueue,
         stale: &[String],
@@ -1875,8 +1886,7 @@ impl<'p> BuildSession<'p> {
         {
             outputs.keep.insert(outputs::path_key(services, path));
         }
-        // 1. assets (the Luau is written)
-        summary.written.extend(outputs::sync_assets(services, outputs, asset_bytes, listing)?);
+        // 1. the runtime include (the Luau and the assets are written)
         if let Some(include) = include {
             summary.written.extend(include.commit()?);
         }

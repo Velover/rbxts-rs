@@ -30,7 +30,6 @@ use rbxts_transform::build::parity::{self, ParityOptions, StepResult};
 use rbxts_test_plugins::scan;
 use rbxts_transform::{BuildSession, BuildSummary, CompileOptions, PluginOptions};
 
-
 fn node_modules() -> Option<PathBuf> {
     let path = rbxts_test_support::node_modules().unwrap_or_default();
     path.join("@rbxts").join("compiler-types").is_dir().then_some(path)
@@ -1258,6 +1257,104 @@ fn a_luau_write_error_writes_no_other_output() {
         for file in blocked {
             assert!(root.join(file).is_file(), "{file}");
         }
+    });
+    drop(copy);
+}
+
+/// Opens `path` the way an editor or Rojo may hold it: reading and writing shared, deleting not, so nothing can
+/// rename over it or rename it.
+fn hold(path: &Path) -> std::fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 1;
+    const FILE_SHARE_WRITE: u32 = 2;
+    std::fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE).open(path).unwrap()
+}
+
+/// A path as a watcher reports it to the session: forward slashes.
+fn slashed(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// The `.rbxts-tmp-` and `.rbxts-old-` files a commit leaves under `dir`.
+fn commit_leftovers(dir: &Path) -> Vec<String> {
+    entries(dir).into_iter().filter(|e| e.contains(".rbxts-tmp-") || e.contains(".rbxts-old-")).collect()
+}
+
+/// A rename into place that fails after others went through (an output another process holds past the retries)
+/// rolls the commit back: the outputs already replaced get their old bytes again, no temporary file or kept copy is
+/// left, and the build reports the held one. Released, the next build writes both.
+#[test]
+fn a_failed_rename_into_place_rolls_the_commit_back() {
+    let Some((copy, root)) = keeper_copy("rollback", false) else { return };
+    big_stack(|| {
+        let options = PluginOptions { ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
+        let mut session = keeper_session(&root, &options, true);
+        let (report, _) = session.build(&[]);
+        assert!(!report.has_errors(), "{:?}", report.fatal);
+        let read = |file: &str| std::fs::read(root.join(file)).unwrap();
+        let (c_before, d_before) = (read("out/shared/c.luau"), read("out/shared/d.luau"));
+        let src = |file: &str| root.join("src/shared").join(file);
+        for file in ["c.ts", "d.ts"] {
+            let text = std::fs::read_to_string(src(file)).unwrap();
+            std::fs::write(src(file), format!("{text}\nexport const added = 1;\n")).unwrap();
+        }
+        let touched: Vec<String> = ["c.ts", "d.ts"].iter().map(|f| slashed(&src(f))).collect();
+
+        let held = hold(&root.join("out/shared/d.luau"));
+        let (report, summary) = session.build(&touched);
+        let failed: Vec<&String> = report.fatal.iter().filter(|m| m.starts_with("could not write")).collect();
+        assert_eq!(failed.len(), 1, "{:?}", report.fatal);
+        assert!(failed[0].replace('\\', "/").contains("out/shared/d.luau"), "{}", failed[0]);
+        assert!(!failed[0].contains("rolling back left"), "{}", failed[0]);
+        assert!(summary.written.is_empty(), "{:?}", summary.written);
+        assert_eq!(read("out/shared/c.luau"), c_before, "c.luau has its old bytes again");
+        assert_eq!(read("out/shared/d.luau"), d_before);
+        assert_eq!(commit_leftovers(&root.join("out")), Vec::<String>::new());
+        drop(held);
+
+        let (report, summary) = session.build(&touched);
+        assert!(!report.has_errors(), "{:?}", report.fatal);
+        assert_eq!(summary.written.len(), 2, "{:?}", summary.written);
+        assert_ne!(read("out/shared/c.luau"), c_before);
+        assert_ne!(read("out/shared/d.luau"), d_before);
+        assert_eq!(commit_leftovers(&root.join("out")), Vec::<String>::new());
+    });
+    drop(copy);
+}
+
+/// Case-only renames of two sources whose outputs another process holds: both failures are reported (not only the
+/// first), nothing is written, and the case renames made are undone.
+#[test]
+fn every_failed_case_rename_is_reported() {
+    let Some((copy, root)) = keeper_copy("caserename", false) else { return };
+    big_stack(|| {
+        let options = PluginOptions { ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
+        let mut session = keeper_session(&root, &options, true);
+        let (report, _) = session.build(&[]);
+        assert!(!report.has_errors(), "{:?}", report.fatal);
+        let shared = root.join("src/shared");
+        let mut touched = Vec::new();
+        for (from, to) in [("useAug.ts", "UseAug.ts"), ("useDecl.ts", "UseDecl.ts")] {
+            std::fs::rename(shared.join(from), shared.join(to)).unwrap();
+            touched.push(slashed(&shared.join(from)));
+            touched.push(slashed(&shared.join(to)));
+        }
+        let before = entries(&root.join("out"));
+        let held = [hold(&root.join("out/shared/useAug.luau")), hold(&root.join("out/shared/useDecl.luau"))];
+        let (report, summary) = session.build(&touched);
+        let failed: Vec<String> =
+            report.fatal.iter().filter(|m| m.starts_with("could not rename")).map(|m| m.replace('\\', "/")).collect();
+        assert_eq!(failed.len(), 2, "{:?}", report.fatal);
+        assert!(failed[0].contains("out/shared/UseAug.luau"), "{failed:?}");
+        assert!(failed[1].contains("out/shared/UseDecl.luau"), "{failed:?}");
+        assert!(summary.written.is_empty(), "{:?}", summary.written);
+        assert_eq!(entries(&root.join("out")), before, "the old names, nothing written");
+        drop(held);
+
+        let (report, _) = session.build(&touched);
+        assert!(!report.has_errors(), "{:?}", report.fatal);
+        let names = entries(&root.join("out/shared"));
+        assert!(names.contains(&"UseAug.luau".to_owned()) && names.contains(&"UseDecl.luau".to_owned()), "{names:?}");
     });
     drop(copy);
 }

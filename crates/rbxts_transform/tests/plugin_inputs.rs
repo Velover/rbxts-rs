@@ -23,7 +23,6 @@ use rbxts_project::{ProjectOptionLayer, STACK_SIZE};
 use rbxts_transform::build::parity::{self, ParityOptions};
 use rbxts_transform::{BuildSession, CompileOptions, CompileReport, PluginOptions};
 
-
 fn node_modules() -> Option<PathBuf> {
     let path = rbxts_test_support::node_modules().unwrap_or_default();
     path.join("@rbxts").join("compiler-types").is_dir().then_some(path)

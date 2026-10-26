@@ -214,11 +214,14 @@ resolution sees packages installed or upgraded since the last build.
   the incremental state last.
 - **Errors before writes:** the output set (roblox-ts's `getProjectOutputs`: two inputs emitting to one output, an
   output root holding sources) is computed before anything is compiled, and the assets are read before the first
-  write, so a failing build writes nothing. The Luau outputs (and re-rendered files) are written all or nothing:
-  each is staged in a temporary file beside it first (a directory in the way fails here), and when any staging
-  fails, the temporary files go and nothing is renamed or written after; only then are they renamed into place.
-  Only I/O errors at a rename (a target another process keeps holding past the retries) or in the later steps can
-  stop a commit midway, leaving what was renamed before; the next build repairs it.
+  write, so a failing build writes nothing. The Luau outputs, re-rendered files, declarations and assets are
+  written all or nothing: each is staged in a temporary file beside it first (a directory in the way fails here),
+  and when any staging fails, the temporary files go and nothing is renamed or written after; then the old bytes of
+  each output to replace are kept (a hard link beside it) and the temporary files are renamed into place. A rename
+  that fails (a target another process keeps holding past the retries) rolls the batch back: the outputs replaced
+  get their old bytes again, new ones are removed, case renames are undone, and the error names the file. The later
+  steps (the runtime include, artifacts, deletions, state files) each run once the batch is in; an I/O error there
+  stops the commit and fails the build, and the next build commits again.
 - **Watch mode:** `notify` events on the sources, configs, Rojo files, plugin inputs and `watch_dir` roots, and on
   everything the last program load read (logged as tsrs's own watch mode does: files, directories and the paths
   module resolution probed that did not exist, in every ancestor's `node_modules`, `@types`, `typeRoots` and

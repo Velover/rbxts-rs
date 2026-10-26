@@ -831,7 +831,7 @@ fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &Own) -> bo
     if folder_modify {
         return watched.plugin_package_dirs.contains(&k);
     }
-    if name.starts_with('.') && name.contains(".rbxts-tmp-") {
+    if name.starts_with('.') && (name.contains(".rbxts-tmp-") || name.contains(".rbxts-old-")) {
         return false;
     }
     // this watcher's own artifacts and state files, as it wrote them

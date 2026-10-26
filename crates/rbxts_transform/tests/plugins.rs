@@ -38,7 +38,6 @@ use rbxts_transform::{CompileOptions, CompileReport, PluginOptions, compile_proj
 use tsrs_compiler::diagnosticwriter::flatten_diagnostic_message;
 use tsrs_diagnostics::Category;
 
-
 fn node_modules() -> Option<PathBuf> {
     let path = rbxts_test_support::node_modules().unwrap_or_default();
     path.join("@rbxts").join("compiler-types").is_dir().then_some(path)

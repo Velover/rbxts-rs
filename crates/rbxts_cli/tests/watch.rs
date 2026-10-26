@@ -12,7 +12,6 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-
 fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
     for entry in std::fs::read_dir(from).unwrap() {

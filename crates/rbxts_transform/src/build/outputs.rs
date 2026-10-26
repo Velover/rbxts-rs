@@ -29,13 +29,13 @@
 //!   case-only rename of a source), so the Rojo instance name follows, as in a build into an empty directory.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use rbxts_project::{ProjectServices, nodepath};
 
-use crate::plugins::lifecycle::{commit_staged, remove_file, stage_if_changed, write_if_changed};
+use crate::plugins::lifecycle::{commit_staged, remove_file, stage_if_changed};
 use crate::project::copy_include::effective_include_path;
 
 /// The outputs of one build.
@@ -274,38 +274,25 @@ pub fn read_assets(
     Ok(bytes)
 }
 
-/// Commit step 1 for assets: writes each asset (`bytes` from [`read_assets`]) whose output is missing or differs.
-/// rbxts-rs: an output whose spelling differs from the file on disk only in case is renamed first (see
-/// [`match_case`]). Returns the outputs written.
-pub fn sync_assets(
-    services: &ProjectServices,
-    outputs: &ProjectOutputs,
-    bytes: &[Vec<u8>],
-    listing: &Listing,
-) -> Result<Vec<String>, String> {
-    let mut written = Vec::new();
-    let all = outputs.assets.iter().chain(&outputs.declaration_assets);
-    for ((_, output), bytes) in all.zip(bytes) {
-        match_case(services, output, listing).map_err(|e| format!("could not rename to {output}: {e}"))?;
-        if write_if_changed(Path::new(output), bytes).map_err(|e| format!("could not write {output}: {e}"))? {
-            written.push(output.clone());
-        }
-    }
-    Ok(written)
-}
-
-/// Commit step 1 for the Luau outputs: `(path, bytes, match case)` per file, all or nothing (DESIGN §14: a failing
-/// build writes nothing).
+/// Commit step 1 for the Luau outputs and the assets: `(path, bytes, match case)` per file, all or nothing (DESIGN
+/// §14: a failing build writes nothing).
 /// 1. Every file whose bytes differ (or that is missing) is staged in a temporary file beside it, in parallel
 ///    ([`super::parallel::map`]); a directory in the way is an error here. When any staging fails, the temporary
 ///    files and the directories staging created are removed and nothing else happens.
 /// 2. With `listing`, the case of each output flagged so is matched ([`match_case`]), one file at a time, since a
-///    case-only rename can rename a directory other outputs share (a temporary file inside moves with it).
-/// 3. The temporary files are renamed into place, in parallel.
+///    case-only rename can rename a directory other outputs share (a temporary file inside moves with it). Every
+///    file is tried; each failure is reported.
+/// 3. The old bytes of each output about to be replaced are kept: a hard link beside it (a copy where the file
+///    system has none), so nothing is renamed away and the replacement stays one atomic rename per file.
+/// 4. The temporary files are renamed into place, in parallel.
 ///
-/// A failure in step 2 or 3 (a rename the file system refuses, a target another process keeps holding past the
-/// retries) leaves the renames made before it: an accepted residual risk, which the next build repairs. Per file,
-/// in `files` order: whether it was written, or the error (a file not written because another failed: `Ok(false)`).
+/// A failure in step 2, 3 or 4 (a rename the file system refuses, a target another process keeps holding past the
+/// retries) rolls the commit back: the outputs replaced so far get their kept bytes again (an atomic rename back),
+/// the new ones are removed, the case renames are undone, the directories staging created are removed. The tree is
+/// then the last build's again, one rename at a time as it was written (no file system renames several files at
+/// once, and Rojo syncs each rename as it sees it). Only a rollback step the file system refuses too leaves a file of
+/// this build in place; the error says which, and the next build repairs it. Per file, in `files` order: whether it
+/// was written, or the error (a file not written because another failed: `Ok(false)`).
 pub fn write_outputs(
     services: &ProjectServices,
     listing: Option<&Listing>,
@@ -328,38 +315,144 @@ pub fn write_outputs(
     }
     created.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
     let staged = super::parallel::map(files, |&(path, bytes, _)| stage_if_changed(Path::new(path), bytes));
-    let unstage = |staged: &[io::Result<Option<std::path::PathBuf>>]| {
-        for temp in staged.iter().filter_map(|s| s.as_ref().ok().and_then(Option::as_ref)) {
-            let _ = std::fs::remove_file(temp);
-        }
+    let remove_created = || {
         for dir in &created {
             let _ = std::fs::remove_dir(dir);
         }
     };
     if staged.iter().any(Result::is_err) {
-        unstage(&staged);
+        for temp in staged.iter().filter_map(|s| s.as_ref().ok().and_then(Option::as_ref)) {
+            let _ = std::fs::remove_file(temp);
+        }
+        remove_created();
         return files
             .iter()
             .zip(staged)
             .map(|(&(path, _, _), s)| s.map(|_| false).map_err(|e| error(path, e)))
             .collect();
     }
-    let staged: Vec<Option<std::path::PathBuf>> = staged.into_iter().map(Result::unwrap_or_default).collect();
+    let staged: Vec<Option<PathBuf>> = staged.into_iter().map(Result::unwrap_or_default).collect();
+    let mut rollback = Rollback::default();
+    // a failure before the renames into place: the files that failed, with their errors
+    let mut failed: Vec<(usize, String)> = Vec::new();
     if let Some(listing) = listing {
-        for &(path, _, _) in files.iter().filter(|f| f.2) {
-            if let Err(e) = match_case(services, path, listing) {
-                unstage(&staged.iter().cloned().map(Ok).collect::<Vec<_>>());
-                let message = format!("could not rename to {path}: {e}");
-                return files.iter().map(|f| if f.0 == path { Err(message.clone()) } else { Ok(false) }).collect();
+        for (i, &(path, _, _)) in files.iter().enumerate().filter(|(_, f)| f.2) {
+            if let Err(e) = match_case_logged(services, path, listing, &mut rollback.case_renames) {
+                failed.push((i, format!("could not rename to {path}: {e}")));
             }
         }
     }
-    let jobs: Vec<(&str, Option<&std::path::PathBuf>)> =
-        files.iter().zip(&staged).map(|(&(path, _, _), temp)| (path, temp.as_ref())).collect();
-    super::parallel::map(&jobs, |&(path, temp)| match temp {
-        Some(temp) => commit_staged(temp, Path::new(path)).map(|()| true).map_err(|e| error(path, e)),
-        None => Ok(false),
-    })
+    let jobs: Vec<(usize, &str, &PathBuf)> = files
+        .iter()
+        .zip(&staged)
+        .enumerate()
+        .filter_map(|(i, (&(path, _, _), temp))| temp.as_ref().map(|temp| (i, path, temp)))
+        .collect();
+    if failed.is_empty() {
+        let backups = super::parallel::map(&jobs, |&(_, path, _)| keep_old_bytes(Path::new(path)));
+        for (&(i, path, _), backup) in jobs.iter().zip(backups) {
+            match backup {
+                Ok(backup) => rollback.backups.push((path.to_owned(), backup)),
+                Err(e) => failed.push((i, format!("could not keep the old bytes of {path}: {e}"))),
+            }
+        }
+    }
+    let results: Vec<Result<(), String>> = if failed.is_empty() {
+        super::parallel::map(&jobs, |&(_, path, temp)| commit_staged(temp, Path::new(path)).map_err(|e| error(path, e)))
+    } else {
+        Vec::new()
+    };
+    if failed.is_empty() && results.iter().all(Result::is_ok) {
+        rollback.discard();
+        return files.iter().zip(&staged).map(|(_, temp)| Ok(temp.is_some())).collect();
+    }
+    let committed: Vec<&str> =
+        jobs.iter().zip(&results).filter(|(_, result)| result.is_ok()).map(|(&(_, path, _), _)| path).collect();
+    for (&(i, _, _), result) in jobs.iter().zip(&results) {
+        if let Err(message) = result {
+            failed.push((i, message.clone()));
+        }
+    }
+    // the temporary files not renamed into place (`commit_staged` removed those whose rename failed)
+    for &(_, _, temp) in &jobs {
+        let _ = std::fs::remove_file(temp);
+    }
+    let left = rollback.undo(&committed);
+    remove_created();
+    let mut out: Vec<Result<bool, String>> = vec![Ok(false); files.len()];
+    for (i, mut message) in failed {
+        if !left.is_empty() {
+            message.push_str(&format!("; rolling back left this build's {}", left.join(", ")));
+        }
+        out[i] = Err(message);
+    }
+    out
+}
+
+/// What [`write_outputs`] undoes when it fails after it started renaming.
+#[derive(Default)]
+struct Rollback {
+    /// The case renames made, in order: (from, to).
+    case_renames: Vec<(String, String)>,
+    /// Per output to replace: the kept old bytes (`None`: the output is new).
+    backups: Vec<(String, Option<PathBuf>)>,
+}
+
+impl Rollback {
+    /// Undoes the renames into place of `committed` (the kept bytes back, a new output removed) and the case renames;
+    /// removes the kept bytes. Returns the outputs it could not restore.
+    fn undo(self, committed: &[&str]) -> Vec<String> {
+        let committed: FxHashSet<&str> = committed.iter().copied().collect();
+        let mut left = Vec::new();
+        for (path, backup) in &self.backups {
+            let restored = if !committed.contains(path.as_str()) {
+                Ok(())
+            } else {
+                match backup {
+                    Some(backup) => commit_staged(backup, Path::new(path)),
+                    None => remove_file(Path::new(path)).map(|_| ()),
+                }
+            };
+            if restored.is_err() {
+                left.push(path.clone());
+            }
+            if let Some(backup) = backup {
+                let _ = std::fs::remove_file(backup);
+            }
+        }
+        for (from, to) in self.case_renames.iter().rev() {
+            if std::fs::rename(to, from).is_err() {
+                left.push(to.clone());
+            }
+        }
+        left
+    }
+
+    /// The commit went through: the kept bytes go.
+    fn discard(self) {
+        for backup in self.backups.iter().filter_map(|(_, backup)| backup.as_ref()) {
+            let _ = remove_file(backup);
+        }
+    }
+}
+
+/// Keeps an output's bytes before a commit replaces it: a hard link to it beside it (`.<name>.rbxts-old-…`), or a
+/// copy where links can't be made. `None` when there is no file yet.
+fn keep_old_bytes(path: &Path) -> io::Result<Option<PathBuf>> {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    match std::fs::symlink_metadata(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+        Ok(_) => {}
+    }
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let backup = dir.join(format!(".{name}.rbxts-old-{}-{n}", std::process::id()));
+    if std::fs::hard_link(path, &backup).is_err() {
+        std::fs::copy(path, &backup)?;
+    }
+    Ok(Some(backup))
 }
 
 /// The files under the output roots before a build writes anything, taken once per build: for the missing-output
@@ -451,6 +544,16 @@ pub fn list(services: &ProjectServices, roots: &[String], out_dir_override: Opti
 /// output root on disk to `path`'s spelling, from the root down, so a build into a used directory names its outputs
 /// as a build into an empty one does. Nothing above the output root is touched.
 pub fn match_case(services: &ProjectServices, path: &str, listing: &Listing) -> io::Result<()> {
+    match_case_logged(services, path, listing, &mut Vec::new())
+}
+
+/// [`match_case`], adding each rename it makes to `renames` (from, to).
+fn match_case_logged(
+    services: &ProjectServices,
+    path: &str,
+    listing: &Listing,
+    renames: &mut Vec<(String, String)>,
+) -> io::Result<()> {
     let key = path_key(services, path);
     let Some(existing) = listing.spelled.get(&key) else { return Ok(()) };
     let wanted = nodepath::normalize(path).replace('\\', "/");
@@ -473,7 +576,9 @@ pub fn match_case(services: &ProjectServices, path: &str, listing: &Listing) -> 
         if let Some(on_disk) = on_disk
             && on_disk != part
         {
-            std::fs::rename(format!("{directory}/{on_disk}"), &next)?;
+            let from = format!("{directory}/{on_disk}");
+            std::fs::rename(&from, &next)?;
+            renames.push((from, next.clone()));
         }
         directory = next;
     }

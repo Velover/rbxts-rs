@@ -115,7 +115,8 @@ fn covered(dir: &str, active: &FxHashSet<(String, bool)>) -> bool {
 /// One of rbxts-rs's temporary files, or this watcher's own write or deletion as it left it.
 fn own_write(path: &str, own: &Own) -> bool {
     let k = key(path);
-    rbxts_project::nodepath::basename(&k).contains(".rbxts-tmp-") || is_own(path, &k, own)
+    let name = rbxts_project::nodepath::basename(&k);
+    name.contains(".rbxts-tmp-") || name.contains(".rbxts-old-") || is_own(path, &k, own)
 }
 
 /// The events of a burst the rest of the watcher dropped that a recorded input may care about.
