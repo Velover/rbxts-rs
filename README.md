@@ -50,7 +50,10 @@ node <rbxts-rs>/tools/dump-project-services.cjs <project dir or tsconfig.json> <
 <rbxts-rs>/target/measure/rbxts-bench.exe project-parity <dump.json> [--runs N] [--max-diffs N]
 ```
 
-Dumps of the real project stay outside the repo (scratchpad `rbxts-rs/project-dumps`). `cargo test -p rbxts_project
+The roblox-ts checkout the dumps were made with has a patched `@roblox-ts/rojo-resolver`
+(`out/RojoResolver.js` calls `realpathSync.native` where the shipped file, kept as `RojoResolver.js.orig`, calls
+`realpathSync`); parity holds against either. Dumps of the real project stay outside the repo (scratchpad
+`rbxts-rs/project-dumps`). `cargo test -p rbxts_project
 -p rbxts_bench` runs the same comparisons on committed fixtures: Node's answers for the path functions
 (`tools/gen-nodepath-cases.cjs`), the JavaScript resolver's on hand-made Rojo trees (`tools/gen-rojo-cases.cjs`) and
 roblox-ts's setup on hand-made projects (`tools/gen-setup-fixtures.cjs`); rerun those scripts when the fixtures
