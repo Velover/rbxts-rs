@@ -69,6 +69,9 @@
 //!   writes as `math.huge`; `expected-ts5/` (not checked) keeps the two files where stock roblox-ts on TypeScript 5
 //!   differs, in the order of the export table. Its tsconfig turns on `allowCommentDirectives` (for
 //!   `@ts-expect-error` in enums).
+//! - `stockfix`: the roblox-ts bugs rbxts-rs fixes (each source file names its bug). `expected/` is rbxts-rs's output,
+//!   which differs from stock roblox-ts's exactly by those fixes, and `runtime/check.luau` runs it with Lune (when
+//!   `lune` is on the PATH) against JavaScript's results for the same calls (`runtime/<file>.luau`).
 //! - `transform_order`: imports, a triple-slash reference, a module augmentation, an ambient module import and a
 //!   module file augmenting that ambient module, whose files roblox-ts transforms in another order than the program's; [`transform_order`] also checks that order
 //!   (`order.txt`, stock roblox-ts's `getChangedSourceFiles`).
@@ -516,6 +519,24 @@ fn macros() {
 #[test]
 fn stmts() {
     check("stmts");
+}
+
+/// The outputs, then `runtime/check.luau` on them with Lune (`lune` on the PATH; skipped and said so without it).
+#[test]
+fn stockfix() {
+    check("stockfix");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/stockfix");
+    match std::process::Command::new("lune").args(["run", "runtime/check.luau"]).current_dir(&fixture).output() {
+        Err(e) => {
+            let _ = writeln!(std::io::stderr(), "fixtures::stockfix: the Lune runtime check skipped: lune: {e}");
+        }
+        Ok(output) => assert!(
+            output.status.success() && String::from_utf8_lossy(&output.stdout).starts_with("ok "),
+            "runtime/check.luau:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    }
 }
 
 /// The files are transformed and reported in roblox-ts's order (`order.txt`, from stock roblox-ts), not program order.
