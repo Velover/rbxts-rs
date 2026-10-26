@@ -42,9 +42,10 @@ fn plain(d: P<Diagnostic>) -> Option<(u32, u32, String)> {
     Some((pos, pos + loc.len()?, d.localize()))
 }
 
-/// A file's diagnostics as the incremental state keeps them (`plugin`: which of them plugins reported), and whether
+/// `owner`'s diagnostics as the incremental state keeps them (`plugin`: which of them plugins reported), and whether
 /// one of them could not be kept.
-pub fn to_disk(diagnostics: &[P<Diagnostic>], plugin: &[P<Diagnostic>]) -> (Vec<DiskDiagnostic>, bool) {
+pub fn to_disk(diagnostics: &[P<Diagnostic>], plugin: &[P<Diagnostic>], owner: P<SourceFile>) -> (Vec<DiskDiagnostic>, bool) {
+    let owner = owner.get().file_name();
     let mut kept = Vec::with_capacity(diagnostics.len());
     for &d in diagnostics {
         let Some((pos, end, text)) = plain(d) else { return (Vec::new(), true) };
@@ -54,6 +55,7 @@ pub fn to_disk(diagnostics: &[P<Diagnostic>], plugin: &[P<Diagnostic>]) -> (Vec<
             related.push((r.file().map(|f| f.get().file_name().to_owned()), pos, end, category_number(r.category()), text));
         }
         kept.push(DiskDiagnostic {
+            file: d.file().map(|f| f.get().file_name()).filter(|&name| name != owner).map(str::to_owned),
             pos,
             end,
             category: category_number(d.category()),
@@ -76,14 +78,19 @@ pub fn source(diagnostic: P<Diagnostic>) -> Option<&'static str> {
     SOURCES.lock().unwrap_or_else(PoisonError::into_inner).as_ref()?.get(&address).copied()
 }
 
-/// A kept diagnostic made again in `file` of `program` (related information in the program's files by name).
-pub fn from_disk(kept: &DiskDiagnostic, file: P<SourceFile>, program: &Program) -> P<Diagnostic> {
+/// A diagnostic `file` kept, made again in `program` (one at another file, and related information, in the program's
+/// files by name). `None` when the program no longer has the other file.
+pub fn from_disk(kept: &DiskDiagnostic, file: P<SourceFile>, program: &Program) -> Option<P<Diagnostic>> {
     let make = |file: Option<P<SourceFile>>, pos: u32, end: u32, category: u8, text: &str| {
         let d = new_diagnostic(file, TextRange::new(pos, end), new_ad_hoc_message(text), &[]);
         if category_of(category) != Category::Error {
             d.set_category(category_of(category));
         }
         d
+    };
+    let file = match &kept.file {
+        Some(name) => program.get_source_file(name)?,
+        None => file,
     };
     let d = make(Some(file), kept.pos, kept.end, kept.category, &kept.text);
     if let Some(source) = &kept.source
@@ -106,5 +113,5 @@ pub fn from_disk(kept: &DiskDiagnostic, file: P<SourceFile>, program: &Program) 
             .collect();
         d.set_related_info(&related);
     }
-    d
+    Some(d)
 }

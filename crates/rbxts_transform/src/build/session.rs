@@ -171,12 +171,16 @@ impl CommittedFile {
             Vec::new()
         };
         let encoded = (!parts.is_empty()).then_some(record.parts);
-        let replayable = !record.no_replay && (file.is_some() || record.diagnostics.is_empty());
+        let mut replayable = !record.no_replay && (file.is_some() || record.diagnostics.is_empty());
         let mut diagnostics = Vec::new();
         let mut plugin_diagnostics = Vec::new();
         if let Some(file) = file {
             for kept in &record.diagnostics {
-                let d = super::replay::from_disk(kept, file, program);
+                // a diagnostic at a file the program no longer has: the file is transformed again
+                let Some(d) = super::replay::from_disk(kept, file, program) else {
+                    replayable = false;
+                    break;
+                };
                 if kept.plugin {
                     plugin_diagnostics.push(d);
                 }
@@ -1775,7 +1779,7 @@ impl<'p> BuildSession<'p> {
                         let unknown = !transformed_at.contains_key(&file)
                             && committed.as_ref().and_then(|c| c.files.get(&key)).is_some_and(|c| !c.replayable);
                         let (kept, no_replay) = diagnostics
-                            .map_or_else(Default::default, |(d, plugin)| super::replay::to_disk(&d, plugin));
+                            .map_or_else(Default::default, |(d, plugin)| super::replay::to_disk(&d, plugin, file));
                         if !kept.is_empty() || no_replay || unknown {
                             let record = records.entry(key).or_default();
                             record.diagnostics = kept;

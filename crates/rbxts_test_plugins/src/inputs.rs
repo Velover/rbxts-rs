@@ -182,9 +182,9 @@ impl Plugin for InputsProbe {
     }
 }
 
-/// Reads the part format.
-struct Reader<'a> {
-    rest: &'a [u8],
+/// Reads the part format (also `probe`'s).
+pub(crate) struct Reader<'a> {
+    pub(crate) rest: &'a [u8],
 }
 
 impl Reader<'_> {
@@ -194,15 +194,15 @@ impl Reader<'_> {
         Some(head)
     }
 
-    fn byte(&mut self) -> Option<u8> {
+    pub(crate) fn byte(&mut self) -> Option<u8> {
         Some(self.take(1)?[0])
     }
 
-    fn u32(&mut self) -> Option<usize> {
+    pub(crate) fn u32(&mut self) -> Option<usize> {
         Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?) as usize)
     }
 
-    fn string(&mut self) -> Option<String> {
+    pub(crate) fn string(&mut self) -> Option<String> {
         let n = self.u32()?;
         String::from_utf8(self.take(n)?.to_vec()).ok()
     }

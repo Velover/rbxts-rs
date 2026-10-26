@@ -35,6 +35,8 @@ const FORMAT: u64 = 3;
 /// (an ad hoc message, without a code of its own), with its related information.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DiskDiagnostic {
+    /// The file it is at, when not the file that reported it (a plugin diagnostic at a node of another file).
+    pub file: Option<String>,
     /// The span in the file (UTF-8 byte offsets).
     pub pos: u32,
     /// Where the span ends.
@@ -55,20 +57,21 @@ impl DiskDiagnostic {
     fn to_json(&self) -> Value {
         let related: Vec<Value> =
             self.related.iter().map(|(file, pos, end, category, text)| json!([file, pos, end, category, text])).collect();
-        json!([self.pos, self.end, self.category, self.text, self.source, self.plugin, related])
+        json!([self.file, self.pos, self.end, self.category, self.text, self.source, self.plugin, related])
     }
 
     fn from_json(value: &Value) -> Option<DiskDiagnostic> {
         let number = |v: &Value| v.as_u64().and_then(|n| u32::try_from(n).ok());
         Some(DiskDiagnostic {
-            pos: number(value.get(0)?)?,
-            end: number(value.get(1)?)?,
-            category: u8::try_from(value.get(2)?.as_u64()?).ok()?,
-            text: value.get(3)?.as_str()?.to_owned(),
-            source: optional_string(value.get(4)?)?,
-            plugin: value.get(5)?.as_bool()?,
+            file: optional_string(value.get(0)?)?,
+            pos: number(value.get(1)?)?,
+            end: number(value.get(2)?)?,
+            category: u8::try_from(value.get(3)?.as_u64()?).ok()?,
+            text: value.get(4)?.as_str()?.to_owned(),
+            source: optional_string(value.get(5)?)?,
+            plugin: value.get(6)?.as_bool()?,
             related: value
-                .get(6)?
+                .get(7)?
                 .as_array()?
                 .iter()
                 .map(|r| {
@@ -457,6 +460,7 @@ mod tests {
                 globs: vec![(0, "E:/p/assets".into(), "*.txt".into(), vec!["b.txt".into(), "a.txt".into()])],
                 diagnostics: vec![
                     DiskDiagnostic {
+                        file: Some("E:/p/src/c.d.ts".into()),
                         pos: 3,
                         end: 9,
                         category: 0,
@@ -466,6 +470,7 @@ mod tests {
                         related: vec![(Some("E:/p/src/b.ts".into()), 0, 4, 3, "declared here".into()), (None, 0, 0, 3, "x".into())],
                     },
                     DiskDiagnostic {
+                        file: None,
                         pos: 0,
                         end: 1,
                         category: 0,

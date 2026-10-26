@@ -65,6 +65,18 @@ fn run_fixture_copying(
     incremental: bool,
     copy: &[&str],
 ) -> Option<Vec<StepResult>> {
+    run_fixture_ignoring(fixture, label, plugins, incremental, copy, plugins.is_empty())
+}
+
+/// [`run_fixture_copying`], ignoring the tsconfig's transformers no active plugin answers when `ignore_unknown`.
+fn run_fixture_ignoring(
+    fixture: &str,
+    label: &str,
+    plugins: &[&str],
+    incremental: bool,
+    copy: &[&str],
+    ignore_unknown: bool,
+) -> Option<Vec<StepResult>> {
     let Some(node_modules) = node_modules() else {
         rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
         return None;
@@ -84,7 +96,7 @@ fn run_fixture_copying(
             // truthiness warnings: a rebuild must report the warnings of the files it does not transform again
             project_options: ProjectOptionLayer { log_truthy_changes: Some(true), ..ProjectOptionLayer::default() },
             plugins: &plugins,
-            ignore_unknown_plugins: plugins.is_empty(),
+            ignore_unknown_plugins: ignore_unknown,
             node_modules: Some(node_modules),
             node_modules_mode: parity::NodeModules::LinkPackages,
             incremental,
@@ -189,11 +201,18 @@ fn a_solution_config_in_the_middle_passes_failures_on() {
 
 /// A plugin diagnostic two files report at a node in a third (`plugindiag.script.json`): every watch rebuild and
 /// incremental build reports the copy a clean build keeps, when the file holding it stops reporting it, is deleted,
-/// or comes back, and when the copy with related information moves to the other file.
+/// or comes back, and when the copy with related information moves to the other file. With probe alone (its parts
+/// persist), an incremental build transforms only the edited file and makes the other's diagnostics again from the
+/// incremental state, the one at the third file's node included.
 #[test]
 fn plugin_diagnostic_duplicates_rebuild_as_clean_builds() {
     run_fixture("plugindiag", "plugindiag", &["stamp", "probe"], false);
     run_fixture("plugindiag", "plugindiag-inc", &["stamp", "probe"], true);
+    let Some(results) = run_fixture_ignoring("plugindiag", "plugindiag-inc-probe", &["probe"], true, COPY, true) else {
+        return;
+    };
+    let edit = results.iter().find(|r| r.name == "seamdiag.ts: an unrelated edit").expect("the step");
+    assert_eq!(edit.transformed, 1, "the other file's diagnostics are replayed, not transformed again");
 }
 
 #[test]

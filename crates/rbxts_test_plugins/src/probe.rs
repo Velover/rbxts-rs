@@ -299,6 +299,33 @@ impl Plugin for Probe {
         }
         Ok(())
     }
+
+    // persistable, so an incremental build with only probe active keeps files it does not transform (their
+    // diagnostics are made again from the incremental state)
+    fn encode_file_part(&self, part: &ProbePart) -> Option<Vec<u8>> {
+        let mut out = b"PRB1".to_vec();
+        let string = |out: &mut Vec<u8>, text: &str| {
+            out.extend(u32::try_from(text.len()).ok()?.to_le_bytes());
+            out.extend(text.as_bytes());
+            Some(())
+        };
+        string(&mut out, &part.file)?;
+        out.extend(part.claims.to_le_bytes());
+        out.extend(u32::try_from(part.late_keys.len()).ok()?.to_le_bytes());
+        for key in &part.late_keys {
+            string(&mut out, key)?;
+        }
+        Some(out)
+    }
+
+    fn decode_file_part(&self, bytes: &[u8]) -> Option<ProbePart> {
+        let mut reader = crate::inputs::Reader { rest: bytes.strip_prefix(b"PRB1")? };
+        let file = reader.string()?;
+        let claims = u32::try_from(reader.u32()?).ok()?;
+        let count = reader.u32()?;
+        let late_keys = (0..count).map(|_| reader.string()).collect::<Option<Vec<_>>>()?;
+        reader.rest.is_empty().then_some(ProbePart { file, claims, late_keys })
+    }
 }
 
 impl ProbeInstance {
