@@ -106,8 +106,6 @@ pub struct PluginHost {
     pub(crate) statements: FxHashMap<Kind, Vec<(usize, Tag)>>,
     /// `RBXTS_PLUGIN_CLAIMS=all`: ask every matching plugin, and report a double claim.
     pub(crate) claims_all: bool,
-    /// Interests registered that this compiler does not dispatch; the build fails with these (none at present).
-    pub unsupported_interests: Vec<String>,
     /// The checker's diagnostics of each file (all of them warnings or suggestions: an error stops the build first).
     pub(crate) file_diagnostics: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>>,
     /// Each program file's index in the build's transform order (`build::transform_order`).
@@ -146,7 +144,6 @@ impl PluginHost {
             expressions: FxHashMap::default(),
             statements: FxHashMap::default(),
             claims_all,
-            unsupported_interests: Vec::new(),
             file_diagnostics,
             file_indices,
             lines: RefCell::default(),

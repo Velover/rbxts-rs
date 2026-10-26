@@ -185,12 +185,6 @@ fn run_group(
         host.env = Arc::clone(plugins.env);
         host
     });
-    if let Some(host) = &host
-        && !host.unsupported_interests.is_empty()
-    {
-        output.setup_fatal = Some(host.unsupported_interests.clone());
-        return output;
-    }
     let mut multi = MultiTransformState::new();
     for &(i, file) in files {
         let transformed = transform_file(project, checker, services, &macro_manager, &mut multi, host.as_ref(), file);

@@ -107,7 +107,8 @@ pub struct PluginInfo {
 pub enum SymbolRole {
     /// The resolved callee of a call, `new` or decorator call ([`crate::Interest::calls_by_symbol`]).
     Callee,
-    /// The property symbol of an assignment or update target `receiver.key` (or `receiver[key]`)
+    /// The symbol of the receiver expression of an assignment, update or `delete` target `receiver.key` (or
+    /// `receiver[key]`), aliases skipped: for `this.attributes.x`, the `attributes` property
     /// ([`crate::Interest::assignments_by_receiver_symbol`]).
     AssignReceiver,
 }
@@ -140,8 +141,10 @@ pub struct CallSite {
     pub args: &'static [P<Node>],
     /// The resolved callee symbol, aliases skipped, as this instance's checker sees it.
     pub symbol: Option<P<Symbol>>,
-    /// `Some(object)` for every property or element call (`obj.m(…)`, `obj[k](…)`), whether or not `kind` is
-    /// [`CallKind::Method`]. `None` for other calls, `new`, decorators, `super(…)`, and `f?.()`.
+    /// `Some(object)` for every property or element call (`obj.m(…)`, `obj[k](…)`, `obj.m?.(…)`), whether or not
+    /// `kind` is [`CallKind::Method`]. For `super.m(…)` / `super[k](…)` it is the `super` keyword, which is not a
+    /// value: roblox-ts calls `super.m(self, …)` ([`crate::Cx::compile_receiver`] refuses it). `None` for other
+    /// calls, `new`, decorators, `super(…)`, and `f?.()`.
     pub receiver: Option<P<Node>>,
     /// The call is part of an optional chain (`a?.b()`, `a?.()`).
     pub in_optional_chain: bool,
@@ -159,7 +162,8 @@ pub enum AccessPosition {
     ReadWrite,
     /// The operand of `delete`.
     Delete,
-    /// The callee of a method call.
+    /// The callee of a call: a method call's, a non-method property call's, an optional call's (`o.m?.()`) and
+    /// `super.m()`'s.
     Callee,
 }
 
@@ -238,7 +242,7 @@ pub struct AssignSite {
 /// A class declaration the plugin's class filter admits.
 #[derive(Clone, Debug)]
 pub struct ClassSite {
-    /// The ClassDeclaration (or ClassExpression, when the compiler supports one there).
+    /// The ClassDeclaration or ClassExpression.
     pub node: P<Node>,
     /// The class's Luau identifier, as the class's own statements use it.
     pub luau_name: LuauExpr,

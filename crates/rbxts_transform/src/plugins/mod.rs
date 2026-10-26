@@ -11,7 +11,8 @@
 //!   by-kind fallbacks, classes, files, root statements, imports).
 //! - [`lifecycle`]: activation from the tsconfig, `SetupBackend`, `FinishBackend`, the late-string key check, the
 //!   commit with atomic writes, and `explain_checker_diagnostic`.
-//! - `lowering`: `compile_binary` and `compile_object_literal`; `spill`: Luau's limits (spill, load check).
+//! - `lowering`: `compile_binary` and `compile_object_literal`; `spill`: Luau's limits (spill, load check). `hoist_check`:
+//!   what a hoisted value may use.
 //!
 //! **Offer kinds.** There are five: calls (with `new` and decorators), property keys, assignments, the expression
 //! and statement fallbacks, and the class hook. Within a kind, plugins are asked in registration order and the first
@@ -55,9 +56,20 @@
 //! links: the links up to the first `?.` link or optional call are offered before anything of the chain is
 //! compiled, from the outermost in (the chain's first call to the call plugins after its own expression offer);
 //! later links inside the chain's nil check, their base compiled (a hook that takes such a link without lowering it
-//! drops the base's value). An expression statement's assignment or update (which roblox-ts lowers as a statement)
-//! is offered too. Not offered: assignment targets and `delete` operands (lowered as writes), binding patterns, and
-//! object literals a hook lowers with `compile_object_literal`.
+//! drops the base's value, its base still evaluated once). An expression statement's assignment or update (which
+//! roblox-ts lowers as a statement) is offered too, and so is a dotted JSX tag (`<a.B />`, `transform_jsx_tag_name`:
+//! to `property_key` too, a claim's prereqs before the element). Positions other kinds cover: callees (the call, and
+//! `property_key`), assignment targets and `delete` operands (lowered as writes: the assignment hook and
+//! `property_key`), binding patterns' targets, and object literals a hook lowers with `compile_object_literal`. Nodes
+//! roblox-ts lowers only as parts of a larger form (`return $tuple(…)`, `$range`, numeric-`for` heads, flattened
+//! logical and bitwise chains, inline array spreads, constructor-macro arguments, constant enum members, parentheses
+//! and type assertions it looks through) are offered with the form: offering them alone would change how an identity
+//! plugin's lowering of them lowers the form (`rbxts_plugin` crate docs, "Parts of a form").
+//!
+//! **The statement fallback** sees every statement roblox-ts lowers (`transform_statement`, before its `declare`
+//! check), block bodies of `if`, loops and `case` clauses (`transform_statement_list::transform_body`) and class
+//! static blocks (a claim is the body), and `else if` (`transform_if_statement`: a claim is the `else` block, after
+//! the `insert_before_statement` statements anchored there).
 //!
 //! **Property keys** (`accesses_by_marker`). Every property and element access whose receiver's apparent
 //! non-nullable type has a marker, when roblox-ts lowers it: reads, `delete`, writes,
@@ -105,6 +117,16 @@
 //! `RBXTS_PLUGIN_CLAIMS=all` asks the other matching plugins of call, `new` and decorator offers too (not the other
 //! kinds), in a scratch scope. A build with it either writes the same output as without it or fails: one where such
 //! a plugin changed compiler state before declining (an approval by `is_usable_local_name` included) fails.
+//!
+//! **Hoists** (`hoist_check`): a hoisted value must not use what the top-level statement around the hook's node
+//! declares, which it would not read before that statement: a temporary made since the statement started
+//! (`PluginFileState::root_temp_start`; the seam's own top-level temporaries excepted), a name that resolves at the
+//! hook's node to a declaration in that statement or in a function, class or block, or `self` / `super` inside a
+//! function or class. Such a value is an internal error naming the plugin.
+//!
+//! **`classify_symbol`** (`backend::run_classify`): what it reports is anchored at the symbol's declaration and
+//! taken out of the file's diagnostics; the build reports each such diagnostic once, sorted
+//! (`compile::classify_diagnostics`), whatever the checker count.
 //!
 //! **Names.** Temporary identifiers plugins ask for (`temp_id`, `hoist`, `hoist_spillable`, `push_to_var`) are
 //! named so that no identifier of the file, no name `is_usable_local_name` approved, and no plugin import can capture

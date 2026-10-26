@@ -178,12 +178,14 @@ pub trait PluginInstance: 'static {
 
     /// Classifies a symbol for the symbol-keyed interests. The compiler memoises the answer per checker and per
     /// `(symbol, role)`: it is asked at most once for each, from inside the first hook dispatch that needs it
-    /// (so `cx` is anchored at that site's file; use it for symbol facts only).
+    /// (`cx.file()` is that site's file; use `cx` for symbol facts only).
     ///
     /// **No diagnostics here.** How often, and on which file, this runs depends on the checker count, so a
     /// warning or error from it would make the diagnostics depend on it too. The compiler reports any diagnostic
-    /// from `classify_symbol` as an internal error. Return a tag for the odd case and report it from the hook,
-    /// per site. The lowering primitives are refused as well.
+    /// from `classify_symbol` (and any refused primitive) as an internal error, anchored at the symbol's declaration
+    /// rather than at the site that first asked, and reported by the build once, apart from any file's list: the same
+    /// for any checker count. Return a tag for the odd case and report it from the hook, per site. The lowering,
+    /// file-level and build-input primitives are refused as well (the phase table on [`crate::CxBackend`]).
     fn classify_symbol(&self, cx: &mut Cx<'_>, symbol: P<Symbol>, role: SymbolRole) -> Option<Tag> {
         let _ = (cx, symbol, role);
         None
@@ -244,13 +246,16 @@ pub trait PluginInstance: 'static {
         Ok(Vec::new())
     }
 
-    /// Fallback by syntax kind ([`Interest::expressions`]).
+    /// Fallback by syntax kind ([`Interest::expressions`]): an expression of a registered kind, before roblox-ts lowers
+    /// it. Return its Luau value.
     fn expression(&self, cx: &mut Cx<'_>, node: P<Node>, tag: Tag) -> PResult<Claim<LuauExpr>> {
         let _ = (cx, node, tag);
         Ok(Claim::Decline)
     }
 
-    /// Fallback by syntax kind ([`Interest::statements`]).
+    /// Fallback by syntax kind ([`Interest::statements`]): a statement of a registered kind, before roblox-ts lowers
+    /// it. Return the statements that replace it (for a block body, the body; for an `else if`, the `else` block).
+    /// A statement hook cannot compile its own statement: lower its parts.
     fn statement(&self, cx: &mut Cx<'_>, node: P<Node>, tag: Tag) -> PResult<Claim<Vec<LuauStmt>>> {
         let _ = (cx, node, tag);
         Ok(Claim::Decline)

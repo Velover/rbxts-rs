@@ -55,7 +55,8 @@ impl Interest {
         self.calls_by_symbol = true;
     }
 
-    /// Method calls `obj.m(...)` with `m` in `methods` and `obj`'s type carrying `marker`.
+    /// Method calls `obj.m(...)` with `m` in `methods` and `obj`'s type carrying `marker`, optional ones
+    /// (`obj?.m()`, `obj.m?.()`) and `super.m()` included.
     pub fn calls_by_receiver(
         &mut self,
         methods: &'static [&'static str],
@@ -80,9 +81,12 @@ impl Interest {
         self.access_markers.push((marker, tag));
     }
 
-    /// Assignments, compound assignments, `++` / `--` and `delete` whose target is a property access; the
-    /// property's symbol is classified with role [`crate::SymbolRole::AssignReceiver`]. Computed keys are offered
-    /// too ([`crate::AssignSite::key`]).
+    /// Assignments, compound and logical assignments, `++` / `--` and `delete` whose target is a property access
+    /// `receiver.key` or `receiver[key]` (parentheses skipped); the symbol of the receiver expression (aliases
+    /// skipped; for `this.attributes.x`, the `attributes` property) is classified with role
+    /// [`crate::SymbolRole::AssignReceiver`]. Computed keys are offered too ([`crate::AssignSite::key`]). A target
+    /// whose receiver has no symbol (`f().x = 1`, `a[i].x = 1`) has nothing to classify and is not offered, as a call
+    /// without a callee symbol is not offered by [`Interest::calls_by_symbol`].
     pub fn assignments_by_receiver_symbol(&mut self) {
         self.assignments_by_receiver_symbol = true;
     }
@@ -95,17 +99,19 @@ impl Interest {
         };
     }
 
-    /// Expressions of `kind`, for [`crate::PluginInstance::expression`]. Slow: the plugin is asked for each one it
-    /// is offered. Expression hooks are asked before the call plugins, whatever the registration order.
-    ///
-    /// Not yet every expression of the kind (S2): calls inside a chain (the `f()` in `f().m()`) are offered only
-    /// when a call plugin compiles the outer call itself, and accesses inside chains are not offered. One node may
-    /// be offered twice (see the crate docs); answer the same way both times.
+    /// Expressions of `kind`, for [`crate::PluginInstance::expression`]: every expression of the kind roblox-ts
+    /// lowers as an expression, chain links (accesses and calls inside chains, before or after a `?.`) and dotted JSX
+    /// tags included (see "The expression fallback" in the crate docs for the positions). Slow: the plugin is asked
+    /// for each one it is offered. Expression hooks are asked before the call and assignment plugins, whatever the
+    /// registration order, and once per node.
     pub fn expressions(&mut self, kind: Kind, tag: Tag) {
         self.expressions.push((kind, tag));
     }
 
-    /// Every statement of `kind`, for [`crate::PluginInstance::statement`]. Slow: the plugin is asked for each.
+    /// Every statement of `kind` roblox-ts lowers, for [`crate::PluginInstance::statement`]: those of statement
+    /// lists (types and `declare` statements included), block bodies of `if`, loops, `case` clauses and class
+    /// static blocks, and `else if` (see "The statement fallback" in the crate docs). Slow: the plugin is asked for
+    /// each.
     pub fn statements(&mut self, kind: Kind, tag: Tag) {
         self.statements.push((kind, tag));
     }

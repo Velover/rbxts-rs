@@ -97,8 +97,10 @@ pub trait CxBackend {
     fn compile_in_order(&mut self, nodes: &[P<Node>]) -> Result<Vec<LuauExpr>, Aborted>;
     /// The receiver of a property or element call ([`CallSite::receiver`]): already compiled (and nil-checked
     /// inside an optional chain, by the chain lowering: roblox-ts's property-call macro shape), or compiled now,
-    /// once. On a call without a receiver (a plain call, `f?.()`, `new`, a decorator, `super(…)`) it is an
-    /// internal error naming the plugin.
+    /// once. The value may be an inline expression: bind it with `push_to_var` to use it more than once. On a
+    /// non-method optional call (`o.f?.()`) it binds the receiver to a local, declared before the callee is read
+    /// from it. On a call without a receiver (a plain call, `f?.()`, `new`, a decorator, `super(…)`), and on
+    /// `super.m()` (`super` is not a value), it is an internal error naming the plugin.
     fn compile_receiver(&mut self, call: &CallSite) -> Result<LuauExpr, Aborted>;
     /// Compiles the call with another callee and/or argument slots; `Original` slots are compiled in order.
     ///
@@ -107,7 +109,8 @@ pub trait CxBackend {
     /// `compile_receiver` already compiled it): only the prereqs of arguments the plugin compiled earlier (into
     /// `Arg::Luau` values) run before it, and a Luau value itself is evaluated at the call, after the lazily
     /// compiled receiver or callee. For an eagerly offered call (after `?.` or after another call) the callee or
-    /// receiver is already compiled.
+    /// receiver is already compiled. For an optional call it is the call inside the nil check, `callee(self?,
+    /// args)`. `super.m()` is `super.m(self, args)` when `m` is a method.
     fn compile_call(
         &mut self,
         call: &CallSite,
@@ -260,9 +263,11 @@ pub trait CxBackend {
     /// It is not idempotent: a true answer records the name, so a second call for the same name is false.
     /// Temporaries made earlier keep a name from being approved, and later ones avoid approved names.
     fn is_usable_local_name(&self, name: &str) -> bool;
-    /// Locals declared so far in the current function and in the main chunk. It counts the Luau built so far, so
-    /// it is exact only for code already emitted: statements after the current node (and the rest of the current
-    /// statement) are not counted yet.
+    /// Locals declared so far ([`LocalCounts`]): `main_chunk`, the locals of the main chunk's top level (statements
+    /// done, hoists, imports, header); `function`, the locals the body of the innermost function around the hook's
+    /// node declared at its top level, not counting its parameters or nested blocks (in the main chunk, the same as
+    /// `main_chunk`). It counts the Luau built so far, so it is exact only for code already emitted: statements after
+    /// the current node, and the rest of the current statement, are not in the count.
     fn locals(&self) -> LocalCounts;
     /// A string literal whose text the calling plugin provides in `finish` under the same key
     /// ([`crate::FinishCx::resolve_late`]).
