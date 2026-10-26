@@ -111,6 +111,7 @@ const PRIMITIVE: u8 = 2;
 const STABLE_LOOKUP: u8 = 4;
 const PURE_CONSTRUCTOR: u8 = 8;
 const ROBLOX_CONSTANT: u8 = 16;
+const CONSTRUCTOR_MAY_THROW: u8 = 32;
 
 /// The facts on one node. Empty by default; cheap to clone.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -182,9 +183,17 @@ impl Facts {
         self.flags & PURE_CONSTRUCTOR != 0
     }
 
-    /// rbxts-rs: marks a Roblox datatype constructor call.
-    pub fn set_pure_constructor(&mut self) {
+    /// rbxts-rs: the pure constructor can also throw (`new NumberRange(5, 1)`).
+    pub fn constructor_may_throw(&self) -> bool {
+        self.flags & CONSTRUCTOR_MAY_THROW != 0
+    }
+
+    /// rbxts-rs: marks a Roblox datatype constructor call, which may throw.
+    pub fn set_pure_constructor(&mut self, may_throw: bool) {
         self.flags |= PURE_CONSTRUCTOR;
+        if may_throw {
+            self.flags |= CONSTRUCTOR_MAY_THROW;
+        }
     }
 
     /// rbxts-rs: the lookup is a Roblox constant (`Enum.AutomaticSize.Y`, `Vector2.zero`): reading it has no effect.

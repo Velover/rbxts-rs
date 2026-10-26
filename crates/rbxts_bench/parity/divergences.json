@@ -10,7 +10,7 @@
     "for-of-order": "for-of: the target per iteration, a nested pattern's default first, the iterable's prerequisites before the builder's.",
     "jsx-tag": "JSX tag names follow TypeScript's isIntrinsicJsxName (`<_Inner />` is the component).",
     "jsx-attribute-string": "JSX attribute strings have no escapes and decode HTML entities.",
-    "jsx-order": "JSX: the tag and the attribute table are captured when later prerequisites (attributes', children's) could change them (a Roblox datatype constructor, Enum item or datatype constant cannot).",
+    "jsx-order": "JSX: the tag and the attribute table are captured when later prerequisites (attributes', children's) could change them (a Roblox datatype constructor, Enum item or datatype constant cannot; a constructor that can throw still keeps its place before later effects).",
     "jsx-entity": "A JSX entity past U+10FFFF is an error, not a crash.",
     "luatuple-holes": "Holes in an optimized LuaTuple / array assignment declare their temporaries (`local _`) instead of writing globals.",
     "optional-chain-key": "An optional element call's key prerequisites run inside the receiver's nil check.",

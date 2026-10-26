@@ -147,6 +147,68 @@ local function augmentedConstructor()
 	end
 	return React.createElement("frame", _attributes, _result)
 end
+-- a constructor the type inherits from another `@rbxts/types` interface is not the datatype's own: captured
+local function inheritedConstructor()
+	local list = keypoints
+	local _attributes = {
+		Seq = ColorSequence.new(list),
+	}
+	local _result = maybeHolder
+	if _result ~= nil then
+		_result = _result.bump()
+	end
+	local element = React.createElement("frame", _attributes, _result)
+	return { element.props, #keypoints }
+end
+local log = {}
+local sideEffect = {
+	run = function()
+		table.insert(log, "side effect")
+		return 0
+	end,
+}
+local maybeSide = sideEffect
+-- a constructor that rejects a value of the right type throws before the children run, as in JavaScript
+local function throwingRange()
+	table.clear(log)
+	TS.try(function()
+		local _attributes = {
+			Range = NumberRange.new(5, 1),
+		}
+		local _result = maybeSide
+		if _result ~= nil then
+			_result = _result.run()
+		end
+		React.createElement("frame", _attributes, _result)
+		table.insert(log, "built")
+	end, function(e)
+		table.insert(log, "threw")
+	end)
+	local _array = {}
+	local _length = #_array
+	table.move(log, 1, #log, _length + 1, _array)
+	return _array
+end
+local function throwingHex()
+	table.clear(log)
+	TS.try(function()
+		local _attributes = {
+			Color = Color3.fromHex("zz"),
+		}
+		local _result = maybeSide
+		if _result ~= nil then
+			_result = _result.run()
+		end
+		React.createElement("frame", _attributes, _result)
+		table.insert(log, "built")
+	end, function(e)
+		table.insert(log, "threw")
+	end)
+	local _array = {}
+	local _length = #_array
+	table.move(log, 1, #log, _length + 1, _array)
+	return _array
+end
 return {
 	pureChild = pureChild,
 	userCallChild = userCallChild,
@@ -157,4 +219,7 @@ return {
 	shadowedEnum = shadowedEnum,
 	aliasedEnum = aliasedEnum,
 	augmentedConstructor = augmentedConstructor,
+	inheritedConstructor = inheritedConstructor,
+	throwingRange = throwingRange,
+	throwingHex = throwingHex,
 }

@@ -8,6 +8,7 @@ use tsrs_core::P;
 
 use super::facts::{mark_constant_reference, mark_stable_lookup, set_call_effects};
 use crate::classes::transform_state::TransformState;
+use crate::util::traversal::get_ancestor;
 use crate::util::types::{is_array_type, is_definitely_type, is_in_rbxts_types, is_possibly_type, is_roblox_type};
 
 const LIBRARIES: &[&str] = &["math", "string", "table", "bit32", "utf8", "coroutine", "task", "os", "debug", "buffer"];
@@ -102,11 +103,41 @@ pub fn try_mark_builtin_member(state: &mut TransformState<'_>, node: P<Node>, ex
 
 /// rbxts-rs: the Roblox datatypes whose constructors (`new X(…)`, `X.new(…)`, `X.fromRGB(…)`, …) allocate an
 /// immutable value from their arguments and touch no other state. The JSX ordering (`get_jsx_effects`) lets them
-/// commute with later prerequisites; `Instance.new` and every other call stay unknown.
+/// commute with later prerequisites (the ones that can throw only with prerequisites that have no effects:
+/// [`NEVER_THROWING_CONSTRUCTORS`]); `Instance.new` and every other call stay unknown.
 const PURE_DATATYPES: &[&str] = &[
     "Axes", "BrickColor", "CFrame", "Color3", "ColorSequence", "ColorSequenceKeypoint", "Faces", "Font",
     "NumberRange", "NumberSequence", "NumberSequenceKeypoint", "PhysicalProperties", "Ray", "Rect", "Region3",
     "TweenInfo", "UDim", "UDim2", "Vector2", "Vector3",
+];
+
+/// rbxts-rs: the constructors of [`PURE_DATATYPES`] that never throw for arguments of their declared types (`new` is
+/// `new X(…)`): component-wise values with no validation. The others can reject a value of the right type
+/// (`new NumberRange(5, 1)`, `Color3.fromHex("zz")`, unsorted sequence keypoints, an unknown font or brick colour
+/// name, out-of-range keypoint times, tween and material values), or their validation is not documented closely
+/// enough to rule it out, so they count as possibly throwing.
+const NEVER_THROWING_CONSTRUCTORS: &[(&str, &[&str])] = &[
+    ("Vector2", &["new"]),
+    ("Vector3", &["new", "FromNormalId", "FromAxis"]),
+    ("UDim", &["new"]),
+    ("UDim2", &["new", "fromScale", "fromOffset"]),
+    (
+        "CFrame",
+        &[
+            "new",
+            "Angles",
+            "fromEulerAngles",
+            "fromEulerAnglesXYZ",
+            "fromEulerAnglesYXZ",
+            "fromOrientation",
+            "fromAxisAngle",
+            "lookAt",
+            "lookAlong",
+        ],
+    ),
+    ("Color3", &["new", "fromRGB", "fromHSV"]),
+    ("Rect", &["new"]),
+    ("Ray", &["new"]),
 ];
 
 /// rbxts-rs: every declaration of `node`'s symbol is in `@rbxts/types` (the globals, not a user's shadow of them).
@@ -116,11 +147,27 @@ fn is_declared_in_rbxts_types(state: &mut TransformState<'_>, node: P<Node>) -> 
     !declarations.is_empty() && declarations.iter().all(|&d| is_in_rbxts_types(state, d))
 }
 
+/// rbxts-rs: `declaration` belongs to `receiver`'s own constructor type in `@rbxts/types`: its nearest interface or
+/// type alias is `<receiver>Constructor` (`interface UDim2Constructor`, `type UDimConstructor = new (…) => UDim`).
+/// A member that interface inherits (a user's `interface ColorSequenceConstructor extends SharedTableConstructor`
+/// gives it `SharedTableConstructor`'s `new (t: object)`) belongs to another type, so it does not count.
+fn is_declared_by_constructor_type(state: &mut TransformState<'_>, declaration: P<Node>, receiver: &str) -> bool {
+    let owner = get_ancestor(declaration, |a| {
+        matches!(a.kind(), Kind::InterfaceDeclaration | Kind::TypeAliasDeclaration)
+    });
+    owner.is_some_and(|owner| {
+        owner.name().is_some_and(|name| name.text().strip_suffix("Constructor") == Some(receiver))
+            && is_in_rbxts_types(state, owner)
+    })
+}
+
 /// rbxts-rs: marks `call` (the Luau call of `node`, `receiver.member(arguments)`, or `new receiver(arguments)`
 /// when `member` is `None`) as a pure datatype constructor when `receiver` is one of [`PURE_DATATYPES`]'s
-/// `@rbxts/types` globals, the member is declared there too and is not `BrickColor.random` (the RNG's state), the
-/// signature the call resolves to is declared there (a user's `declare global` augmentation can add an overload that
-/// takes a table), and no argument is an array or a spread (`ColorSequence.new(keypoints)` reads the table).
+/// `@rbxts/types` globals, the member is not `BrickColor.random` (the RNG's state), the signature the call resolves to
+/// is declared by the receiver's own constructor type there (a user's `declare global` augmentation can add an
+/// overload, or inherit one, that takes a table), and no argument is an array or a spread
+/// (`ColorSequence.new(keypoints)` reads the table). A constructor not in [`NEVER_THROWING_CONSTRUCTORS`] is marked
+/// as possibly throwing.
 pub fn try_mark_pure_constructor(
     state: &mut TransformState<'_>,
     node: P<Node>,
@@ -136,13 +183,12 @@ pub fn try_mark_pure_constructor(
     {
         return;
     }
-    if let Some(member) = member
-        && (member.text() == "random" || !is_declared_in_rbxts_types(state, member))
-    {
+    let datatype = receiver.text();
+    if member.is_some_and(|member| member.text() == "random") {
         return;
     }
     let signature = state.checker.get_resolved_signature_exported(node);
-    if !signature.declaration().is_some_and(|d| is_in_rbxts_types(state, d)) {
+    if !signature.declaration().is_some_and(|d| is_declared_by_constructor_type(state, d, datatype)) {
         return;
     }
     for &argument in arguments {
@@ -154,28 +200,32 @@ pub fn try_mark_pure_constructor(
             return;
         }
     }
+    let name = member.map_or("new", |member| member.text());
+    let may_throw = !NEVER_THROWING_CONSTRUCTORS
+        .iter()
+        .any(|&(d, members)| d == datatype && members.contains(&name));
     if let Some(facts) = call.facts_mut() {
-        facts.set_pure_constructor();
+        facts.set_pure_constructor(may_throw);
     }
 }
 
-/// rbxts-rs: every declaration of `name`'s symbol is a `readonly` property of an `@rbxts/types` interface
-/// (`Vector2Constructor.zero`, `CFrameConstructor.identity`).
-fn is_readonly_rbxts_property(state: &mut TransformState<'_>, name: P<Node>) -> bool {
+/// rbxts-rs: every declaration of `name`'s symbol is a `readonly` property of `receiver`'s own constructor interface
+/// in `@rbxts/types` (`Vector2Constructor.zero`, `CFrameConstructor.identity`).
+fn is_readonly_constructor_property(state: &mut TransformState<'_>, name: P<Node>, receiver: &str) -> bool {
     let Some(symbol) = state.checker.get_symbol_at_location_exported(name) else { return false };
     let declarations = symbol.declarations();
     !declarations.is_empty()
         && declarations.iter().all(|&d| {
             d.kind() == Kind::PropertySignature
                 && tsrs_ast::has_syntactic_modifier(d, ModifierFlags::Readonly)
-                && is_in_rbxts_types(state, d)
+                && is_declared_by_constructor_type(state, d, receiver)
         })
 }
 
 /// rbxts-rs: marks `expression` (the Luau lookup of the property access `node`) as a Roblox constant when it is an
 /// Enum item, `Enum.X.Y` with `Enum` the `@rbxts/types` global (not a user's variable or shadow) and `X`, `Y`
 /// declared there, or a datatype constant, `X.name` with `X` one of [`PURE_DATATYPES`]'s `@rbxts/types` globals
-/// and `name` a `readonly` property declared there (`Vector2.zero`).
+/// and `name` a `readonly` property of its constructor interface there (`Vector2.zero`).
 pub fn try_mark_roblox_constant(state: &mut TransformState<'_>, node: P<Node>, expression: &mut Expr) {
     if node.kind() != Kind::PropertyAccessExpression || !matches!(expression, Expr::PropertyAccess(_)) {
         return;
@@ -193,7 +243,7 @@ pub fn try_mark_roblox_constant(state: &mut TransformState<'_>, node: P<Node>, e
         receiver.kind() == Kind::Identifier
             && PURE_DATATYPES.contains(&receiver.text())
             && is_declared_in_rbxts_types(state, receiver)
-            && is_readonly_rbxts_property(state, access.name)
+            && is_readonly_constructor_property(state, access.name, receiver.text())
     };
     if constant && let Some(facts) = expression.facts_mut() {
         facts.set_roblox_constant();

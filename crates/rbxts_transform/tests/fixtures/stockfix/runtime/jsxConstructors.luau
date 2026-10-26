@@ -12,6 +12,12 @@ return {
 				return { count = #keypoints }
 			end,
 		},
+		NumberRange = {
+			new = function(min, max)
+				assert(max >= min, "NumberRange: invalid range")
+				return { min, max }
+			end,
+		},
 		ColorSequenceKeypoint = {
 			new = function(time, color)
 				return { time = time, color = color }
@@ -20,6 +26,10 @@ return {
 		Color3 = {
 			fromRGB = function(r, g, b)
 				return { r, g, b }
+			end,
+			fromHex = function(hex)
+				assert(string.match(hex, "^#?%x+$"), "Unable to convert characters to hex value")
+				return { hex }
 			end,
 		},
 		Enum = { AutomaticSize = { Y = "AutomaticSize.Y" } },
@@ -74,6 +84,14 @@ return {
 				return element.props.Seq.count == 2
 			end,
 		},
+		{
+			call = "inheritedConstructor",
+			expect = function(result)
+				return result[1].Seq.count == result[2] - 1
+			end,
+		},
+		{ call = "throwingRange", expect = { "threw" } },
+		{ call = "throwingHex", expect = { "threw" } },
 		{
 			call = "aliasedEnum",
 			expect = function(element)

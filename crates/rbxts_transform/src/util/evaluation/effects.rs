@@ -238,8 +238,10 @@ fn accumulate(node: LuauNode<'_>, result: &mut Effects, pure_constructors: bool)
             && let Expr::Call(call) = e
             && call.facts.is_pure_constructor()
         {
-            // the constructor is a constant global's member; only the arguments remain
+            // the constructor is a constant global's member; only the arguments remain, and an error for a rejected
+            // value (`new NumberRange(5, 1)`) must not move past a later write
             result.allocates = true;
+            result.throws |= call.facts.constructor_may_throw();
             for argument in &call.args {
                 accumulate(LuauNode::Expr(argument), result, pure_constructors);
             }
@@ -293,7 +295,8 @@ pub fn get_effects_of_statements(statements: &[Stmt]) -> Effects {
 }
 
 /// rbxts-rs: [`get_effects`] for the JSX ordering (`transform_jsx`), where a Roblox datatype constructor
-/// (`UDim2.fromScale(…)`, marked by `try_mark_pure_constructor`) only allocates, and an Enum item or a datatype
+/// (`UDim2.fromScale(…)`, marked by `try_mark_pure_constructor`) only allocates (and may throw, for the ones that
+/// validate their arguments), and an Enum item or a datatype
 /// constant (`Enum.AutomaticSize.Y`, `Vector2.zero`, marked by `try_mark_roblox_constant`) has no effect. roblox-ts's own uses of
 /// `getEffects` keep treating it as an unknown call, so their output stays stock's.
 pub fn get_jsx_effects(node: &Expr) -> Effects {

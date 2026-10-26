@@ -85,7 +85,8 @@ export function aliasedEnum() {
 // declares count, so this one captures
 type KeypointList = { readonly [index: number]: ColorSequenceKeypoint };
 declare global {
-	interface ColorSequenceConstructor {
+	// an inherited constructor: `SharedTableConstructor`'s `new (t?: object)`
+	interface ColorSequenceConstructor extends SharedTableConstructor {
 		new (keypoints: KeypointList): ColorSequence;
 	}
 }
@@ -104,4 +105,43 @@ const maybeHolder: typeof holder | undefined = holder;
 export function augmentedConstructor() {
 	const list: KeypointList = keypoints;
 	return <frame Seq={new ColorSequence(list)}>{maybeHolder?.bump()}</frame>;
+}
+
+// a constructor the type inherits from another `@rbxts/types` interface is not the datatype's own: captured
+export function inheritedConstructor() {
+	const list: object = keypoints;
+	const element = <frame Seq={new ColorSequence(list)}>{maybeHolder?.bump()}</frame>;
+	return [element.props, keypoints.size()];
+}
+
+const log: string[] = [];
+const sideEffect = {
+	run: () => {
+		log.push("side effect");
+		return 0;
+	},
+};
+const maybeSide: typeof sideEffect | undefined = sideEffect;
+
+// a constructor that rejects a value of the right type throws before the children run, as in JavaScript
+export function throwingRange() {
+	log.clear();
+	try {
+		<frame Range={new NumberRange(5, 1)}>{maybeSide?.run()}</frame>;
+		log.push("built");
+	} catch (e) {
+		log.push("threw");
+	}
+	return [...log];
+}
+
+export function throwingHex() {
+	log.clear();
+	try {
+		<frame Color={Color3.fromHex("zz")}>{maybeSide?.run()}</frame>;
+		log.push("built");
+	} catch (e) {
+		log.push("threw");
+	}
+	return [...log];
 }
