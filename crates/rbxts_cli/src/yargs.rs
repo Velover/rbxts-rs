@@ -106,8 +106,8 @@ const fn spec(name: &'static str, kind: Kind, alias: Option<&'static str>, defau
     Spec { name, kind, alias, default }
 }
 
-/// roblox-ts's options (`build.ts`, plus yargs's `help` and `version`), and rbxts-rs's own: `--timings`, and
-/// `--events` with watch mode.
+/// roblox-ts's options (`build.ts`, plus yargs's `help` and `version`), and rbxts-rs's own: `--timings`,
+/// `--events` with watch mode, and `--checkers` (untyped, so that yargs-parser reads its number as for `type`).
 const BUILD_OPTIONS: &[Spec] = &[
     spec("help", Kind::Bool, Some("h"), None),
     spec("version", Kind::Bool, Some("v"), None),
@@ -127,6 +127,7 @@ const BUILD_OPTIONS: &[Spec] = &[
     spec("luau", Kind::Bool, None, None),
     spec("timings", Kind::Bool, None, None),
     spec("events", Kind::Str, None, None),
+    spec("checkers", Kind::Untyped, None, None),
 ];
 
 /// The top-level parse knows only yargs's own options.

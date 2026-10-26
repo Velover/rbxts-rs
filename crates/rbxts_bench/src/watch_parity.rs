@@ -8,7 +8,15 @@ use std::path::PathBuf;
 use rbxts_project::ProjectOptionLayer;
 use rbxts_transform::build::parity::{NodeModules, ParityOptions, parse_script, run};
 
-pub const USAGE: &str = "usage: rbxts-bench watch-parity --source DIR [-p tsconfig.json] --script FILE --scratch DIR\n                         [--copy NAME,NAME…] [--optimizedLoops] [--allowCommentDirectives] [--plugin NAME]...\n                         [--keep-clean] [--report FILE] [--ignore-unknown-plugins] [--node-modules DIR]\n                         [--incremental] [--copy-node-modules | --link-packages] [--no-clean]\n  --source: the project to copy (never written); --copy: the entries copied into the watched copy (default\n  src,include,tsconfig.json,default.project.json,package.json; node_modules is linked); --scratch: where the\n  copies go (emptied first); --keep-clean: keep each step's clean copy; --no-clean: no clean\n  builds (timings and memory only); --incremental: each step is a new\n  incremental build (\"incremental\": true is added to the copy's tsconfig) instead of a watch rebuild.";
+pub const USAGE: &str = "usage: rbxts-bench watch-parity --source DIR [-p tsconfig.json] --script FILE --scratch DIR\n                         [--copy NAME,NAME…] [--optimizedLoops] [--allowCommentDirectives] [--plugin NAME]...\n                         [--keep-clean] [--report FILE] [--ignore-unknown-plugins] [--node-modules DIR]\n                         [--incremental] [--copy-node-modules | --link-packages] [--no-clean] [--checkers N]\n  --source: the project to copy (never written); --copy: the entries copied into the watched copy (default\n  src,include,tsconfig.json,default.project.json,package.json; node_modules is linked); --scratch: where the\n  copies go (emptied first); --keep-clean: keep each step's clean copy; --no-clean: no clean\n  builds (timings and memory only); --incremental: each step is a new\n  incremental build (\"incremental\": true is added to the copy's tsconfig) instead of a watch rebuild;\n  --checkers: the checker count of every build (default: rbxtsc's).";
+
+/// A `--checkers` value: a whole number from 1.
+pub fn parse_checkers(text: &str) -> Result<usize, String> {
+    text.parse::<usize>()
+        .ok()
+        .filter(|&n| n >= 1)
+        .ok_or_else(|| format!("--checkers {text}: expected a whole number from 1"))
+}
 
 pub fn main(args: Vec<String>) -> i32 {
     let mut source = None;
@@ -26,6 +34,7 @@ pub fn main(args: Vec<String>) -> i32 {
     let mut node_modules_mode = NodeModules::Link;
     let mut no_clean = false;
     let mut report = None;
+    let mut checkers = None;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -47,6 +56,7 @@ pub fn main(args: Vec<String>) -> i32 {
                 "--link-packages" => node_modules_mode = NodeModules::LinkPackages,
                 "--no-clean" => no_clean = true,
                 "--report" => report = Some(value()?),
+                "--checkers" => checkers = Some(parse_checkers(&value()?)?),
                 _ => return Err(format!("unknown argument {arg}\n{USAGE}")),
             }
             Ok(())
@@ -98,7 +108,7 @@ pub fn main(args: Vec<String>) -> i32 {
         keep_clean_copies: keep,
         check_clean: !no_clean,
         memory: Some(|| crate::memory().map(|(_, working_set, _)| working_set)),
-        checkers: None,
+        checkers,
     };
     let results = match run(&options, &script_value) {
         Ok(results) => results,

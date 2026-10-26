@@ -17,6 +17,10 @@
 //! text diagnostics), and argument errors as yargs's message alone. `-w` / `--watch` runs watch mode ([`watch`],
 //! DESIGN §14), with `--usePolling` and `--events json` (machine-readable build events on stdout).
 //!
+//! rbxts-rs's own options besides `--timings` and `--events`: `--checkers <n>`, the number of type checkers, each
+//! checking and transforming its share of the files on a thread of its own (default
+//! [`rbxts_transform::DEFAULT_CHECKERS`], at most the machine's parallelism; the output is the same for any count).
+//!
 //! `RBXTS_PLUGIN_CLAIMS=all` asks every matching plugin for each claimable node and reports double claims.
 
 pub mod watch;
@@ -55,6 +59,7 @@ Options:
       --events                  machine-readable watch events on stdout   [choices: \"json\"]
       --luau                    emit files with .luau extension                [boolean]
       --timings                 print plugin hook timings                      [boolean]
+      --checkers                type checkers (one thread each)    [number] [default: 4]
   -h, --help                    show help
   -v, --version                 show version number";
 
@@ -76,6 +81,8 @@ pub struct BuildArgs {
     pub use_polling: bool,
     /// `--events json`.
     pub events_json: bool,
+    /// `--checkers <n>`.
+    pub checkers: Option<usize>,
     pub options: ProjectOptionLayer,
 }
 
@@ -102,6 +109,14 @@ fn path_option(name: &str, value: &yargs::Value, cwd: &str) -> Result<String, St
 /// rbxtsc says so instead.
 fn not_a_path(name: &str, value: &yargs::Value) -> String {
     format!("--{name} must be given once, as a path (got {}); roblox-ts stops with a TypeError here", value.to_json())
+}
+
+/// rbxts-rs: `--checkers <n>`, a whole number from 1 to 256.
+fn checkers_option(value: &yargs::Value) -> Result<usize, String> {
+    match value {
+        yargs::Value::Num(n) if n.fract() == 0.0 && (1.0..=256.0).contains(n) => Ok(*n as usize),
+        other => Err(format!("--checkers must be a whole number from 1 to 256 (got {})", other.to_json())),
+    }
 }
 
 /// Parses roblox-ts's `build` arguments as roblox-ts's yargs does ([`yargs`]) and reads them as roblox-ts does:
@@ -144,6 +159,7 @@ pub fn parse_args(args: impl IntoIterator<Item = String>, cwd: &str) -> Result<C
             "luau" => out.options.luau = Some(flag),
             "watch" => out.watch = flag,
             "usePolling" => out.use_polling = flag,
+            "checkers" => out.checkers = Some(checkers_option(value)?),
             "events" => match value {
                 yargs::Value::Str(events) if events == "json" => out.events_json = true,
                 other => {
@@ -236,7 +252,7 @@ impl Cli {
             out_dir_override: None,
             write_partial: false,
             no_write: false,
-            checkers: None,
+            checkers: build.checkers,
         };
         if build.watch {
             return watch::run(&self.plugins, &build, options, &cwd);
@@ -419,6 +435,20 @@ mod tests {
         assert_eq!(parse(&["--foo-bar"]).unwrap_err(), "Unknown arguments: foo-bar, fooBar");
         assert_eq!(parse(&["--verbose", "1"]).unwrap_err(), "Unknown argument: 1");
         assert!(parse(&["--usePolling"]).unwrap_err().starts_with("Missing dependent arguments:"));
+        // rbxts-rs's --checkers: a whole number from 1 to 256, in any of yargs's spellings
+        assert_eq!(build(&["--checkers", "8"]).checkers, Some(8));
+        assert_eq!(build(&["--checkers=2"]).checkers, Some(2));
+        assert_eq!(build(&[]).checkers, None);
+        for bad in [
+            &["--checkers"][..],
+            &["--checkers", "0"],
+            &["--checkers", "1.5"],
+            &["--checkers", "many"],
+            &["--checkers=257"],
+        ] {
+            assert!(parse(bad).unwrap_err().starts_with("--checkers must be a whole number"), "{bad:?}");
+        }
+        assert!(USAGE.contains(&format!("[number] [default: {}]", rbxts_transform::DEFAULT_CHECKERS)));
         assert!(parse(&["-p", "a", "-p", "b"]).unwrap_err().contains("TypeError"));
         assert_eq!(parse(&["x", "help"]).unwrap(), Command::Help);
     }

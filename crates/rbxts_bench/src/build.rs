@@ -20,7 +20,7 @@ use rbxts_transform::{CompileOptions, CompileReport, PluginOptions, compile_proj
 use tsrs_compiler::diagnosticwriter::flatten_diagnostic_message;
 use tsrs_diagnostics::Category;
 
-pub const USAGE: &str = "usage: rbxts-bench build [-p tsconfig.json] [--out-dir DIR] [--optimizedLoops] [--allowCommentDirectives]\n                         [--write-partial] [--no-write] [--parity REF_DIR] [--report FILE] [--show N] [--json]\n                         [--plugin NAME]... [--timings] [--ignore-unknown-plugins] [--claims-all]\n  --plugin NAME: register a test plugin (rbxts_test_plugins), in claim order; --timings: plugin hook times;\n  --ignore-unknown-plugins: a tsconfig plugins entry no registered plugin claims is not an error;\n  --claims-all: ask every matching plugin and report double claims (as RBXTS_PLUGIN_CLAIMS=all)";
+pub const USAGE: &str = "usage: rbxts-bench build [-p tsconfig.json] [--out-dir DIR] [--optimizedLoops] [--allowCommentDirectives]\n                         [--write-partial] [--no-write] [--parity REF_DIR] [--report FILE] [--show N] [--json]\n                         [--plugin NAME]... [--timings] [--ignore-unknown-plugins] [--claims-all] [--checkers N]\n  --plugin NAME: register a test plugin (rbxts_test_plugins), in claim order; --timings: plugin hook times;\n  --ignore-unknown-plugins: a tsconfig plugins entry no registered plugin claims is not an error;\n  --claims-all: ask every matching plugin and report double claims (as RBXTS_PLUGIN_CLAIMS=all);\n  --checkers N: type checkers, each checking and transforming its files on a thread (default: rbxtsc's)";
 
 struct Args {
     tsconfig: String,
@@ -36,6 +36,7 @@ struct Args {
     timings: bool,
     ignore_unknown_plugins: bool,
     claims_all: bool,
+    checkers: Option<usize>,
 }
 
 fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -54,6 +55,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
         timings: false,
         ignore_unknown_plugins: false,
         claims_all: false,
+        checkers: None,
     };
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -73,6 +75,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--timings" => out.timings = true,
             "--ignore-unknown-plugins" => out.ignore_unknown_plugins = true,
             "--claims-all" => out.claims_all = true,
+            "--checkers" => out.checkers = Some(crate::watch_parity::parse_checkers(&value()?)?),
             "-h" | "--help" => return Err(USAGE.into()),
             _ => return Err(format!("unknown argument {arg}\n{USAGE}")),
         }
@@ -322,7 +325,7 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
         out_dir_override: args.out_dir.clone(),
         write_partial: args.write_partial || args.parity.is_some(),
         no_write: args.no_write,
-        checkers: None,
+        checkers: args.checkers,
     };
     let report = compile_project_with(&options, &plugin_options);
     let total = start.elapsed();

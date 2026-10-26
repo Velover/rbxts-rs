@@ -34,5 +34,8 @@ pub mod shared;
 pub mod util;
 
 pub use build::{BuildSession, BuildSummary};
-pub use compile::{CompileOptions, CompileReport, FileOutcome, Timings, compile_project, compile_project_with};
+pub use compile::{
+    CompileOptions, CompileReport, DEFAULT_CHECKERS, FileOutcome, MAX_CHECKERS, Timings, compile_project,
+    compile_project_with, default_checkers,
+};
 pub use plugins::{PluginOptions, PluginTimings};
