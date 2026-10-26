@@ -125,7 +125,9 @@
 //! hook's node to a declaration in that statement, in a function, class or block, or in a later statement of the file
 //! (roblox-ts declares a name used before its declaration ahead of the statement using it, after the hoist), or
 //! `self` / `super` inside a function or class. The value's own functions and blocks are scopes: a local they
-//! declare covers its uses inside them only. Such a value is an internal error naming the plugin.
+//! declare covers its uses inside them only. The declaration looked at is the name's value declaration (or an
+//! import's), as roblox-ts's `checkIdentifierHoist` does: an interface, type alias or global augmentation merged with
+//! it does not count. Such a value is an internal error naming the plugin.
 //!
 //! **`classify_symbol`** (`backend::run_classify`): what it reports is anchored at the symbol's declaration and
 //! taken out of the file's diagnostics; the build reports each such diagnostic once, sorted

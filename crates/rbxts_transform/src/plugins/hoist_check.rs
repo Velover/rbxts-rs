@@ -291,14 +291,15 @@ pub(crate) fn hoist_problem(
         let Some(symbol) = state.checker.resolve_name_exported(name, Some(anchor), SymbolFlags::Value, false) else {
             continue;
         };
-        // a later one, ambient (`declare`) included: roblox-ts declares a name used before its declaration as a local
-        // ahead of the statement that uses it (`local f`), after the hoist, which would read the global instead
-        let declarations = symbol
-            .declarations()
-            .iter()
-            .copied()
+        // the declaration roblox-ts's `checkIdentifierHoist` looks at: the value declaration (not an interface, type
+        // alias or global augmentation merged with it), or an import's. A later one, ambient (`declare`) included:
+        // roblox-ts declares a name used before its declaration as a local ahead of the statement that uses it
+        // (`local f`), after the hoist, which would read the global instead
+        let declaration = symbol
+            .value_declaration()
+            .or_else(|| crate::nodes::expressions::transform_identifier::get_declaration_from_import(symbol))
             .filter(|&declaration| tsrs_ast::get_source_file_of_node(declaration) == file);
-        for declaration in declarations {
+        if let Some(declaration) = declaration {
             let declared_at = root_statement(declaration);
             if declared_at == root || in_inner_scope(declaration) {
                 return Some(format!(

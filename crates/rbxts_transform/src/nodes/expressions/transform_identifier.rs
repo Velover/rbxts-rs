@@ -55,7 +55,7 @@ fn get_ancestor_which_is_child_of(parent: P<Node>, mut node: P<Node>) -> Option<
 }
 
 /// `symbol.valueDeclaration` does not point to imports.
-fn get_declaration_from_import(symbol: P<Symbol>) -> Option<P<Node>> {
+pub(crate) fn get_declaration_from_import(symbol: P<Symbol>) -> Option<P<Node>> {
     symbol.declarations().iter().copied().find(|&d| get_ancestor(d, tsrs_ast::is_any_import_syntax).is_some())
 }
 

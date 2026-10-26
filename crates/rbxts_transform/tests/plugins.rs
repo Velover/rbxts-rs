@@ -667,8 +667,10 @@ fn a_hoist_of_what_its_statement_declares_is_refused() {
          \treturn probeSpill([(() => { const q = 2; return q; })(), q]);\n\
          })();\n\
          export const bad8 = probeSpill(() => ambientLater());\n\
+         export const bad9 = probeHoist(other);\n\
          function later() { return 1; }\n\
-         declare function ambientLater(): number;\n",
+         declare function ambientLater(): number;\n\
+         import { other } from \"./runtime\";\n",
     );
     let report = project.build(&["stamp", "probe"], |_| {});
     let prefix = "error hoists.ts: rbxts-rs internal error: plugin `probe`:";
@@ -714,6 +716,11 @@ fn a_hoist_of_what_its_statement_declares_is_refused() {
                 "{prefix} hoist_spillable: the value uses `ambientLater`, which a later statement of the file declares \
                  (a function, class, enum or variable declared after the statement around its node){tail}"
             ),
+            // an import below the use
+            format!(
+                "{prefix} hoist: the value uses `other`, which a later statement of the file declares (a function, \
+                 class, enum or variable declared after the statement around its node){tail}"
+            ),
         ]
     );
     assert!(!project.out_exists());
@@ -744,6 +751,25 @@ fn a_hoist_of_what_its_statement_declares_is_refused() {
          local _spilled_1 = function()\n\treturn early()\nend\nlocal fine4 = _spilled_1\nreturn {\n\tfine1 = fine1,\n\
          \tfine2 = fine2,\n\tfine3 = fine3,\n\tfine4 = fine4,\n}\n"
     );
+
+    // only a value declaration (or an import) counts, as in roblox-ts's `checkIdentifierHoist`: an interface, type
+    // alias or global augmentation of the same name further down is not one
+    project.write(
+        "src/shared/hoists.ts",
+        "const Foo = { a: 1 };\n\
+         export const merged1 = probeHoist(Foo);\n\
+         interface Foo { a: number }\n\
+         class C2 {}\n\
+         export const merged2 = probeHoist(C2);\n\
+         interface C2 { x?: number }\n\
+         const T4 = 1;\n\
+         export const merged3 = probeHoist(T4);\n\
+         type T4 = number;\n\
+         export const merged4 = probeHoist(Vector3);\n\
+         declare global { interface Vector3 { probeExtra?: number } }\n",
+    );
+    let report = project.build(&["stamp", "probe"], |_| {});
+    assert_eq!(errors(&report), Vec::<String>::new());
 }
 
 #[test]
