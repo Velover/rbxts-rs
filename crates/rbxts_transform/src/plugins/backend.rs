@@ -243,7 +243,7 @@ pub(crate) fn run_hook_framed<R>(
                     host.name(plugin),
                     hook.label()
                 );
-                state.internal_error(anchor, &message);
+                state.plugin_internal_error(anchor, &message);
             }
             Err(())
         }
@@ -490,7 +490,7 @@ impl HookBackend<'_, '_> {
         };
         if !allowed {
             let message = format!("plugin `{}` called {what} in {}", self.name(), self.hook.label());
-            self.state.internal_error(self.anchor, &message);
+            self.state.plugin_internal_error(self.anchor, &message);
         }
         !allowed
     }
@@ -498,7 +498,7 @@ impl HookBackend<'_, '_> {
     /// An internal error at the anchor, naming the plugin.
     fn misuse(&mut self, message: &str) -> Aborted {
         let message = format!("plugin `{}`: {message}", self.name());
-        self.state.internal_error(self.anchor, &message);
+        self.state.plugin_internal_error(self.anchor, &message);
         Aborted
     }
 
@@ -941,7 +941,7 @@ impl CxBackend for HookBackend<'_, '_> {
         if self.phase == Phase::Classify {
             let message =
                 format!("plugin `{}` reported a diagnostic from classify_symbol: {}", self.name(), diagnostic.message);
-            self.state.internal_error(diagnostic.node, &message);
+            self.state.plugin_internal_error(diagnostic.node, &message);
             return;
         }
         self.touch();
@@ -957,7 +957,7 @@ impl CxBackend for HookBackend<'_, '_> {
         // which file first asks about a symbol depends on the checker count: no inputs recorded there
         if self.phase == Phase::Classify {
             let message = format!("plugin `{}` called env in {}", self.name(), self.hook.label());
-            self.state.internal_error(self.anchor, &message);
+            self.state.plugin_internal_error(self.anchor, &message);
             return None;
         }
         let value = self.host.env.get(name);
@@ -970,7 +970,7 @@ impl CxBackend for HookBackend<'_, '_> {
     fn record_glob(&mut self, root: &Path, pattern: &str, matcher: Arc<dyn GlobMatcher>) -> Vec<String> {
         if self.phase == Phase::Classify {
             let message = format!("plugin `{}` called record_glob in {}", self.name(), self.hook.label());
-            self.state.internal_error(self.anchor, &message);
+            self.state.plugin_internal_error(self.anchor, &message);
             return Vec::new();
         }
         let text = root.to_string_lossy();

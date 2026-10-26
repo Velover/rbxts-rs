@@ -1250,6 +1250,8 @@ impl<'p> BuildSession<'p> {
         let mut file_inputs: Vec<FileInputs> = Vec::with_capacity(to_transform.len());
         // per transformed file, what plugins reported into its diagnostics
         let mut plugin_reported: Vec<Vec<P<Diagnostic>>> = Vec::with_capacity(to_transform.len());
+        // with the internal errors of plugins' misuse of the seam: the plugins' side of `first_error_cut`
+        let mut plugin_side: Vec<Vec<P<Diagnostic>>> = Vec::with_capacity(to_transform.len());
         let hook_times = {
             // every file on the checker that checked it, one thread per checker (`checker_groups`)
             let file_diagnostics: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>> = match &run {
@@ -1292,6 +1294,7 @@ impl<'p> BuildSession<'p> {
                 file_inputs.push(transformed.inputs);
                 once.push(transformed.once);
                 classify.extend(transformed.classify);
+                plugin_side.push([&transformed.plugin_diagnostics[..], &transformed.plugin_failures].concat());
                 plugin_reported.push(transformed.plugin_diagnostics);
                 report.files.push(FileOutcome {
                     file_name,
@@ -1305,7 +1308,7 @@ impl<'p> BuildSession<'p> {
                 done.push(file);
             }
             if !self.options.write_partial {
-                crate::compile::first_error_cut(&mut report.files, &plugin_reported);
+                crate::compile::first_error_cut(&mut report.files, &plugin_side);
             }
             drop_reported_earlier(report.files.iter_mut().map(|f| &mut f.diagnostics).zip(once.iter().map(Vec::as_slice)));
             report.diagnostics.extend(crate::compile::classify_diagnostics(classify));

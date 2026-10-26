@@ -334,14 +334,16 @@ pub(crate) struct FileTransform {
     pub classify: Vec<P<Diagnostic>>,
     /// What plugins reported into `diagnostics` ([`drop_plugin_duplicates`]).
     pub plugin_diagnostics: Vec<P<Diagnostic>>,
+    /// The internal errors of plugins' misuse of the seam in `diagnostics` ([`first_error_cut`]).
+    pub plugin_failures: Vec<P<Diagnostic>>,
 }
 
 /// roblox-ts's `compileFiles` stops at the first error: its TypeScript transformers (the plugins here) run over every
 /// file first, and when one reports an error, only their diagnostics are reported; otherwise the files are
 /// transformed one by one in transform order, and those after the first with an error are not. `files` are the
-/// transformed files in that order (their plugin diagnostics in `plugin`): with a plugin error, every compiler
-/// diagnostic goes; otherwise those of the files after the first with an error do. Plugin diagnostics stay, as the
-/// transformers saw every file.
+/// transformed files in that order (in `plugin`, what plugins reported and the internal errors of their misuse of the
+/// seam, a failing transformer's errors): with a plugin error, every compiler diagnostic goes; otherwise those of the
+/// files after the first with an error do. The plugins' side stays, as the transformers saw every file.
 pub(crate) fn first_error_cut(files: &mut [FileOutcome], plugin: &[Vec<P<Diagnostic>>]) {
     let is_error = |d: &P<Diagnostic>| d.category() == Category::Error;
     let plugin_sets: Vec<FxHashSet<P<Diagnostic>>> = plugin.iter().map(|p| p.iter().copied().collect()).collect();
@@ -527,6 +529,7 @@ pub(crate) fn transform_file(
     let once = std::mem::take(&mut state.diagnostics.once);
     let classify = std::mem::take(&mut state.plugin_file.classify_diagnostics);
     let plugin_diagnostics = std::mem::take(&mut state.plugin_file.plugin_diagnostics);
+    let plugin_failures = std::mem::take(&mut state.plugin_file.plugin_failures);
     FileTransform {
         ast,
         diagnostics,
@@ -539,6 +542,7 @@ pub(crate) fn transform_file(
         once,
         classify,
         plugin_diagnostics,
+        plugin_failures,
     }
 }
 

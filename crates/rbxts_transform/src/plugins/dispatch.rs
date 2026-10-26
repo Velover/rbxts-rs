@@ -285,7 +285,7 @@ fn check_decline(
     let problem = decline_problem(&frame, &now, &allowed, allowed_nested);
     if let Some(problem) = problem {
         let message = format!("plugin `{}` declined a call after {problem}", host.name(plugin));
-        state.internal_error(context.site.node, &message);
+        state.plugin_internal_error(context.site.node, &message);
     }
     problem.is_some()
 }
@@ -333,7 +333,7 @@ fn report_double_claims(
             _ => None,
         };
         if let Some(message) = message {
-            state.internal_error(site.node, &message);
+            state.plugin_internal_error(site.node, &message);
         }
     }
 }
@@ -756,7 +756,7 @@ fn claim_expression_offer(
                 let now = state.plugin_file.effect_mark(prereqs.statements.len());
                 if let Some(what) = decline_problem(&frame, &now, &start, 0) {
                     let message = format!("plugin `{}` declined an expression after {what}", host.name(plugin));
-                    state.internal_error(node, &message);
+                    state.plugin_internal_error(node, &message);
                     // already an error: no other plugin, and not roblox-ts, gets the node
                     return Some(create::nil());
                 }
@@ -813,7 +813,7 @@ fn claim_statement_offer(
                 let now = state.plugin_file.effect_mark(prereqs.statements.len());
                 if let Some(what) = decline_problem(&frame, &now, &start, 0) {
                     let message = format!("plugin `{}` declined a statement after {what}", host.name(plugin));
-                    state.internal_error(node, &message);
+                    state.plugin_internal_error(node, &message);
                     return Some(Vec::new());
                 }
             }
@@ -911,7 +911,7 @@ fn property_key_offer(
                      only be declined or failed",
                     host.name(plugin)
                 );
-                state.internal_error(access, &message);
+                state.plugin_internal_error(access, &message);
                 return None;
             }
             // the key as it is lowers the access as written
@@ -924,7 +924,7 @@ fn property_key_offer(
                 let now = state.plugin_file.effect_mark(0);
                 if let Some(what) = decline_problem(&frame, &now, &start, 0) {
                     let message = format!("plugin `{}` declined a property key after {what}", host.name(plugin));
-                    state.internal_error(access, &message);
+                    state.plugin_internal_error(access, &message);
                     return None;
                 }
             }
@@ -1209,7 +1209,7 @@ fn claim_assignment_offer(
                 let now = state.plugin_file.effect_mark(prereqs.statements.len());
                 if let Some(what) = decline_problem(&frame, &now, &start, 0) {
                     let message = format!("plugin `{}` declined an assignment after {what}", host.name(plugin));
-                    state.internal_error(site.node, &message);
+                    state.plugin_internal_error(site.node, &message);
                     // already an error: no other plugin, and not roblox-ts, gets the node
                     return Some(create::nil());
                 }
@@ -1344,7 +1344,7 @@ fn end_file_slow(state: &mut TransformState<'_>, statements: &mut Vec<Stmt>) {
     let mut unplaced: Vec<P<Node>> = state.plugin_file.before_statement.drain().map(|(node, _)| node).collect();
     unplaced.sort_by_key(|node| node.pos().source_offset());
     for node in unplaced {
-        state.internal_error(
+        state.plugin_internal_error(
             node,
             "insert_before_statement: this statement was not lowered in a statement list, so the statements a plugin \
              placed before it were dropped",

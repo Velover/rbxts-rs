@@ -216,6 +216,9 @@ pub struct PluginFileState {
     /// The diagnostics plugins reported for the file's list (each once): the build drops one identical to another
     /// diagnostic of the build (`compile::drop_plugin_duplicates`).
     pub plugin_diagnostics: Vec<P<tsrs_ast::Diagnostic>>,
+    /// The internal errors of plugins' misuse of the seam in the file's list (`plugin_internal_error`): a plugin's
+    /// errors, as stock reports a failing transformer's, for `compile::first_error_cut`.
+    pub plugin_failures: Vec<P<tsrs_ast::Diagnostic>>,
     /// The number of Luau comments of the file's header comment (TypeScript's detached comments), which the first
     /// top-level statement emitted ahead of its root insertions; plugin imports go after them.
     pub detached_comments: usize,

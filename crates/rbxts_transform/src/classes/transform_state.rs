@@ -157,6 +157,14 @@ impl<'a> TransformState<'a> {
         self.diagnostics.add_diagnostic(internal_error(node, message));
     }
 
+    /// rbxts-rs: a plugin's misuse of the seam (or a hook that failed) at `node`, an internal error the build
+    /// counts as the plugin's (`compile::first_error_cut`); the file is not written.
+    pub fn plugin_internal_error(&mut self, node: P<Node>, message: &str) {
+        let diagnostic = internal_error(node, message);
+        self.diagnostics.add_diagnostic(diagnostic);
+        self.plugin_file.plugin_failures.push(diagnostic);
+    }
+
     // --- try statements ---
 
     /// `pushTryUsesStack`

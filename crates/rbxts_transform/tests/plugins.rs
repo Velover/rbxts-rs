@@ -986,7 +986,11 @@ fn checker_errors_are_explained_by_plugins() {
     let report = project.build(&["stamp", "probe"], |_| {});
     let messages: Vec<String> = report.diagnostics.iter().map(|d| flatten_diagnostic_message(*d, "\n")).collect();
     assert_eq!(messages, vec!["probe explained: Cannot find name 'probeBrokenName'.\nDeclare probeBroken first."]);
-    assert!(report.files.is_empty(), "nothing is transformed after a failed check");
+    // as stock roblox-ts, the files before the first with a checker error are transformed (nothing is written), the
+    // rest are not
+    let transformed: Vec<&str> =
+        report.files.iter().map(|f| f.file_name.rsplit('/').next().unwrap_or_default()).collect();
+    assert_eq!(transformed, vec!["approved.ts", "approvedAfter.ts"], "only the files before broken.ts are transformed");
     assert!(!project.out_exists());
 }
 

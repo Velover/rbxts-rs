@@ -563,7 +563,7 @@ fn spill(state: &mut TransformState<'_>, statements: &mut Vec<Stmt>) -> Option<u
     statements.insert(first, create::local(table_id, Some(create::map([]))));
     if misplaced {
         let node: P<Node> = state.source_file.as_node();
-        state.internal_error(
+        state.plugin_internal_error(
             node,
             "a hoist_spillable local was declared again by plugin code (as a parameter, loop variable or local), so \
              it cannot be spilled into a table",
