@@ -8,17 +8,17 @@
 //! Each checker that owns files to transform runs one group on its own thread (`for_each_checker_parallel`, 512 MiB
 //! stacks): it makes its own `MacroManager` (merged symbols are per checker), `MultiTransformState` (caches keyed by its
 //! types) and `PluginHost` (the plugin instances, made on that thread, `CheckerInfo { index, count }`), then transforms
-//! its files in program order. When one checker owns them all (one checker, or a small rebuild), the group runs on the
+//! its files in the given order (the transform order). When one checker owns them all (one checker, or a small rebuild), the group runs on the
 //! calling thread. The results come back in the files' order, so what the build reports and writes does not depend on
 //! the checker count or the assignment: per-file state is per file, cross-file plugin data travels in file parts
-//! merged in program order, and the once-per-compilation diagnostics are deduplicated in program order afterwards
+//! merged in that order, and the once-per-compilation diagnostics are deduplicated in it afterwards
 //! (`drop_reported_earlier`).
 
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustc_hash::FxHashMap;
 
-use rbxts_plugin::CheckerInfo;
+use rbxts_plugin::{CheckerInfo, FileIndex};
 use rbxts_plugin::erased::ErasedShared;
 use rbxts_project::{Project, ProjectServices};
 use tsrs_ast::{Diagnostic, SourceFile};
@@ -44,6 +44,8 @@ pub(crate) struct GroupPlugins<'a, 'p> {
     pub env: &'a Arc<EnvSnapshot>,
     /// The checker's diagnostics of each file (warnings and suggestions only: an error stops the build first).
     pub file_diagnostics: &'a FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>>,
+    /// Each program file's [`rbxts_plugin::FileIndex`] (its place in the transform order).
+    pub file_indices: &'a FxHashMap<P<SourceFile>, FileIndex>,
     pub claims_all: bool,
 }
 
@@ -68,7 +70,7 @@ struct GroupOutput {
     setup_fatal: Option<Vec<String>>,
 }
 
-/// Transforms `files` (program order), each on its owner checker; see the module docs.
+/// Transforms `files` (transform order, `build::transform_order`), each on its owner checker; see the module docs.
 pub(crate) fn transform_files(
     project: &Project,
     services: &ProjectServices,
@@ -153,7 +155,7 @@ pub(crate) fn transform_files(
     transformed
 }
 
-/// One checker's files, in program order, on the calling thread.
+/// One checker's files, in transform order, on the calling thread.
 fn run_group(
     project: &Project,
     services: &ProjectServices,
@@ -177,6 +179,7 @@ fn run_group(
             plugins.shared,
             info,
             plugins.file_diagnostics.clone(),
+            plugins.file_indices.clone(),
             plugins.claims_all,
         );
         host.env = Arc::clone(plugins.env);

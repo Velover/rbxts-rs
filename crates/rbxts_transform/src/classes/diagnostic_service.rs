@@ -1,11 +1,11 @@
 //! `classes/DiagnosticService.ts`: the diagnostics of one file's transform.
 //!
 //! rbxts-rs: roblox-ts keeps one static list for the whole build; here each file's `TransformState` owns one, and
-//! the pipeline collects them in program order. `addSingleDiagnostic`'s once-per-code rule is per file.
+//! the pipeline collects them in transform order. `addSingleDiagnostic`'s once-per-code rule is per file.
 //!
 //! `addDiagnosticWithCache` (once per compilation and symbol) does not depend on the checker count: its caches are
 //! keyed by [`ReportOnce`], each file records the keys of what it reported, and the build drops a file's diagnostic
-//! whose key an earlier file (program order) reported ([`drop_reported_earlier`]).
+//! whose key an earlier file (transform order) reported ([`drop_reported_earlier`]).
 
 use rustc_hash::FxHashSet;
 
@@ -99,7 +99,7 @@ impl ReportOnce {
     }
 }
 
-/// rbxts-rs: `files` in program order, each as its diagnostics and the once-per-compilation ones among them. Drops
+/// rbxts-rs: `files` in transform order, each as its diagnostics and the once-per-compilation ones among them. Drops
 /// each diagnostic whose key an earlier file reported (within a file, the transform's cache kept the first).
 pub fn drop_reported_earlier<'a>(
     files: impl Iterator<Item = (&'a mut Vec<P<Diagnostic>>, &'a [(ReportOnce, P<Diagnostic>)])>,

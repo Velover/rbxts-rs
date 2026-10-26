@@ -1,7 +1,7 @@
 //! The build pipeline (`Project/functions/compileFiles.ts`, DESIGN §4): load, check every project file, set up the
-//! project and the plugins, transform each file in program order, let the plugins finish, render, and commit. The
-//! lifecycle itself, with incremental and watch builds, is [`crate::build::BuildSession`]; this module has the
-//! one-build entry points and the per-file pieces.
+//! project and the plugins, transform each file in roblox-ts's transform order ([`crate::build::transform_order`]),
+//! let the plugins finish, render, and commit. The lifecycle itself, with incremental and watch builds, is
+//! [`crate::build::BuildSession`]; this module has the one-build entry points and the per-file pieces.
 //!
 //! Any error stops the build before anything is written: checker and setup errors before the transform, transform
 //! errors before rendering (roblox-ts's rule), plugin `finish` errors and unresolved late strings before
@@ -160,7 +160,7 @@ pub struct CompileReport {
     /// A failure that stopped the build, with its messages (roblox-ts's `ProjectError` / text diagnostics, plugin
     /// `Fatal`s, unresolved late strings, commit failures).
     pub fatal: Vec<String>,
-    /// One per transformed file, in program order.
+    /// One per transformed file, in transform order ([`crate::build::transform_order`]).
     pub files: Vec<FileOutcome>,
     /// Where the outputs go: `outDir`, or the override.
     pub out_dir: String,
@@ -392,12 +392,24 @@ pub(crate) fn explain_failures(
     let mut panics: Vec<Vec<String>> = vec![Vec::new(); failing.len()];
     let mut hook_times: Vec<[HookTime; HookKind::ALL.len()]> =
         vec![[HookTime::default(); HookKind::ALL.len()]; active.len()];
+    let file_indices: FxHashMap<P<SourceFile>, FileIndex> = crate::build::transform_order::transform_order(program)
+        .into_iter()
+        .enumerate()
+        .map(|(i, f)| (f, FileIndex(i as u32)))
+        .collect();
     for (owner, files) in by_owner {
         let mut checker = program.get_type_checker_for_file_exclusive(ctx, files[0].1);
         let Ok(macro_manager) = MacroManager::new(&mut checker) else { continue };
         let mut multi = MultiTransformState::new();
-        let mut host =
-            PluginHost::new(program, active, shared, CheckerInfo { index: owner, count }, FxHashMap::default(), false);
+        let mut host = PluginHost::new(
+            program,
+            active,
+            shared,
+            CheckerInfo { index: owner, count },
+            FxHashMap::default(),
+            file_indices.clone(),
+            false,
+        );
         host.env = std::sync::Arc::clone(env);
         for (i, file) in files {
             let diagnostics: Vec<P<Diagnostic>> =

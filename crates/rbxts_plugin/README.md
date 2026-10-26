@@ -25,7 +25,7 @@ implements the backend traits.
      │   reads files/env/globs only via cx (build inputs: watched + hashed)
      ▼
  per checker thread: instance(Arc<Shared>, CheckerInfo) ──▶ interest(&mut Interest)
-     │   per file of the affected closure, in program order on that checker:
+     │   per file of the affected closure, in transform order on that checker:
      │     begin_file ─▶ claim hooks (call, property_key, assignment, expression, statement)
      │                   (cx.env / cx.record_glob: inputs of this file)
      │                ─▶ class (static-block position) ─▶ end_file ──▶ FilePart

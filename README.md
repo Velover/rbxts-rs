@@ -93,6 +93,15 @@ imports it or not, and an import names that output (`TS.import(script, …, "sha
 the root dirs is imported at its source path, which the Rojo project must map. An edit of a JSON module re-copies it
 and re-checks and re-transforms its importers (watch and incremental builds; `tests/watch_fixtures/basic`).
 
+**File order.** A build orders its files as roblox-ts transforms a clean build's (`getChangedFilePaths`: each
+program file followed by the files that import it, depth first; `build::transform_order`): the transform, the
+once-per-compilation diagnostics (reported at the first file in that order), and the file parts plugins' `finish`
+gets (`FileIndex`), so TS5 Flamework's id allocation and `flamework.build` table order are reproduced. Watch and
+incremental builds use the clean build's order too, where roblox-ts follows its changed files. `rbxtsc` prints the
+diagnostics sorted and deduplicated, as roblox-ts does. One deviation: roblox-ts stops transforming at the first
+file with an error (its diagnostics service is global), so it reports the transform errors of that file only;
+rbxts-rs transforms and reports every file.
+
 ## Plugins (`rbxts_plugin`, `rbxts_transform::plugins`, `rbxts_cli`)
 
 `crates/rbxts_plugin` is the plugin API (DESIGN §11); `rbxts_transform::plugins` is the compiler side: the backends,

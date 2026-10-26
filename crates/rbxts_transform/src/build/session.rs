@@ -61,6 +61,7 @@ use super::plugin_inputs::{
     remove_queued_dirs,
 };
 use super::state::{self, DiskState, FileRecord, StateFile};
+use super::transform_order::transform_order;
 use crate::classes::diagnostic_service::drop_reported_earlier;
 use crate::compile::{
     CompileOptions, CompileReport, FileOutcome, comment_directive_diagnostics, explain_failures, output_path,
@@ -818,7 +819,13 @@ impl<'p> BuildSession<'p> {
         }
         summary.all = all;
 
-        let files = project.project_files();
+        // roblox-ts's transform order (`getChangedFilePaths` of a clean build): the order of the files transformed,
+        // of what is reported, and of the parts `finish` gets (`FileIndex`)
+        let order = transform_order(project.program);
+        let file_indices: FxHashMap<P<SourceFile>, FileIndex> =
+            order.iter().enumerate().map(|(i, &f)| (f, FileIndex(i as u32))).collect();
+        let mut files = project.project_files();
+        files.sort_by_key(|f| file_indices[f]);
         report.project_files = files.len();
         // the output set and its errors before anything is compiled or written, as roblox-ts's getProjectOutputs
         // runs before compileFiles: two inputs emitting to one output, or an output root holding sources, write nothing
@@ -998,6 +1005,7 @@ impl<'p> BuildSession<'p> {
                 shared: &run.shared,
                 env: &env,
                 file_diagnostics: &file_diagnostics,
+                file_indices: &file_indices,
                 claims_all,
             });
             let transformed = checker_groups::transform_files(project, services, &ctx, plugins.as_ref(), &to_transform);
@@ -1005,7 +1013,7 @@ impl<'p> BuildSession<'p> {
                 report.fatal.extend(fatal);
                 return (report, summary, committed, Some(loaded));
             }
-            // the files transformed, in program order (a group stopped by an internal error leaves the rest of its files
+            // the files transformed, in transform order (a group stopped by an internal error leaves the rest of its files
             // out; the build then fails)
             let mut done = Vec::with_capacity(to_transform.len());
             let mut once = Vec::with_capacity(to_transform.len());
@@ -1045,10 +1053,8 @@ impl<'p> BuildSession<'p> {
             return (report, summary, committed, Some(loaded));
         }
 
-        // 6. plugin finish: the parts of every current project file, in program order
+        // 6. plugin finish: the parts of every current project file, in transform order
         let start = Instant::now();
-        let file_indices: FxHashMap<P<SourceFile>, FileIndex> =
-            project.program.source_files().iter().enumerate().map(|(i, &f)| (f, FileIndex(i as u32))).collect();
         let transformed_at: FxHashMap<P<SourceFile>, usize> =
             to_transform.iter().enumerate().map(|(i, &f)| (f, i)).collect();
         let mut late_strings = LateStrings::new();
@@ -1088,7 +1094,7 @@ impl<'p> BuildSession<'p> {
                     }
                 }
                 let mut backend = Finish {
-                    program: project.program,
+                    order: &order,
                     services,
                     plugin: plugin.info.name,
                     index,
@@ -1327,7 +1333,7 @@ impl<'p> BuildSession<'p> {
             prepared => prepared.and_then(Result::ok).flatten(),
         };
         if !self.options.no_write {
-            // rbxts-rs: in parallel, in program order for what is reported; a case-only rename renames the output too
+            // rbxts-rs: in parallel, in transform order for what is reported; a case-only rename renames the output too
             // (roblox-ts keeps the old name: its bug)
             let luau: Vec<(usize, &str, &[u8])> = report
                 .files

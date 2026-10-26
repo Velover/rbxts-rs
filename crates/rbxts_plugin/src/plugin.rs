@@ -106,7 +106,7 @@ pub trait Plugin: Send + Sync + 'static {
     /// (instances never outlive a build, so their caches can key on nodes).
     fn instance(&self, shared: Arc<Self::Shared>, checker: CheckerInfo) -> Self::Instance;
 
-    /// Merges the file parts of every current source file, in program order (`parts` is sorted by this build's
+    /// Merges the file parts of every current source file, in transform order (`parts` is sorted by this build's
     /// [`FileIndex`]; files that were not transformed this build bring their cached part). Resolves the late
     /// strings of every current file, cached files included ([`FinishCx::resolve_late`]), and queues artifacts.
     /// Runs once per build, after every checker group, on one thread. Not called when the transform reported an

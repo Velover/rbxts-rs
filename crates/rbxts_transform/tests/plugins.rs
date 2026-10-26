@@ -260,13 +260,13 @@ fn probe_and_stamp_match_the_expected_luau() {
          {\"file\":\"src/shared/elide.ts\",\"claims\":3},{\"file\":\"src/shared/elideAll.ts\",\"claims\":1},\
          {\"file\":\"src/shared/elideKept.ts\",\"claims\":1},{\"file\":\"src/shared/exprcall.ts\",\"claims\":3},{\"file\":\"src/shared/facts.ts\",\"claims\":1},\
          {\"file\":\"src/shared/fallbacks.ts\",\"claims\":2},{\"file\":\"src/shared/inorder.ts\",\"claims\":5},{\"file\":\"src/shared/receivers.ts\",\"claims\":3},\
-         {\"file\":\"src/shared/reuse.ts\",\"claims\":1},{\"file\":\"src/shared/s2assign.ts\",\"claims\":13},\
+         {\"file\":\"src/shared/reuse.ts\",\"claims\":1},{\"file\":\"src/shared/shadow.ts\",\"claims\":3},\
+         {\"file\":\"src/shared/s2assign.ts\",\"claims\":13},\
          {\"file\":\"src/shared/s2calls.ts\",\"claims\":11},{\"file\":\"src/shared/s2chains.ts\",\"claims\":1},\
          {\"file\":\"src/shared/s2locals.ts\",\"claims\":4},{\"file\":\"src/shared/s2objects.ts\",\"claims\":4},\
          {\"file\":\"src/shared/s2spill.ts\",\"claims\":7},{\"file\":\"src/shared/seambefore.ts\",\"claims\":9},\
          {\"file\":\"src/shared/seamkeys.ts\",\"claims\":3},{\"file\":\"src/shared/seamnames.ts\",\"claims\":7},\
-         {\"file\":\"src/shared/seamorder.ts\",\"claims\":2},{\"file\":\"src/shared/selfcalls.ts\",\"claims\":5},\
-         {\"file\":\"src/shared/shadow.ts\",\"claims\":3}]\n"
+         {\"file\":\"src/shared/seamorder.ts\",\"claims\":2},{\"file\":\"src/shared/selfcalls.ts\",\"claims\":5}]\n"
     );
     assert_eq!(
         read("probe-exprcall-report.json"),

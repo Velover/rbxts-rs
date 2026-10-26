@@ -6,6 +6,7 @@
 //! - [`outputs`]: assets, the keep set and the clean of stale outputs (roblox-ts's `getProjectOutputs`), and the
 //!   parallel write of the Luau outputs.
 //! - [`state`]: the incremental state on disk.
+//! - [`transform_order`]: the order roblox-ts transforms a build's files in (`getChangedFilePaths`).
 //! - [`plugin_inputs`]: what plugins record besides setup's file reads (environment, globs, finish reads), and the
 //!   directory rules of `remove_empty_dir`.
 //! - [`parity`]: the watch-parity harness's driver (DESIGN §14 W1).
@@ -18,5 +19,6 @@ pub mod parity;
 pub mod plugin_inputs;
 pub mod session;
 pub mod state;
+pub mod transform_order;
 
 pub use session::{BuildSession, BuildSummary};

@@ -69,8 +69,11 @@ impl std::fmt::Display for Fatal {
 
 impl std::error::Error for Fatal {}
 
-/// A source file's position in **this build's** program order (`program.source_files()`, declaration files
-/// included). It is the order file parts reach [`crate::Plugin::finish`] in, and the same for any checker count.
+/// A source file's position in **this build's** transform order: roblox-ts's order (`getChangedFilePaths` of a clean
+/// build: each program file followed by the files that import it, depth first), over every program file, declaration
+/// files included. It is the order files are transformed and reported in and file parts reach
+/// [`crate::Plugin::finish`] in (TS5 Flamework allocates its ids in it), a function of the program, the same for any
+/// checker count and for watch and incremental builds.
 ///
 /// Never persist it, and never key anything across builds by it (file parts, state, late-string keys): use the
 /// file's path (`cx.file().path`). The compiler caches parts by normalised path and renumbers them at every

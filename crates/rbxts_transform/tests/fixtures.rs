@@ -68,6 +68,9 @@
 //!   writes as `math.huge`; `expected-ts5/` (not checked) keeps the two files where stock roblox-ts on TypeScript 5
 //!   differs, in the order of the export table. Its tsconfig turns on `allowCommentDirectives` (for
 //!   `@ts-expect-error` in enums).
+//! - `transform_order`: imports, a triple-slash reference, a module augmentation and an ambient module import, whose
+//!   files roblox-ts transforms in another order than the program's; [`transform_order`] also checks that order
+//!   (`order.txt`, stock roblox-ts's `getChangedSourceFiles`).
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -510,4 +513,27 @@ fn macros() {
 #[test]
 fn stmts() {
     check("stmts");
+}
+
+/// The files are transformed and reported in roblox-ts's order (`order.txt`, from stock roblox-ts), not program order.
+#[test]
+fn transform_order() {
+    check("transform_order");
+    let Ok(node_modules) = node_modules() else { return };
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/transform_order");
+    let mut project = TempProject::copy_of(&fixture, "transform_order-files");
+    project.link("node_modules", &node_modules);
+    let report = build(&project.root, false);
+    let root = format!("{}/", project.root.to_string_lossy().replace('\\', "/"));
+    let ours: Vec<String> = report
+        .files
+        .iter()
+        .map(|f| {
+            let name = f.file_name.replace('\\', "/");
+            name.strip_prefix(&root).unwrap_or(&name).to_owned()
+        })
+        .collect();
+    let expected = std::fs::read_to_string(fixture.join("order.txt")).unwrap();
+    let expected: Vec<&str> = expected.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(ours, expected);
 }

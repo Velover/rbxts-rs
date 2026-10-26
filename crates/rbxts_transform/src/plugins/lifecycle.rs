@@ -26,6 +26,7 @@ use crate::build::plugin_inputs::{
     record_read, valid_env_name,
 };
 use rbxts_project::{ModuleResolver, ProjectServices, ResolvedModuleInfo, nodepath};
+use tsrs_ast::SourceFile;
 use tsrs_compiler::Program;
 use tsrs_core::{CompilerOptions, P};
 
@@ -338,7 +339,8 @@ pub(crate) struct CommitQueue {
 
 /// The compiler's side of `FinishCx` for one plugin.
 pub(crate) struct Finish<'s> {
-    pub program: &'static Program,
+    /// The build's files in transform order: [`FileIndex`] indexes it.
+    pub order: &'s [P<SourceFile>],
     pub services: &'s ProjectServices,
     pub plugin: &'static str,
     /// The plugin's index among the active plugins.
@@ -489,7 +491,7 @@ impl FinishBackend for Finish<'_> {
     }
 
     fn warn_at(&mut self, file: FileIndex, pos: Utf16Pos, message: &str, hint: Option<&str>) {
-        let name = self.program.source_files().get(file.0 as usize).map_or("<unknown file>", |f| f.get().file_name());
+        let name = self.order.get(file.0 as usize).map_or("<unknown file>", |f| f.get().file_name());
         let relative = nodepath::relative(&self.services.data.project_path, name).replace('\\', "/");
         let mut text = format!("{relative}:{}:{}: {}: {message}", pos.line + 1, pos.character + 1, self.plugin);
         if let Some(hint) = hint {

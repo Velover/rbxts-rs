@@ -110,7 +110,7 @@ pub struct PluginHost {
     pub unsupported_interests: Vec<String>,
     /// The checker's diagnostics of each file (all of them warnings or suggestions: an error stops the build first).
     pub(crate) file_diagnostics: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>>,
-    /// Each source file's index in program order.
+    /// Each program file's index in the build's transform order (`build::transform_order`).
     pub(crate) file_indices: FxHashMap<P<SourceFile>, FileIndex>,
     lines: RefCell<FxHashMap<P<SourceFile>, Rc<FileLines>>>,
     jsdoc: RefCell<FxHashMap<P<Node>, Rc<[JsDocTag]>>>,
@@ -128,6 +128,7 @@ impl PluginHost {
         shared: &[ErasedShared],
         checker: CheckerInfo,
         file_diagnostics: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>>,
+        file_indices: FxHashMap<P<SourceFile>, FileIndex>,
         claims_all: bool,
     ) -> PluginHost {
         let mut host = PluginHost {
@@ -147,7 +148,7 @@ impl PluginHost {
             claims_all,
             unsupported_interests: Vec::new(),
             file_diagnostics,
-            file_indices: program.source_files().iter().enumerate().map(|(i, &f)| (f, FileIndex(i as u32))).collect(),
+            file_indices,
             lines: RefCell::default(),
             jsdoc: RefCell::default(),
             resolver: OnceCell::new(),

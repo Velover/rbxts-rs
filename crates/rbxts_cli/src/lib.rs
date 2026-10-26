@@ -39,6 +39,7 @@ use rbxts_transform::shared::diagnostics::text_diagnostic;
 use rbxts_transform::{CompileOptions, CompileReport, PluginOptions, compile_project_with};
 use tsrs_ast::Diagnostic;
 use tsrs_compiler::diagnosticwriter::{FormattingOptions, format_diagnostic_with_color_and_context};
+use tsrs_compiler::sort_and_deduplicate_diagnostics;
 use tsrs_core::P;
 use tsrs_core::tspath::ComparePathsOptions;
 use tsrs_diagnostics::Category;
@@ -312,6 +313,9 @@ pub fn print_report(report: &CompileReport, cwd: &str, build: &BuildArgs) {
     for file in &report.files {
         diagnostics.extend(file.diagnostics.iter().copied());
     }
+    // roblox-ts's build returns `ts.sortAndDeduplicateDiagnostics(diagnostics)`: by file, position, code and message,
+    // whatever order the files were checked and transformed in
+    let diagnostics = sort_and_deduplicate_diagnostics(&diagnostics);
     // roblox-ts reports its fatal errors (`ProjectError`, `emitResultFailure`) as text diagnostics too
     let fatal = report.fatal.iter().map(|message| text_diagnostic(message, Category::Error));
     for diagnostic in diagnostics.iter().copied().chain(fatal) {

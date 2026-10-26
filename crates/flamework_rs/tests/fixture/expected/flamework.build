@@ -7,9 +7,9 @@
 		"f1-fixture:out/server/reflected@Measured": "server/reflected@Measured",
 		"f1-fixture:out/server/reflected@Shape": "server/reflected@Shape",
 		"f1-fixture:out/server/services/beta@Beta": "server/services/beta@Beta",
+		"f1-fixture:out/server/services/alpha@Alpha": "server/services/alpha@Alpha",
 		"f1-fixture:out/server/services/hub/init@Hub": "server/services/hub/init@Hub",
-		"f1-fixture:out/server/services/hub/init@Helper": "server/services/hub/init@Helper",
-		"f1-fixture:out/server/services/alpha@Alpha": "server/services/alpha@Alpha"
+		"f1-fixture:out/server/services/hub/init@Helper": "server/services/hub/init@Helper"
 	},
 	"inputs": {
 		"config": "6f77c33bd14b72df5a1b6f49cc4fe4cd3078f1c4"

@@ -2,9 +2,9 @@
 //! `tests/fixture`: class metadata, ids in every mode, path and glob macros, `flamework.build` and the include JSON.
 //!
 //! `tests/fixture/expected` holds a full-mode build, checked against the TS5 pipeline (roblox-ts master with the
-//! monorepo transformer at 1a72fa1) on the same sources: equal but for `namespaced.luau` (TS7 sorts the exports), `flamework.build` (the identifiers follow
-//! the program order, where roblox-ts transforms files in `getChangedFilePaths` order; glob matches are sorted,
-//! Q-F4) and `globs.json` (the sorted matches).
+//! monorepo transformer at 1a72fa1) on the same sources: equal but for `namespaced.luau` (TS7 sorts the exports),
+//! `flamework.build` (glob matches are sorted, Q-F4; its identifiers follow roblox-ts's `getChangedFilePaths` order,
+//! as rbxts-rs transforms in it since S3) and `globs.json` (the sorted matches).
 //!
 //! The fixture is copied to a temporary directory with a `node_modules` made as an install would have it: the
 //! `@rbxts` packages copied (`FLAMEWORK_RS_RBXTS`, else the real project's, whose compiler-types both
