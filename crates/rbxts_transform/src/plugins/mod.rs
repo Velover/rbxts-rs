@@ -82,7 +82,8 @@
 //! argument's type when that is a single string literal (`obj["k"]`, `obj[k as "k"]`, a literal-typed `k`); else
 //! `None` (numeric keys too: roblox-ts offsets numeric indices, and no string stands for them), and such a site can
 //! only be declined or failed (a `Take` is an internal error naming the plugin). A rewritten key that replaces a
-//! computed argument still evaluates the argument for its effects, after the receiver. Not asked: destructuring sources
+//! computed argument still evaluates the argument for its effects, after the receiver (one that only reads, such as an
+//! enum member, is dropped with it). Not asked: destructuring sources
 //! (`const { a } = obj`), object literal keys, `"a" in obj`, and callees of roblox-ts macros (no access is emitted).
 //!
 //! **Assignments** (`assignments_by_receiver_symbol`). An assignment, compound or logical assignment, `++` / `--` or
@@ -138,9 +139,10 @@
 //!
 //! **Placement, as TypeScript prints a TS transformer's output.** Before a statement of a statement list
 //! (`dispatch::before_statement`): the file's header comment (detached comments) for the first statement, then the
-//! root insertions of a top-level statement, the `insert_before_statement` statements, a plugin comment that leads
-//! the statement's Luau, then the statement's own leading comments. Plugin imports go after the header comment,
-//! ordered by the position of the node that asked for them. In a build with plugins a numeric literal with
+//! root insertions of a top-level statement, the `insert_before_statement` statements (in TypeScript's visit order),
+//! a plugin comment that leads the statement's Luau, then the statement's own leading comments. Plugin imports go
+//! after the header comment, one declaration per path as Flamework's transform adds them, ordered by the position of
+//! the node that asked for them, and named in that order. In a build with plugins a numeric literal with
 //! separators is its value's text, as the reprint of stock roblox-ts gives (`transform_numeric_literal`).
 //!
 //! **Luau's limits** (`spill`). Every file a plugin emitted into is compiled by Luau 0.740 (`rbxts_luau_check`,
