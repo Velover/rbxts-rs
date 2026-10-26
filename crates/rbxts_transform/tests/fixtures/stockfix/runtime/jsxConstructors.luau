@@ -7,6 +7,21 @@ return {
 			zero = { X = 0, Y = 0 },
 		},
 		CFrame = { identity = "CFrame.identity" },
+		ColorSequence = {
+			new = function(keypoints)
+				return { count = #keypoints }
+			end,
+		},
+		ColorSequenceKeypoint = {
+			new = function(time, color)
+				return { time = time, color = color }
+			end,
+		},
+		Color3 = {
+			fromRGB = function(r, g, b)
+				return { r, g, b }
+			end,
+		},
 		Enum = { AutomaticSize = { Y = "AutomaticSize.Y" } },
 		UDim2 = {
 			new = function(xs, xo, ys, yo)
@@ -53,6 +68,12 @@ return {
 			end,
 		},
 		{ call = "shadowedEnum", expect = { { AutomaticSize = 1 }, 2 } },
+		{
+			call = "augmentedConstructor",
+			expect = function(element)
+				return element.props.Seq.count == 2
+			end,
+		},
 		{
 			call = "aliasedEnum",
 			expect = function(element)

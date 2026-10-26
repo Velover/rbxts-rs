@@ -116,12 +116,14 @@ fn is_declared_in_rbxts_types(state: &mut TransformState<'_>, node: P<Node>) -> 
     !declarations.is_empty() && declarations.iter().all(|&d| is_in_rbxts_types(state, d))
 }
 
-/// rbxts-rs: marks `call` (the Luau call of `receiver.member(arguments)`, or of `new receiver(arguments)` when
-/// `member` is `None`) as a pure datatype constructor when `receiver` is one of [`PURE_DATATYPES`]'s `@rbxts/types`
-/// globals, the member is declared there too and is not `BrickColor.random` (the RNG's state), and no argument is
-/// an array or a spread (`ColorSequence.new(keypoints)` reads the table).
+/// rbxts-rs: marks `call` (the Luau call of `node`, `receiver.member(arguments)`, or `new receiver(arguments)`
+/// when `member` is `None`) as a pure datatype constructor when `receiver` is one of [`PURE_DATATYPES`]'s
+/// `@rbxts/types` globals, the member is declared there too and is not `BrickColor.random` (the RNG's state), the
+/// signature the call resolves to is declared there (a user's `declare global` augmentation can add an overload that
+/// takes a table), and no argument is an array or a spread (`ColorSequence.new(keypoints)` reads the table).
 pub fn try_mark_pure_constructor(
     state: &mut TransformState<'_>,
+    node: P<Node>,
     receiver: P<Node>,
     member: Option<P<Node>>,
     arguments: &[P<Node>],
@@ -137,6 +139,10 @@ pub fn try_mark_pure_constructor(
     if let Some(member) = member
         && (member.text() == "random" || !is_declared_in_rbxts_types(state, member))
     {
+        return;
+    }
+    let signature = state.checker.get_resolved_signature_exported(node);
+    if !signature.declaration().is_some_and(|d| is_in_rbxts_types(state, d)) {
         return;
     }
     for &argument in arguments {

@@ -43,6 +43,6 @@ pub fn transform_new_expression(state: &mut TransformState<'_>, prereqs: &mut Pr
     prereqs.push_list(args_prereqs.statements);
     let mut call = create::call(create::property(expression, "new"), args);
     // rbxts-rs: `new UDim2(…)` and the like, for the JSX ordering (`try_mark_pure_constructor`)
-    try_mark_pure_constructor(state, class_expression, None, node.arguments(), &mut call);
+    try_mark_pure_constructor(state, node, class_expression, None, node.arguments(), &mut call);
     call
 }

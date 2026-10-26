@@ -126,6 +126,27 @@ local function aliasedEnum()
 	end
 	return React.createElement("frame", _attributes, _condition)
 end
+-- a user's augmentation can give a datatype a constructor that reads a table: only signatures `@rbxts/types`
+-- declares count, so this one captures
+local keypoints = { ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 0, 0)), ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)) }
+local holder = {
+	bump = function()
+		table.insert(keypoints, keypoints[1])
+		return 0
+	end,
+}
+local maybeHolder = holder
+local function augmentedConstructor()
+	local list = keypoints
+	local _attributes = {
+		Seq = ColorSequence.new(list),
+	}
+	local _result = maybeHolder
+	if _result ~= nil then
+		_result = _result.bump()
+	end
+	return React.createElement("frame", _attributes, _result)
+end
 return {
 	pureChild = pureChild,
 	userCallChild = userCallChild,
@@ -135,4 +156,5 @@ return {
 	constants = constants,
 	shadowedEnum = shadowedEnum,
 	aliasedEnum = aliasedEnum,
+	augmentedConstructor = augmentedConstructor,
 }

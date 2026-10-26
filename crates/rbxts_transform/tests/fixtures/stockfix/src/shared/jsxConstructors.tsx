@@ -80,3 +80,28 @@ export function aliasedEnum() {
 	const items = Enum.AutomaticSize;
 	return <frame AutomaticSize={items.Y}>{unset ?? resize()}</frame>;
 }
+
+// a user's augmentation can give a datatype a constructor that reads a table: only signatures `@rbxts/types`
+// declares count, so this one captures
+type KeypointList = { readonly [index: number]: ColorSequenceKeypoint };
+declare global {
+	interface ColorSequenceConstructor {
+		new (keypoints: KeypointList): ColorSequence;
+	}
+}
+const keypoints = [
+	new ColorSequenceKeypoint(0, Color3.fromRGB(0, 0, 0)),
+	new ColorSequenceKeypoint(1, Color3.fromRGB(255, 255, 255)),
+];
+const holder = {
+	bump: () => {
+		keypoints.push(keypoints[0]);
+		return 0;
+	},
+};
+const maybeHolder: typeof holder | undefined = holder;
+
+export function augmentedConstructor() {
+	const list: KeypointList = keypoints;
+	return <frame Seq={new ColorSequence(list)}>{maybeHolder?.bump()}</frame>;
+}
