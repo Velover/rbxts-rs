@@ -11,38 +11,80 @@ local modules = {}
 local environments = {}
 local ambients = {}
 
+-- What the modules use of the runtime library: `TS.import` (below) and the try statement.
+local TS = {
+	TRY_RETURN = 1,
+	TRY_BREAK = 2,
+	TRY_CONTINUE = 3,
+}
+
+-- `TS.try` verbatim from roblox-ts's include/RuntimeLib.luau (rethrows; runs `finally` after a failed catch)
+function TS.try(try, catch, finally)
+	-- execute try
+	local trySuccess, exitTypeOrTryError, returns = pcall(try)
+	local exitType, tryError
+	if trySuccess then
+		exitType = exitTypeOrTryError
+	else
+		tryError = exitTypeOrTryError
+	end
+
+	local catchSuccess = true
+	local catchError
+
+	-- if try block failed, and catch block exists, execute catch
+	if not trySuccess and catch then
+		local newExitTypeOrCatchError, newReturns
+		catchSuccess, newExitTypeOrCatchError, newReturns = pcall(catch, tryError)
+		local newExitType
+		if catchSuccess then
+			newExitType = newExitTypeOrCatchError
+		else
+			catchError = newExitTypeOrCatchError
+		end
+
+		if newExitType then
+			exitType, returns = newExitType, newReturns
+		end
+	end
+
+	-- execute finally
+	if finally then
+		local newExitType, newReturns = finally()
+		if newExitType then
+			exitType, returns = newExitType, newReturns
+		end
+	end
+
+	-- if exit type is a control flow, do not rethrow errors
+	if exitType ~= TS.TRY_RETURN and exitType ~= TS.TRY_BREAK and exitType ~= TS.TRY_CONTINUE then
+		-- if catch block threw an error, rethrow it
+		if not catchSuccess then
+			error(catchError, 2)
+		end
+
+		-- if try block threw an error and there was no catch block, rethrow it
+		if not trySuccess and not catch then
+			error(tryError, 2)
+		end
+	end
+
+	return exitType, returns
+end
+
 local function loadModule(name: string)
 	if modules[name] then
 		return modules[name]
 	end
 	local source = fs.readFile(`expected/shared/{name}.luau`)
-	-- the runtime library is only needed for TS.import here
 	source = source:gsub("local TS = require%b()\n", "local TS = _TS\n")
 	local environment = setmetatable({}, { __index = _G })
-	environment._TS = {
+	environment._TS = setmetatable({
 		import = function(_, _, ...)
 			local path = { ... }
 			return loadModule(path[#path])
 		end,
-		-- the runtime library's try statement (RuntimeLib's `TS.try`), without its error handling
-		TRY_RETURN = 1,
-		TRY_BREAK = 2,
-		TRY_CONTINUE = 3,
-		try = function(try, catch, finally)
-			local ok, exitType, returns = pcall(try)
-			if not ok then
-				assert(catch, exitType)
-				exitType, returns = catch(exitType)
-			end
-			if finally then
-				local newExitType, newReturns = finally()
-				if newExitType then
-					exitType, returns = newExitType, newReturns
-				end
-			end
-			return exitType, returns
-		end,
-	}
+	}, { __index = TS })
 	environment.script = {}
 	environment.game = {
 		GetService = function()
