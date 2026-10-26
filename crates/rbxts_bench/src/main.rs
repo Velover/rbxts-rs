@@ -144,6 +144,22 @@ fn message(d: P<Diagnostic>) -> String {
 ")
 }
 
+/// Where a diagnostic is, as TypeScript's plain formatter puts it: `file(line,column)` (1-based, the column in UTF-16
+/// units), the file alone without a position, nothing without a file.
+pub(crate) fn location(d: P<Diagnostic>) -> String {
+    use tsrs_ast::SourceFileLike;
+    let Some(file) = d.file() else { return String::new() };
+    let file = file.get();
+    let name = file.file_name();
+    let Some(pos) = d.pos() else { return name.to_owned() };
+    let starts = file.ecma_line_map();
+    let line = starts.partition_point(|&start| start <= pos).saturating_sub(1);
+    let text = SourceFileLike::text(file);
+    let start = starts.get(line).map_or(0, |&s| s as usize).min(text.len());
+    let column = text.get(start..(pos as usize).min(text.len())).map_or(0, |s| s.encode_utf16().count());
+    format!("{name}({},{})", line + 1, column + 1)
+}
+
 pub(crate) fn mib(bytes: usize) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
 }
@@ -161,7 +177,7 @@ fn run(args: &Args) -> i32 {
         Err(diags) => {
             eprintln!("tsconfig could not be used ({} diagnostics)", diags.len());
             for d in diags {
-                eprintln!("  {}", message(d));
+                eprintln!("  {}: {}", location(d), message(d));
             }
             return 2;
         }
@@ -229,8 +245,7 @@ fn run(args: &Args) -> i32 {
         println!("diagnostics {} (errors {})", diags.len(), errors);
         println!("peak working set {:.1} MiB, peak commit {:.1} MiB", mib(peak_ws), mib(peak_commit));
         for d in diags.iter().take(20) {
-            let file = d.file().map(|f| f.file_name().to_owned()).unwrap_or_default();
-            println!("  {file}: {}", message(*d));
+            println!("  {}: {}", location(*d), message(*d));
         }
     }
     i32::from(errors > 0)

@@ -437,8 +437,7 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
             let _ = writeln!(out, "fatal: {message}");
         }
         for d in report.diagnostics.iter().take(args.show) {
-            let file = d.file().map(|f| f.file_name().to_owned()).unwrap_or_default();
-            let _ = writeln!(out, "  {file}: {}", flatten_diagnostic_message(*d, " "));
+            let _ = writeln!(out, "  {}: {}", crate::location(*d), flatten_diagnostic_message(*d, " "));
         }
         if !report.plugins.is_empty() {
             let _ = writeln!(out, "plugins: {}", report.plugins.join(", "));
@@ -446,9 +445,8 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
                 let _ = writeln!(out, "  warning: {}", warning.replace('\n', " / "));
             }
             for d in report.files.iter().flat_map(|f| f.diagnostics.iter()).take(args.show) {
-                let file = d.file().map(|f| f.file_name().to_owned()).unwrap_or_default();
                 let category = if d.category() == Category::Error { "error" } else { "warning" };
-                let _ = writeln!(out, "  {category} {file}: {}", flatten_diagnostic_message(*d, " "));
+                let _ = writeln!(out, "  {category} {}: {}", crate::location(*d), flatten_diagnostic_message(*d, " "));
             }
             for path in &report.artifacts_written {
                 let _ = writeln!(out, "  wrote {path}");
