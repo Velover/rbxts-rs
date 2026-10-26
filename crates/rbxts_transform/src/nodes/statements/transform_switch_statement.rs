@@ -2,7 +2,7 @@
 //! fallthrough.
 
 use rbxts_luau::{
-    AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, TemporaryIdentifier, UnaryOperator, create,
+    AssignmentOperator, BinaryOperator, ElseBody, Expr, IfStatement, Stmt, TemporaryIdentifier, UnaryOperator, create,
 };
 use tsrs_ast::{Kind, Node, SymbolFlags};
 use tsrs_core::P;
@@ -109,6 +109,20 @@ fn transform_case_clause(
         can_fall_through_to,
     );
 
+    let (clause_statements, can_fall_through_from) =
+        transform_case_clause_body(state, node, condition, fall_through_flag_id, should_update_fall_through_flag);
+    CaseClause { can_fall_through_from, prereqs: prereq_statements, clause_statements }
+}
+
+/// A case clause's body (or, rbxts-rs, a default clause's) as `if condition then … end`, after its hoisted
+/// declarations, and whether control can fall through from it.
+fn transform_case_clause_body(
+    state: &mut TransformState<'_>,
+    node: P<Node>,
+    condition: Expr,
+    fall_through_flag_id: &TemporaryIdentifier,
+    should_update_fall_through_flag: bool,
+) -> (Vec<Stmt>, bool) {
     let clause_body = node.statements();
     let non_empty_statements: Vec<P<Node>> =
         clause_body.iter().copied().filter(|s| s.kind() != Kind::EmptyStatement).collect();
@@ -131,8 +145,120 @@ fn transform_case_clause(
         clause_statements.push(hoist_declaration);
     }
     clause_statements.push(create::if_stmt(condition, statements, ElseBody::default()));
+    (clause_statements, can_fall_through_from)
+}
 
-    CaseClause { can_fall_through_from, prereqs: prereq_statements, clause_statements }
+/// rbxts-rs: fixes roblox-ts dropping every case after a `default` that is not the last clause (it lowers the default
+/// as the end of the switch). JavaScript tests every case before it runs the default, and a default in the middle
+/// falls through into the cases after it. The clauses before the default are lowered as roblox-ts lowers them; at
+/// the default, unless control fell into it, the later cases are tested in order and the one that matched is kept in
+/// `_case`; the default runs when none did, and each later case runs when it matched or control falls into it.
+fn transform_switch_middle_default(
+    state: &mut TransformState<'_>,
+    expression: &Expr,
+    clauses: &[P<Node>],
+    default_index: usize,
+) -> Vec<Stmt> {
+    let fall_through_flag_id = temp_id("fallthrough");
+    let fall_through_flag = Expr::TemporaryIdentifier(fall_through_flag_id.clone());
+    let case_id = temp_id("case");
+    let matched_case = Expr::TemporaryIdentifier(case_id.clone());
+    let mut statements = Vec::new();
+    let mut is_fall_through_flag_needed = false;
+
+    // the clauses before the default, each setting the flag when control can fall through to the next
+    let mut can_fall_through_to = false;
+    for &case_clause_node in &clauses[..default_index] {
+        let CaseClause { can_fall_through_from, prereqs, clause_statements } = transform_case_clause(
+            state,
+            case_clause_node,
+            expression,
+            &fall_through_flag_id,
+            can_fall_through_to,
+            true,
+        );
+        statements.extend(prereqs);
+        statements.extend(clause_statements);
+        can_fall_through_to = can_fall_through_from;
+        is_fall_through_flag_needed |= can_fall_through_from;
+    }
+
+    // which later case matches: `if x == a then _case = 1 elseif x == b then _case = 2 end`, a case with
+    // prerequisites in the `else` block before its test
+    let later = &clauses[default_index + 1..];
+    let tests: Vec<CaseClauseExpression> = later
+        .iter()
+        .map(|clause| {
+            let case_expression = clause.expression().expect("a case clause has an expression");
+            transform_case_clause_expression(state, case_expression, expression, &fall_through_flag_id, false)
+        })
+        .collect();
+    let mut chain: Option<(Vec<Stmt>, IfStatement)> = None;
+    for (i, CaseClauseExpression { condition, prereq_statements }) in tests.into_iter().enumerate().rev() {
+        let else_body = match chain.take() {
+            None => ElseBody::default(),
+            Some((prereqs, next)) if prereqs.is_empty() => ElseBody::If(Box::new(next)),
+            Some((mut prereqs, next)) => {
+                prereqs.push(Stmt::If(Box::new(next)));
+                ElseBody::Block(prereqs)
+            }
+        };
+        let assign_case = create::assignment(
+            matched_case.clone(),
+            AssignmentOperator::Assign,
+            create::number(f64::from(u32::try_from(i + 1).expect("a case count"))),
+        );
+        chain = Some((prereq_statements, IfStatement { condition, statements: vec![assign_case], else_body }));
+    }
+    statements.push(create::local(case_id, None));
+    if let Some((mut tests, first)) = chain {
+        tests.push(Stmt::If(Box::new(first)));
+        if can_fall_through_to {
+            // a case that fell into the default skips the tests (`_case` stays nil)
+            tests = vec![create::if_stmt(create::unary(UnaryOperator::Not, fall_through_flag.clone()), tests, ElseBody::default())];
+        }
+        statements.extend(tests);
+    }
+
+    // the default: when no later case matched (or control fell into it)
+    let default_clause = clauses[default_index];
+    let (default_statements, can_fall_through_from) = transform_case_clause_body(
+        state,
+        default_clause,
+        create::binary(matched_case.clone(), BinaryOperator::Eq, Expr::Nil),
+        &fall_through_flag_id,
+        true,
+    );
+    statements.extend(default_statements);
+    can_fall_through_to = can_fall_through_from;
+    is_fall_through_flag_needed |= can_fall_through_from;
+
+    // the later cases: when matched, or when control falls into them
+    for (i, &case_clause_node) in later.iter().enumerate() {
+        let mut condition = create::binary(
+            matched_case.clone(),
+            BinaryOperator::Eq,
+            create::number(f64::from(u32::try_from(i + 1).expect("a case count"))),
+        );
+        if can_fall_through_to {
+            condition = create::binary(fall_through_flag.clone(), BinaryOperator::Or, condition);
+        }
+        let (clause_statements, can_fall_through_from) = transform_case_clause_body(
+            state,
+            case_clause_node,
+            condition,
+            &fall_through_flag_id,
+            i + 1 < later.len(),
+        );
+        statements.extend(clause_statements);
+        can_fall_through_to = can_fall_through_from;
+        is_fall_through_flag_needed |= can_fall_through_from && i + 1 < later.len();
+    }
+
+    if is_fall_through_flag_needed {
+        statements.insert(0, create::local(fall_through_flag_id, Some(Expr::False)));
+    }
+    statements
 }
 
 /// `transformSwitchStatement`
@@ -155,6 +281,15 @@ pub fn transform_switch_statement(state: &mut TransformState<'_>, node: P<Node>)
     let mut statements = Vec::new();
     let mut can_fall_through_to = false;
     let clauses = switch.case_block.as_case_block().clauses.nodes();
+    if let Some(default_index) = clauses.iter().position(|clause| clause.kind() == Kind::DefaultClause)
+        && default_index + 1 < clauses.len()
+    {
+        result.push(create::repeat_stmt(
+            transform_switch_middle_default(state, &expression, clauses, default_index),
+            Expr::True,
+        ));
+        return result;
+    }
     for (i, &case_clause_node) in clauses.iter().enumerate() {
         if case_clause_node.kind() == Kind::CaseClause {
             let should_update_fall_through_flag = i < clauses.len() - 1 && clauses[i + 1].kind() == Kind::CaseClause;

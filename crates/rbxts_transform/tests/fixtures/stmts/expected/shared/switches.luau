@@ -291,11 +291,23 @@ return function()
 			local result = 0
 			local _exp = color
 			repeat
+				local _fallthrough = false
 				if _exp == 0 then
 					result = 1
 					break
 				end
-				result = -1
+				local _case
+				if _exp == 1 then
+					_case = 1
+				end
+				if _case == nil then
+					result = -1
+					_fallthrough = true
+				end
+				if _fallthrough or _case == 1 then
+					-- fallthrough into here
+					result += 2
+				end
 			until true
 			local _exp_1 = shade
 			repeat

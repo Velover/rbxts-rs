@@ -67,7 +67,8 @@
 //!   chains and with evaluation-order cases.
 //! - `stmts`: enums (non-finite values too), namespaces, `switch`, and `try` / `throw` (roblox-ts tests' specs plus
 //!   hand-written cases). `expected/` is roblox-ts on the TypeScript 7 checker, except the infinities, which rbxts-rs
-//!   writes as `math.huge`; `expected-ts5/` (not checked) keeps the two files where stock roblox-ts on TypeScript 5
+//!   writes as `math.huge`, and the `default` before a case in `switches`, which rbxts-rs lowers so that the case
+//!   still runs (the `stockfix` fixture); `expected-ts5/` (not checked) keeps the two files where stock roblox-ts on TypeScript 5
 //!   differs, in the order of the export table. Its tsconfig turns on `allowCommentDirectives` (for
 //!   `@ts-expect-error` in enums).
 //! - `stockfix`: the roblox-ts bugs rbxts-rs fixes (each source file names its bug). `expected/` is rbxts-rs's output,
