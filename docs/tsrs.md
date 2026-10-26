@@ -77,3 +77,11 @@ Known, accepted differences from stock roblox-ts on TypeScript 5. None changes a
   (`packages/pkg`). Not modelled: rbxts-rs runs no declaration diagnostics or declaration emit, and reproducing when
   the emitter asks for a specifier would mean running it for every file. To get the `node_modules` path in both, import
   the package by its name. (Probe: a relative import of a sibling `file:` dependency, with a declaration build.)
+- **Automatic type directives.** Without `types` in the tsconfig, TypeScript 5 includes every package of the type
+  roots in the program; TypeScript 7 (tsrs `get_automatic_type_directive_names`) includes none (only `"types": ["*"]`
+  lists the type roots), so a package nothing imports or references is not loaded. On the real project TypeScript 5
+  loads 70 more declaration files, from 8 such packages (and a package nested in one). Only one declares something global
+  (`@rbxts/vide`'s `declare global { namespace JSX }`), which the project does not use: its JSX goes through
+  `React.JSX`, and no source names the global `JSX`. A project that relies on a global or an augmentation from a
+  package it never imports must name the package in `types` (each entry must exist under a type root, as roblox-ts
+  checks; roblox-ts rejects `"*"`).
