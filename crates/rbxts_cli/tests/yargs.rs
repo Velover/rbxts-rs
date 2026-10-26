@@ -46,9 +46,8 @@ fn same(a: &Json, b: &Json) -> bool {
     }
 }
 
-#[test]
-fn every_vector_parses_as_roblox_ts_parses_it() {
-    let cases = include_str!("fixtures/yargs_cases.jsonl");
+/// Every vector of `cases` parses as roblox-ts's yargs parsed it, compared over `keys`; the number of vectors.
+fn check(cases: &str, keys: &[&str]) -> usize {
     let mut failures = Vec::new();
     let mut count = 0;
     for line in cases.lines().filter(|l| !l.trim().is_empty()) {
@@ -64,7 +63,7 @@ fn every_vector_parses_as_roblox_ts_parses_it() {
             (Parsed::Options(options), case) if case.get("ok").is_some() => {
                 let ours: serde_json::Map<String, Json> = options
                     .iter()
-                    .filter(|(k, _)| KEYS.contains(&k.as_str()))
+                    .filter(|(k, _)| keys.contains(&k.as_str()))
                     .map(|(k, v)| (k.clone(), to_json(v)))
                     .collect();
                 same(&Json::Object(ours), &case["ok"])
@@ -75,6 +74,19 @@ fn every_vector_parses_as_roblox_ts_parses_it() {
             failures.push(format!("{args:?}: stock {line}, rbxts-rs {ours:?}"));
         }
     }
-    assert_eq!(count, 2539);
     assert!(failures.is_empty(), "{} of {count} differ:\n{}", failures.len(), failures.join("\n"));
+    count
+}
+
+#[test]
+fn every_vector_parses_as_roblox_ts_parses_it() {
+    assert_eq!(check(include_str!("fixtures/yargs_cases.jsonl"), KEYS), 2539);
+}
+
+/// rbxts-rs's own options (`--timings`, `--events`, `--checkers`) against roblox-ts's yargs with them declared as
+/// rbxts-rs declares them (`tools/yargs-own-cases.cjs` wrote the vectors).
+#[test]
+fn own_options_parse_as_yargs_would_parse_them() {
+    let keys: Vec<&str> = KEYS.iter().copied().chain(["timings", "events", "checkers"]).collect();
+    assert_eq!(check(include_str!("fixtures/yargs_own_cases.jsonl"), &keys), 29);
 }
