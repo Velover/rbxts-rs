@@ -78,6 +78,7 @@ pub fn transform_writable_expression(
         _ => {
             let transformed = transform_expression(state, prereqs, skip_downwards(node));
             if !transformed.is_writable() && !transformed.is_none() {
+                // rbxts-rs: roblox-ts asserts here (a crash); an internal error diagnostic keeps the build going
                 state.internal_error(node, "assignment target is not writable");
             }
             transformed

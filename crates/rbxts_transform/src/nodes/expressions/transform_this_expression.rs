@@ -28,7 +28,7 @@ pub fn transform_this_expression(state: &mut TransformState<'_>, node: P<Node>) 
         {
             match state.class_identifier_map.get(&class) {
                 Some(identifier) => return identifier.clone().into(),
-                // roblox-ts asserts here
+                // rbxts-rs: roblox-ts asserts here (a crash); an internal error diagnostic keeps the build going
                 None => state.internal_error(node, "no class identifier for `this` in a static member"),
             }
         }

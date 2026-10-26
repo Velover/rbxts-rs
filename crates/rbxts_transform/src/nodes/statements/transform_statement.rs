@@ -87,6 +87,7 @@ pub fn transform_statement(state: &mut TransformState<'_>, node: P<Node>) -> Vec
         Kind::WhileStatement => transform_while_statement(state, node),
 
         kind => {
+            // rbxts-rs: roblox-ts asserts here (a crash); an internal error diagnostic keeps the build going
             state.internal_error(node, &format!("Unknown statement: {}", kind_name(kind)));
             Vec::new()
         }

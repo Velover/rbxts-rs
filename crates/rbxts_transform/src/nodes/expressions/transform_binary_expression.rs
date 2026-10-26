@@ -95,6 +95,7 @@ fn transform_optimized_array_assignment_pattern(
                 }
             }
             _ => {
+                // rbxts-rs: roblox-ts asserts here (a crash); an internal error diagnostic keeps the build going
                 state.internal_error(element, "Expected object assignment pattern");
                 return;
             }

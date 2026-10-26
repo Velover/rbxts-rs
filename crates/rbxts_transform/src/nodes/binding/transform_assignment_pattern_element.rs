@@ -54,6 +54,7 @@ pub fn transform_assignment_pattern_element(
             target.kind(),
             Kind::Identifier | Kind::PropertyAccessExpression | Kind::ElementAccessExpression
         ) {
+            // rbxts-rs: roblox-ts asserts here (a crash); an internal error diagnostic keeps the build going
             state.internal_error(
                 target,
                 &format!("Invalid destructuring assignment target: {}", kind_name(target.kind())),

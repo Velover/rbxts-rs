@@ -270,6 +270,7 @@ pub fn transform_class_like_declaration(state: &mut TransformState<'_>, node: P<
             }
             Kind::GetAccessor | Kind::SetAccessor => state.add_diagnostic(errors::no_getter_setter(member)),
             Kind::ClassStaticBlockDeclaration => static_declarations.push(member),
+            // rbxts-rs: roblox-ts asserts here (a crash); an internal error diagnostic keeps the build going
             kind => state.internal_error(member, &format!("ClassMember kind not implemented: {}", kind_name(kind))),
         }
     }

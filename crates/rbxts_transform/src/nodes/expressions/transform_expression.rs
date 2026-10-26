@@ -121,7 +121,7 @@ pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereq
         Kind::YieldExpression => transform_yield_expression(state, prereqs, node),
 
         kind => {
-            // roblox-ts asserts here; a diagnostic keeps the build going
+            // rbxts-rs: roblox-ts asserts here (a crash); an internal error diagnostic keeps the build going
             state.internal_error(node, &format!("Unknown expression: {}", kind_name(kind)));
             return Expr::None;
         }

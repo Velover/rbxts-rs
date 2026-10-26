@@ -48,6 +48,7 @@ pub fn transform_object_assignment_pattern(
                 transform_assignment_pattern_element(state, prereqs, target, value_prereqs, value, initializer);
             }
             kind => {
+                // rbxts-rs: roblox-ts asserts here (a crash); an internal error diagnostic keeps the build going
                 state.internal_error(property, &format!("Invalid object assignment property: {}", kind_name(kind)));
             }
         }
