@@ -20,7 +20,10 @@
 //!   resolved type reference directives;
 //! - every file references the files declaring an ambient module with more than one declaration (other than itself).
 //!
-//! Not modelled: pattern ambient modules (`declare module "*.png"`) and module names only the checker resolves.
+//! Not modelled: pattern ambient modules (`declare module "*.png"`) and module names only the checker resolves. A
+//! non-relative import that both resolves to a file and matches a `declare module "name"` is the ambient module to
+//! TypeScript 5's checker (so it references the declaring files), while this references the file it resolves to;
+//! reachable only when a project shadows an installed package with an ambient declaration.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsrs_ast::SourceFile;
