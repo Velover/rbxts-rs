@@ -55,7 +55,9 @@
 //!   order, so the fixture declares its exported functions first.
 //! - `loops`: numeric `for` loops under `--optimizedLoops` and the `while` fallback (copies of captured loop
 //!   variables, finalizers before `continue`), every for-of loop builder and `$range`, `while`, `do`-`while`, and
-//!   `continue` / `break` inside `try` in loops, and roblox-ts's `loop.spec.ts` (destructured loop variables included).
+//!   `continue` / `break` inside `try` in loops, roblox-ts's `loop.spec.ts` (destructured loop variables
+//!   included), and parenthesized `for` initializers and incrementors (value-less ones, which crash stock roblox-ts,
+//!   are dropped).
 //! - `macros`: every call, identifier, constructor and property-call macro, as values and statements, on optional
 //!   chains and with evaluation-order cases.
 //! - `stmts`: enums (non-finite values too), namespaces, `switch`, and `try` / `throw` (roblox-ts tests' specs plus
