@@ -246,6 +246,9 @@ struct Watched {
     source_roots: Vec<String>,
     /// A loaded project emits declarations: a `.d.ts` file under a source root is an asset of it.
     declaration_assets: bool,
+    /// Path keys of the outputs the last committed builds left, with their size and modification time then: an
+    /// event that leaves one otherwise (edited or deleted by hand) counts, and the build writes it again.
+    committed_outputs: FxHashMap<String, rbxts_transform::build::outputs::Stamp>,
     /// Path keys of the JSON files the last load read, with their spelling and the hash of their text: an event
     /// leaving the same text under the same name does not count.
     texts: FxHashMap<String, (String, u64)>,
@@ -683,6 +686,7 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
     }
     watched.source_roots.extend(root_dirs.iter().map(|r| key(&nodepath::resolve(&[r]))));
     watched.declaration_assets |= services.path_translator.declaration;
+    watched.committed_outputs.extend(session.committed_outputs().into_iter().map(|(path, stamp)| (key(&path), stamp)));
     watched.flat.insert(project_dir.clone());
     // node_modules, its scopes and the type roots: packages appearing or going
     let node_modules = services.data.node_modules_path.clone();
@@ -791,6 +795,7 @@ fn add_referenced_project(watched: &mut Watched, session: &BuildSession<'_>, dir
     let Some((services, program_files, root_dirs)) = session.watch_roots() else { return };
     watched.source_roots.extend(root_dirs.iter().map(|r| key(&nodepath::resolve(&[r]))));
     watched.declaration_assets |= services.path_translator.declaration;
+    watched.committed_outputs.extend(session.committed_outputs().into_iter().map(|(path, stamp)| (key(&path), stamp)));
     // a file its tsconfig could take in, in the directory of one of its program files, counts
     watched.matchers.extend(session.include_matcher());
     let protected: Vec<String> = root_dirs.iter().map(|r| key(r)).collect();
@@ -864,6 +869,10 @@ fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &Own) -> bo
         return true;
     }
     if output {
+        // an output the last commit left, no longer as it left it (edited or deleted by hand): written again
+        if let Some(stamp) = watched.committed_outputs.get(&k) {
+            return !folder_modify && stamp.check(path, rbxts_transform::build::outputs::Found::at(path)).is_none();
+        }
         // Rojo project files in the folders the resolvers search count there too, as in roblox-ts
         // (`isRojoConfigDirectory`): a hand-written `out/…/default.project.json` changes the requires
         return !folder_modify

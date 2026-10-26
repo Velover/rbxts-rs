@@ -579,10 +579,9 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
                 result.problems.push(format!("diagnostics differ: watch {watch_errors:?} / clean {clean_errors:?}"));
             }
         }
-        // every diagnostic, warnings included, equals the clean build's (a watch rebuild reports the warnings of the
-        // files it does not transform again; a new process of an incremental build, as roblox-ts's, only those of
-        // the files it transforms)
-        if !options.incremental {
+        // every diagnostic, warnings included, equals the clean build's (a watch rebuild, or a new process of an
+        // incremental build, reports the warnings of the files it does not transform again)
+        {
             let moved_out = clean.join("out").to_string_lossy().replace('\\', "/").to_lowercase();
             let watch_all = diagnostic_texts(&report, &work);
             let clean_all: Vec<String> =

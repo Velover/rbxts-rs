@@ -147,8 +147,12 @@ fn a_new_process_transforms_the_files_whose_environment_changed() {
     // the plugin's source in the code slot, and a diagnostic's own
     assert!(output.contains(" TS @probe/inputs: \u{1b}[0mprobe-inputs warning"), "{output}");
     assert!(output.contains(" TS @probe/own: \u{1b}[0mprobe-inputs own source"), "{output}");
-    // nothing changed: the file with a glob only (its matcher is not persisted)
-    assert_eq!(build(&project, &[]).1, 1);
+    // nothing changed: the file with a glob only (its matcher is not persisted); the other files' warnings are reported
+    // again from the incremental state, with their sources, as a clean build reports them
+    let (again, count) = build(&project, &[]);
+    assert_eq!(count, 1);
+    assert!(again.contains(" TS @probe/inputs: \u{1b}[0mprobe-inputs warning"), "{again}");
+    assert!(again.contains(" TS @probe/own: \u{1b}[0mprobe-inputs own source"), "{again}");
     // PROBE_FILE set: the two files that read it (one has the glob too), and nothing else
     assert_eq!(build(&project, &[("PROBE_FILE", "one")]).1, 2);
     assert!(project.read("out/shared/marked.luau").contains("env Some(\"one\")"));

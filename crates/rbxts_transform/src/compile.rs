@@ -352,7 +352,7 @@ pub(crate) fn drop_plugin_duplicates(owners: &mut [DiagnosticOwner<'_>]) {
         return;
     }
     let key = |d: P<Diagnostic>| -> Key {
-        let source = crate::plugins::backend::diagnostic_source(d);
+        let source = crate::plugins::diagnostic_source(d);
         (d.file().map(|f| f.file_name().to_owned()), d.pos(), d.end(), source, d.code(), d.localize())
     };
     // (owner, position in its list, diagnostic, a plugin's)
@@ -396,7 +396,7 @@ pub(crate) fn drop_plugin_duplicates(owners: &mut [DiagnosticOwner<'_>]) {
 fn ts_compare_diagnostics(d1: P<Diagnostic>, d2: P<Diagnostic>) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let file = |d: P<Diagnostic>| d.file().map(|f| f.file_name().to_owned());
-    let source = crate::plugins::backend::diagnostic_source;
+    let source = crate::plugins::diagnostic_source;
     let skip_related = file(d1)
         .cmp(&file(d2))
         .then(d1.pos().cmp(&d2.pos()))

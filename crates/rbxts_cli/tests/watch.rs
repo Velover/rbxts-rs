@@ -1100,3 +1100,39 @@ fn files_no_program_takes_in_start_no_rebuild() {
     drop(watcher);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// An output edited or deleted by hand is written again at once: the watcher counts the event (an output the last
+/// commit left, no longer as it left it), and the build transforms its source again. Its own writes start nothing.
+#[test]
+fn outputs_changed_by_hand_are_written_again() {
+    let Some((base, root, links)) = linked_project("handedit") else { return };
+    let watcher = start(&root);
+    assert_eq!(watcher.build_end(0)["ok"], true);
+    watcher.assert_quiet(Duration::from_millis(1000));
+    let d = root.join("out/shared/d.luau");
+    let before = std::fs::read_to_string(&d).unwrap();
+
+    std::fs::write(&d, "-- edited by hand\nreturn nil\n").unwrap();
+    assert_eq!(watcher.build_end(1)["ok"], true);
+    assert_eq!(std::fs::read_to_string(&d).unwrap(), before);
+    watcher.assert_quiet(Duration::from_millis(1500));
+
+    std::fs::remove_file(&d).unwrap();
+    assert_eq!(watcher.build_end(2)["ok"], true);
+    assert_eq!(std::fs::read_to_string(&d).unwrap(), before);
+    watcher.assert_quiet(Duration::from_millis(1500));
+
+    // an asset's copy
+    let asset = root.join("out/shared/asset.lua");
+    let asset_before = std::fs::read(&asset).unwrap();
+    std::fs::write(&asset, "-- edited by hand\n").unwrap();
+    assert_eq!(watcher.build_end(3)["ok"], true);
+    assert_eq!(std::fs::read(&asset).unwrap(), asset_before);
+    watcher.assert_quiet(Duration::from_millis(1500));
+
+    for link in links {
+        unlink(&link);
+    }
+    drop(watcher);
+    let _ = std::fs::remove_dir_all(&base);
+}

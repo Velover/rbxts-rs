@@ -13,6 +13,11 @@
 //! plugins' `setup` read ([`DiskInput`]), and the plugin state files the build left ([`StateFile`]). A file whose parts are all there and decode, whose environment reads
 //! the same and which recorded no glob brings its parts to `finish` untransformed (with the plugins' states
 //! starting fresh, as the API says).
+//!
+//! Every project file also keeps its last transform's diagnostics ([`DiskDiagnostic`]: warnings, since a file with an
+//! error never commits), which a new process reports again for the files it does not transform, so an incremental
+//! build reports what a clean build would. And the build's outputs keep their size and modification time
+//! ([`super::outputs::Stamp`]): one changed or deleted by hand since makes its source be transformed again.
 
 use std::path::Path;
 
@@ -20,10 +25,63 @@ use rustc_hash::FxHashMap;
 use serde_json::{Map, Value, json};
 
 use super::graph::{FileFacts, Version};
+use super::outputs::Stamp;
 use super::plugin_inputs::DiskInput;
 
 /// The state file's format version.
-const FORMAT: u64 = 2;
+const FORMAT: u64 = 3;
+
+/// A transform diagnostic of a project file, as the incremental state keeps it: one of roblox-ts's or a plugin's
+/// (an ad hoc message, without a code of its own), with its related information.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DiskDiagnostic {
+    /// The span in the file (UTF-8 byte offsets).
+    pub pos: u32,
+    pub end: u32,
+    /// `tsrs_diagnostics::Category` as a number: 0 warning, 1 error, 2 suggestion, 3 message.
+    pub category: u8,
+    pub text: String,
+    /// A plugin diagnostic's source (the reporter's code slot).
+    pub source: Option<String>,
+    /// A plugin reported it (`compile::drop_plugin_duplicates` keeps one of each in the build).
+    pub plugin: bool,
+    /// (file, pos, end, category, text) of each related information (file `None`: none).
+    pub related: Vec<(Option<String>, u32, u32, u8, String)>,
+}
+
+impl DiskDiagnostic {
+    fn to_json(&self) -> Value {
+        let related: Vec<Value> =
+            self.related.iter().map(|(file, pos, end, category, text)| json!([file, pos, end, category, text])).collect();
+        json!([self.pos, self.end, self.category, self.text, self.source, self.plugin, related])
+    }
+
+    fn from_json(value: &Value) -> Option<DiskDiagnostic> {
+        let number = |v: &Value| v.as_u64().and_then(|n| u32::try_from(n).ok());
+        Some(DiskDiagnostic {
+            pos: number(value.get(0)?)?,
+            end: number(value.get(1)?)?,
+            category: u8::try_from(value.get(2)?.as_u64()?).ok()?,
+            text: value.get(3)?.as_str()?.to_owned(),
+            source: optional_string(value.get(4)?)?,
+            plugin: value.get(5)?.as_bool()?,
+            related: value
+                .get(6)?
+                .as_array()?
+                .iter()
+                .map(|r| {
+                    Some((
+                        optional_string(r.get(0)?)?,
+                        number(r.get(1)?)?,
+                        number(r.get(2)?)?,
+                        u8::try_from(r.get(3)?.as_u64()?).ok()?,
+                        r.get(4)?.as_str()?.to_owned(),
+                    ))
+                })
+                .collect::<Option<_>>()?,
+        })
+    }
+}
 
 /// What the plugins keep of one project file.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -36,6 +94,10 @@ pub struct FileRecord {
     pub env: Vec<(usize, String, Option<String>)>,
     /// (plugin, root, pattern, answer) of its `Cx::record_glob` calls.
     pub globs: Vec<(usize, String, String, Vec<String>)>,
+    /// Its last transform's diagnostics.
+    pub diagnostics: Vec<DiskDiagnostic>,
+    /// One of them could not be kept (a diagnostic with a code of its own): the next process transforms it again.
+    pub no_replay: bool,
 }
 
 /// The incremental state of the last committed build.
@@ -56,6 +118,8 @@ pub struct DiskState {
     pub setup_inputs: Vec<DiskInput>,
     /// The plugin state files the build left, with their bytes' versions (written before this state).
     pub state_files: Vec<StateFile>,
+    /// By path key: the build's outputs as it left them.
+    pub outputs: Vec<(String, Stamp)>,
 }
 
 /// A plugin state file a committed build left on disk (written, or already holding those bytes). Before the next
@@ -176,7 +240,12 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
 
 impl FileRecord {
     fn is_empty(&self) -> bool {
-        self.parts.is_empty() && self.late.is_empty() && self.env.is_empty() && self.globs.is_empty()
+        self.parts.is_empty()
+            && self.late.is_empty()
+            && self.env.is_empty()
+            && self.globs.is_empty()
+            && self.diagnostics.is_empty()
+            && !self.no_replay
     }
 
     fn read(file: &Value) -> Option<FileRecord> {
@@ -209,6 +278,8 @@ impl FileRecord {
                     ))
                 })
                 .collect::<Option<_>>()?,
+            diagnostics: list("diag")?.iter().map(DiskDiagnostic::from_json).collect::<Option<_>>()?,
+            no_replay: file.get("noReplay").is_some_and(|v| v == &Value::Bool(true)),
         })
     }
 
@@ -226,6 +297,12 @@ impl FileRecord {
         if !self.globs.is_empty() {
             let globs = self.globs.iter().map(|(p, root, pattern, answer)| json!([p, root, pattern, answer]));
             file.insert("globs".into(), Value::Array(globs.collect()));
+        }
+        if !self.diagnostics.is_empty() {
+            file.insert("diag".into(), Value::Array(self.diagnostics.iter().map(DiskDiagnostic::to_json).collect()));
+        }
+        if self.no_replay {
+            file.insert("noReplay".into(), Value::Bool(true));
         }
     }
 }
@@ -278,6 +355,18 @@ impl DiskState {
                 Some(files) => files.as_array()?.iter().map(StateFile::from_json).collect::<Option<_>>()?,
                 None => Vec::new(),
             },
+            outputs: match value.get("outputs") {
+                Some(outputs) => outputs
+                    .as_array()?
+                    .iter()
+                    .map(|o| {
+                        let hash = u64::from_str_radix(o.get(2)?.as_str()?, 16).ok()?;
+                        let stamp = Stamp { size: o.get(1)?.as_u64()?, hash, modified: 0 };
+                        Some((o.get(0)?.as_str()?.to_owned(), stamp))
+                    })
+                    .collect::<Option<_>>()?,
+                None => Vec::new(),
+            },
         })
     }
 
@@ -318,6 +407,15 @@ impl DiskState {
         {
             object.insert("stateFiles".into(), Value::Array(self.state_files.iter().map(StateFile::to_json).collect()));
         }
+        if !self.outputs.is_empty()
+            && let Some(object) = value.as_object_mut()
+        {
+            let mut outputs: Vec<&(String, Stamp)> = self.outputs.iter().collect();
+            outputs.sort_by(|a, b| a.0.cmp(&b.0));
+            // the hash as hex text: 64 bits overflow JSON's safe integers
+            let outputs = outputs.iter().map(|(key, stamp)| json!([key, stamp.size, format!("{:016x}", stamp.hash)]));
+            object.insert("outputs".into(), Value::Array(outputs.collect()));
+        }
         let mut bytes = serde_json::to_vec(&value).unwrap_or_default();
         bytes.push(b'\n');
         bytes
@@ -354,8 +452,32 @@ mod tests {
                 late: vec![(0, "stamp\u{0}k".into(), "v".into())],
                 env: vec![(1, "X".into(), None), (0, "Y".into(), Some("y".into()))],
                 globs: vec![(0, "E:/p/assets".into(), "*.txt".into(), vec!["b.txt".into(), "a.txt".into()])],
+                diagnostics: vec![
+                    DiskDiagnostic {
+                        pos: 3,
+                        end: 9,
+                        category: 0,
+                        text: "a warning\nwith a hint".into(),
+                        source: Some("@probe/inputs".into()),
+                        plugin: true,
+                        related: vec![(Some("E:/p/src/b.ts".into()), 0, 4, 3, "declared here".into()), (None, 0, 0, 3, "x".into())],
+                    },
+                    DiskDiagnostic {
+                        pos: 0,
+                        end: 1,
+                        category: 0,
+                        text: "roblox-ts's".into(),
+                        source: None,
+                        plugin: false,
+                        related: vec![],
+                    },
+                ],
+                no_replay: false,
             },
         );
+        records.insert("e:/p/src/b.ts".to_owned(), FileRecord { no_replay: true, ..FileRecord::default() });
+        let b = FileFacts { file_name: "E:/p/src/b.ts".into(), version: Version::of("b"), ..files["e:/p/src/a.ts"].clone() };
+        files.insert("e:/p/src/b.ts".to_owned(), b);
         let state = DiskState {
             compiler: "c".into(),
             plugins: vec![("stamp".into(), "0.1.0".into())],
@@ -369,6 +491,7 @@ mod tests {
                 path: "E:/p/.stamp-state".into(),
                 version: Version::of_bytes(&[0xff, b'1']),
             }],
+            outputs: vec![("e:/p/out/a.luau".into(), Stamp { size: 12, hash: 0xfedc_ba98_7654_3210, modified: 0 })],
         };
         let dir = std::env::temp_dir().join(format!("rbxts-rs-state-{}", std::process::id()));
         let path = dir.join("tsconfig.rbxts-rs.buildinfo");

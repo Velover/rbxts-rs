@@ -178,7 +178,13 @@ mod lowering;
 mod luau_walk;
 pub(crate) mod spill;
 
-pub use backend::diagnostic_source;
+/// The source a plugin diagnostic names (`PluginDiagnostic::source`, else its plugin's `diagnostic_source()`), for
+/// the reporter's code slot: `error TS <source>: …`, also for one a new process made again from the incremental state
+/// ([`crate::build::replay`]). `None` for every other diagnostic.
+pub fn diagnostic_source(diagnostic: tsrs_core::P<tsrs_ast::Diagnostic>) -> Option<&'static str> {
+    backend::diagnostic_source(diagnostic).or_else(|| crate::build::replay::source(diagnostic))
+}
+
 pub use host::PluginHost;
 pub use lifecycle::{BuildInput, PluginOptions, PluginTimings};
 

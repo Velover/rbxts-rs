@@ -469,12 +469,104 @@ pub struct Listing {
     pub empty_dirs: Vec<String>,
     /// The roots listed, as spelled.
     pub roots: Vec<String>,
+    /// Path key → the file's size and modification time as the listing found them (a link's own).
+    pub found: FxHashMap<String, Found>,
+    /// Path key → the committed output's stamp, once [`Listing::intact`] found it as committed (`None`: not).
+    checked: std::sync::Mutex<FxHashMap<String, Option<Stamp>>>,
+}
+
+/// A file's size and modification time (nanoseconds since the Unix epoch, 0 when unknown).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Found {
+    pub size: u64,
+    pub modified: u128,
+}
+
+impl Found {
+    /// What metadata says.
+    pub fn of_metadata(metadata: &std::fs::Metadata) -> Found {
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos());
+        Found { size: metadata.len(), modified }
+    }
+
+    /// What the file (a link itself) at `path` is, `None` when there is none.
+    pub fn at(path: &str) -> Option<Found> {
+        std::fs::symlink_metadata(path).ok().filter(|m| !m.is_dir()).map(|m| Found::of_metadata(&m))
+    }
+}
+
+/// What a committed output is compared by, so one changed by hand since (or deleted) is written again: its size and
+/// a hash of its bytes (FNV-1a), which the incremental state keeps. `modified` is only a shortcut, not kept: a
+/// file with the size and modification time the stamp was made with is not read again.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stamp {
+    pub size: u64,
+    pub hash: u64,
+    pub modified: u128,
+}
+
+/// FNV-1a, 64-bit: the same in every process.
+pub fn content_hash(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+impl Stamp {
+    /// The stamp of the file at `path`, read now; `None` when there is none.
+    pub fn read(path: &str) -> Option<Stamp> {
+        let found = Found::at(path)?;
+        let bytes = std::fs::read(path).ok()?;
+        Some(Stamp { size: bytes.len() as u64, hash: content_hash(&bytes), modified: found.modified })
+    }
+
+    /// The file at `path` (`found` as its metadata) still holds what this stamp describes: the stamp to keep for it
+    /// (with its modification time now), `None` when it changed or is gone.
+    pub fn check(&self, path: &str, found: Option<Found>) -> Option<Stamp> {
+        let found = found?;
+        if found.size != self.size {
+            return None;
+        }
+        if self.modified != 0 && found.modified == self.modified {
+            return Some(*self);
+        }
+        let bytes = std::fs::read(path).ok()?;
+        (bytes.len() as u64 == self.size && content_hash(&bytes) == self.hash)
+            .then_some(Stamp { modified: found.modified, ..*self })
+    }
 }
 
 impl Listing {
     /// A file with this key was there.
     pub fn contains(&self, key: &str) -> bool {
         self.spelled.contains_key(key)
+    }
+
+    /// The output with this key is there as the last commit left it: listed, and holding what the stamp
+    /// `committed` has for it says (an output no stamp is known of counts when it is there).
+    pub fn intact(&self, key: &str, committed: &FxHashMap<String, Stamp>) -> bool {
+        match committed.get(key) {
+            Some(stamp) => self.checked(key, stamp).is_some(),
+            None => self.contains(key),
+        }
+    }
+
+    /// [`Stamp::check`] for the listed file with this key, once per listing.
+    pub fn checked(&self, key: &str, stamp: &Stamp) -> Option<Stamp> {
+        let mut checked = self.checked.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(known) = checked.get(key) {
+            return *known;
+        }
+        let now = self.spelled.get(key).and_then(|path| stamp.check(path, self.found.get(key).copied()));
+        checked.insert(key.to_owned(), now);
+        now
     }
 }
 
@@ -525,6 +617,10 @@ pub fn list(services: &ProjectServices, roots: &[String], out_dir_override: Opti
             } else {
                 if file_type.is_symlink() {
                     listing.links.insert(key.clone());
+                }
+                // the directory entry's own metadata (on Windows, from the listing itself: no file is opened)
+                if let Ok(metadata) = entry.metadata() {
+                    listing.found.insert(key.clone(), Found::of_metadata(&metadata));
                 }
                 listing.spelled.insert(key.clone(), path.clone());
                 listing.files.push((path, key));

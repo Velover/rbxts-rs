@@ -49,7 +49,7 @@ use rbxts_plugin::erased::{ErasedPart, ErasedShared, ErasedState};
 use rbxts_plugin::{BuildKind, ChangeSet, FileIndex, RebuildPlan, StateOrigin};
 use rbxts_project::{LoadOptions, Project, ProjectDiagnostic, ProjectServices, SourceFileCache, nodepath};
 use tsrs_ast::{Diagnostic, SourceFile};
-use tsrs_compiler::Context;
+use tsrs_compiler::{Context, Program};
 use tsrs_core::P;
 use tsrs_diagnostics::Category;
 
@@ -111,11 +111,15 @@ struct CommittedFile {
     /// Per active plugin, the part's encoded bytes (made for the incremental state, or read from it).
     encoded: Option<Vec<Option<Vec<u8>>>>,
     /// Its last transform's diagnostics (warnings: a file with an error never commits), reported again by a
-    /// rebuild that does not transform it, as a clean build would report them (in this process only). As the
-    /// transform reported them, before the build dropped plugin duplicates (`compile::drop_plugin_duplicates`).
+    /// rebuild that does not transform it, as a clean build would report them (made again from the incremental
+    /// state in a new process: [`super::replay`]). As the transform reported them, before the build dropped plugin
+    /// duplicates (`compile::drop_plugin_duplicates`).
     diagnostics: Vec<P<Diagnostic>>,
     /// Which of `diagnostics` plugins reported.
     plugin_diagnostics: Vec<P<Diagnostic>>,
+    /// Its diagnostics are known: false for a file of the incremental state whose diagnostics could not be kept
+    /// there, which is transformed again.
+    replayable: bool,
 }
 
 impl CommittedFile {
@@ -130,13 +134,20 @@ impl CommittedFile {
             encoded: None,
             diagnostics: Vec::new(),
             plugin_diagnostics: Vec::new(),
+            replayable: true,
         }
     }
 
     /// A file of the incremental state. It keeps its parts when every plugin's decodes, its `Cx::env` reads read
     /// the same and it recorded no glob (a glob's matcher is not persisted); otherwise it has none, so it is
     /// transformed again.
-    fn from_disk(facts: FileFacts, record: FileRecord, active: &[ActivePlugin<'_>], env: &EnvSnapshot) -> CommittedFile {
+    /// `file` is the program's file of that path, if any, in which its kept diagnostics are made again.
+    fn from_disk(
+        facts: FileFacts,
+        record: FileRecord,
+        (active, env): (&[ActivePlugin<'_>], &EnvSnapshot),
+        (file, program): (Option<P<SourceFile>>, &Program),
+    ) -> CommittedFile {
         let inputs = FileInputs {
             env: record.env,
             globs: record
@@ -160,6 +171,18 @@ impl CommittedFile {
             Vec::new()
         };
         let encoded = (!parts.is_empty()).then_some(record.parts);
+        let replayable = !record.no_replay && (file.is_some() || record.diagnostics.is_empty());
+        let mut diagnostics = Vec::new();
+        let mut plugin_diagnostics = Vec::new();
+        if let Some(file) = file {
+            for kept in &record.diagnostics {
+                let d = super::replay::from_disk(kept, file, program);
+                if kept.plugin {
+                    plugin_diagnostics.push(d);
+                }
+                diagnostics.push(d);
+            }
+        }
         CommittedFile {
             facts,
             parts,
@@ -168,8 +191,9 @@ impl CommittedFile {
             load_check: None,
             inputs,
             encoded,
-            diagnostics: Vec::new(),
-            plugin_diagnostics: Vec::new(),
+            diagnostics,
+            plugin_diagnostics,
+            replayable,
         }
     }
 }
@@ -200,6 +224,10 @@ struct Committed {
     /// Every output the build left (Luau, declarations and their maps, transformed files, assets): one gone since
     /// makes the project dirty in a build with project references ([`BuildSession::needs_build`]).
     outputs: Vec<String>,
+    /// By path key: each output's size and modification time as the build left it. An output changed or deleted
+    /// since (by hand) has its source transformed again ([`outputs::Listing::intact`]), as a clean build would
+    /// write it; a watcher counts an event on one that leaves it otherwise ([`BuildSession::committed_outputs`]).
+    output_stamps: FxHashMap<String, outputs::Stamp>,
 }
 
 /// One project's builds: the committed state, the parsed files and the last program, across builds.
@@ -357,6 +385,21 @@ impl<'p> BuildSession<'p> {
     /// watcher watches their sources and inputs too.
     pub fn reference_sessions(&self) -> impl Iterator<Item = &BuildSession<'p>> {
         self.references.iter().map(|(_, session)| session)
+    }
+
+    /// Every output the last committed build left (Luau, declarations, transformed files, assets), with its size and
+    /// modification time then: a watcher counts an event that leaves one otherwise (changed or deleted by hand), and
+    /// the next build writes it again.
+    pub fn committed_outputs(&self) -> Vec<(String, outputs::Stamp)> {
+        let (Some(committed), Some(last)) = (&self.committed, &self.last) else { return Vec::new() };
+        committed
+            .outputs
+            .iter()
+            .filter_map(|path| {
+                let stamp = committed.output_stamps.get(&path_key_of(&last.services, path))?;
+                Some((path.clone(), *stamp))
+            })
+            .collect()
     }
 
     /// The output roots of the last loaded project: its outDir (or the override) and its `declarationDir`.
@@ -603,13 +646,17 @@ impl<'p> BuildSession<'p> {
         if touched.is_empty() || self.must_build || self.replay.is_none() {
             return true;
         }
-        // an output the last build left, gone since (deleted by hand: the watcher counts no event in the output roots)
         let Some(committed) = &self.committed else { return true };
-        if committed.outputs.iter().any(|output| std::fs::symlink_metadata(output).is_err()) {
-            return true;
-        }
         let Some(last) = &self.last else { return true };
         let services = &last.services;
+        // an output the last build left, gone or changed since (by hand)
+        let changed = |output: &String| match committed.output_stamps.get(&path_key_of(services, output)) {
+            Some(stamp) => stamp.check(output, outputs::Found::at(output)).is_none(),
+            None => std::fs::symlink_metadata(output).is_err(),
+        };
+        if committed.outputs.iter().any(changed) {
+            return true;
+        }
         let key = |path: &str| path_key_of(services, path);
         let Some((_, files, roots)) = self.watch_roots() else { return true };
         if self.recorded_inputs_changed(Some(touched)) {
@@ -818,6 +865,9 @@ impl<'p> BuildSession<'p> {
                 && disk.plugins == plugin_ids
             {
                 let mut records = disk.records;
+                let program = loaded.project.program;
+                let by_path: FxHashMap<String, P<SourceFile>> =
+                    program.source_files().iter().map(|&f| (f.path().to_string(), f)).collect();
                 committed = Some(Committed {
                     salt: disk.salt,
                     plugin_ids: disk.plugins,
@@ -826,7 +876,8 @@ impl<'p> BuildSession<'p> {
                         .into_iter()
                         .map(|(k, facts)| {
                             let record = records.remove(&k).unwrap_or_default();
-                            let file = CommittedFile::from_disk(facts, record, &active, &env);
+                            let file = by_path.get(&k).copied();
+                            let file = CommittedFile::from_disk(facts, record, (&active, &env), (file, program));
                             (k, file)
                         })
                         .collect(),
@@ -837,6 +888,7 @@ impl<'p> BuildSession<'p> {
                     setup_inputs: Some(disk.setup_inputs),
                     state_files: disk.state_files,
                     outputs: Vec::new(),
+                    output_stamps: disk.outputs.into_iter().collect(),
                 });
             }
         }
@@ -1025,19 +1077,23 @@ impl<'p> BuildSession<'p> {
                     if cached.is_none_or(|c| c.parts.len() != active.len() || c.parts.iter().any(Option::is_none)) {
                         return true;
                     }
-                    // roblox-ts: any source whose output is missing (its Luau, or a declaration output)
+                    // a file of the incremental state whose diagnostics it could not keep
+                    if cached.is_some_and(|c| !c.replayable) {
+                        return true;
+                    }
+                    // roblox-ts: any source whose output is missing (its Luau, or a declaration output); rbxts-rs: or
+                    // not as the last commit left it (changed by hand), which a clean build would write again
                     let name = file.get().file_name();
                     let out_dir_override = self.options.out_dir_override.as_deref();
                     let out = output_path(services, name, out_dir_override);
-                    !listing.contains(&path_key_of(services, &out))
+                    let intact = |path: &str| listing.intact(&path_key_of(services, path), &committed.output_stamps);
+                    !intact(&out)
                         || project.declaration_outputs(name).iter().any(|declaration| {
-                            let declaration = outputs::overridden(services, declaration, out_dir_override);
-                            !listing.contains(&path_key_of(services, &declaration))
+                            !intact(&outputs::overridden(services, declaration, out_dir_override))
                         })
                         || (writes_transformed && {
                             let transformed = services.path_translator.get_output_transformed_path(name);
-                            let transformed = outputs::overridden(services, &transformed, out_dir_override);
-                            !listing.contains(&path_key_of(services, &transformed))
+                            !intact(&outputs::overridden(services, &transformed, out_dir_override))
                         })
                 })
                 .collect()
@@ -1595,6 +1651,8 @@ impl<'p> BuildSession<'p> {
             }
             prepared => prepared.and_then(Result::ok).flatten(),
         };
+        // each output's stamp as this build leaves it (none without writes)
+        let mut output_stamps: FxHashMap<String, outputs::Stamp> = FxHashMap::default();
         if !self.options.no_write {
             // rbxts-rs: in parallel, all or nothing (`write_outputs`), errors in the order of `report.files`; a
             // case-only rename renames the output too (roblox-ts keeps the old name: its bug). The re-rendered files
@@ -1657,6 +1715,22 @@ impl<'p> BuildSession<'p> {
                     Err(message) => report.fatal.push(message),
                 }
             }
+            // what the outputs are now: the committed stamp of one this build left as it was, a new one for one it
+            // wrote (or one no stamp is known of)
+            let written: FxHashSet<String> = summary.written.iter().map(|p| path_key_of(services, p)).collect();
+            output_stamps = project_outputs
+                .files
+                .iter()
+                .filter_map(|path| {
+                    let key = path_key_of(services, path);
+                    let kept = committed.as_ref().and_then(|c| c.output_stamps.get(&key));
+                    let stamp = match kept {
+                        Some(stamp) if !written.contains(&key) => listing.checked(&key, stamp),
+                        _ => None,
+                    };
+                    stamp.or_else(|| outputs::Stamp::read(path)).map(|stamp| (key, stamp))
+                })
+                .collect();
             if success && report.fatal.is_empty() {
                 let artifacts: Vec<String> = queue.artifacts.iter().map(|(_, p, _)| p.clone()).collect();
                 let stale: Vec<String> = committed
@@ -1678,6 +1752,34 @@ impl<'p> BuildSession<'p> {
                         ),
                         None => Default::default(),
                     };
+                    let mut records = records;
+                    // every project file's last transform diagnostics, to be reported again by a new process: as
+                    // the transform reported them, before the plugin duplicates were dropped (the new process drops
+                    // them again over its own build), and which of them plugins reported
+                    for &file in &files {
+                        let key = file.path().to_string();
+                        let diagnostics: Option<(Vec<P<Diagnostic>>, &[P<Diagnostic>])> = match transformed_at.get(&file) {
+                            Some(&t) => {
+                                let known: FxHashSet<P<Diagnostic>> = reported[t].iter().copied().collect();
+                                let mut diagnostics = reported[t].clone();
+                                diagnostics.extend(report.files[t].diagnostics.iter().copied().filter(|d| !known.contains(d)));
+                                Some((diagnostics, &plugin_reported[t]))
+                            }
+                            None => committed
+                                .as_ref()
+                                .and_then(|c| c.files.get(&key))
+                                .map(|c| (c.diagnostics.clone(), c.plugin_diagnostics.as_slice())),
+                        };
+                        let unknown = !transformed_at.contains_key(&file)
+                            && committed.as_ref().and_then(|c| c.files.get(&key)).is_some_and(|c| !c.replayable);
+                        let (kept, no_replay) = diagnostics
+                            .map_or_else(Default::default, |(d, plugin)| super::replay::to_disk(&d, plugin));
+                        if !kept.is_empty() || no_replay || unknown {
+                            let record = records.entry(key).or_default();
+                            record.diagnostics = kept;
+                            record.no_replay = no_replay || unknown;
+                        }
+                    }
                     let state = DiskState {
                         compiler: state::compiler_identity(),
                         plugins: plugin_ids.clone(),
@@ -1687,6 +1789,7 @@ impl<'p> BuildSession<'p> {
                         records,
                         setup_inputs,
                         state_files: state_files.clone(),
+                        outputs: output_stamps.iter().map(|(k, s)| (k.clone(), *s)).collect(),
                     };
                     (path.as_str(), state)
                 });
@@ -1762,7 +1865,18 @@ impl<'p> BuildSession<'p> {
                     let encoded = records.remove(&key).map(|record| record.parts);
                     let diagnostics = diagnostics_by_file.remove(&file).unwrap_or_default();
                     let plugin_diagnostics = plugin_by_file.remove(&file).unwrap_or_default();
-                    CommittedFile { facts, parts, late, ast, load_check, inputs, encoded, diagnostics, plugin_diagnostics }
+                    CommittedFile {
+                        facts,
+                        parts,
+                        late,
+                        ast,
+                        load_check,
+                        inputs,
+                        encoded,
+                        diagnostics,
+                        plugin_diagnostics,
+                        replayable: true,
+                    }
                 }
                 None => match old_files.remove(&key) {
                     Some(mut old) => {
@@ -1854,6 +1968,7 @@ impl<'p> BuildSession<'p> {
             setup_inputs: None,
             state_files,
             outputs: project_outputs.files.clone(),
+            output_stamps,
         };
         summary.changes = changes;
         self.pending.clear();
@@ -2061,6 +2176,7 @@ fn disk_records(
                 late: late_keys[t].iter().map(|(p, k)| (*p, k.clone(), value(k))).collect(),
                 env: inputs[t].env.clone(),
                 globs: globs(&inputs[t]),
+                ..FileRecord::default()
             },
             None => {
                 let Some(cached) = committed.and_then(|c| c.files.get(&key)) else { continue };
@@ -2073,6 +2189,7 @@ fn disk_records(
                         .collect(),
                     env: cached.inputs.env.clone(),
                     globs: globs(&cached.inputs),
+                    ..FileRecord::default()
                 }
             }
         };

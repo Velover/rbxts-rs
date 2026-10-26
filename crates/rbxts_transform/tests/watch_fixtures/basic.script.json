@@ -531,6 +531,40 @@
 					"touch": "src/shared/cfg/unused.json"
 				}
 			]
+		},
+		{
+			"name": "an output edited by hand is written again",
+			"do": [
+				{
+					"write": {
+						"file": "out/shared/d.luau",
+						"text": "-- edited by hand\nreturn nil\n"
+					}
+				}
+			]
+		},
+		{
+			"name": "an asset output edited by hand is written again",
+			"do": [
+				{
+					"write": {
+						"file": "out/shared/asset.lua",
+						"text": "-- edited by hand\n"
+					}
+				}
+			]
+		},
+		{
+			"name": "an output edited by hand to the same size is written again",
+			"do": [
+				{
+					"patch": {
+						"file": "out/shared/b.luau",
+						"find": "return",
+						"replace": "RETURN"
+					}
+				}
+			]
 		}
 	]
 }
