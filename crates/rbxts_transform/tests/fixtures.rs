@@ -68,8 +68,8 @@
 //!   writes as `math.huge`; `expected-ts5/` (not checked) keeps the two files where stock roblox-ts on TypeScript 5
 //!   differs, in the order of the export table. Its tsconfig turns on `allowCommentDirectives` (for
 //!   `@ts-expect-error` in enums).
-//! - `transform_order`: imports, a triple-slash reference, a module augmentation and an ambient module import, whose
-//!   files roblox-ts transforms in another order than the program's; [`transform_order`] also checks that order
+//! - `transform_order`: imports, a triple-slash reference, a module augmentation, an ambient module import and a
+//!   module file augmenting that ambient module, whose files roblox-ts transforms in another order than the program's; [`transform_order`] also checks that order
 //!   (`order.txt`, stock roblox-ts's `getChangedSourceFiles`).
 
 use std::io::Write as _;

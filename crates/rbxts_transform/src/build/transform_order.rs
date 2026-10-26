@@ -14,7 +14,8 @@
 //! checker (`getSymbolAtLocation` of each import's module name gives the declaring files of the module symbol):
 //! - each resolved import and module augmentation (type-only imports, `export … from`, `import()` and `import("…")`
 //!   types included) references the module's file and every file that augments that module;
-//! - an import of an ambient module (`declare module "name"` in a script file) references the files declaring it;
+//! - an import of an ambient module (`declare module "name"` in a script file) references the files declaring it and
+//!   the module files augmenting it (`declare module "name"` in a module file, a name that resolves to no file);
 //! - triple-slash path references (the path as written, resolved against the file's directory) and the file's
 //!   resolved type reference directives;
 //! - every file references the files declaring an ambient module with more than one declaration (other than itself).
@@ -37,8 +38,10 @@ pub fn transform_order(program: &Program) -> Vec<P<SourceFile>> {
     let resolved_modules = program.get_resolved_modules();
     let type_references = program.get_resolved_type_reference_directives();
 
-    // the modules each file augments, and the files declaring each ambient module (one entry per declaration)
+    // the modules each file augments (by the module's file, or by name when the name resolves to no file: an
+    // ambient module's augmentation), and the files declaring each ambient module (one entry per declaration)
     let mut augmenters: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+    let mut ambient_augmenters: FxHashMap<&str, Vec<usize>> = FxHashMap::default();
     let mut ambient: FxHashMap<&str, Vec<usize>> = FxHashMap::default();
     for (i, &file) in files.iter().enumerate() {
         for &name in file.ambient_module_names() {
@@ -53,12 +56,17 @@ pub fn transform_order(program: &Program) -> Vec<P<SourceFile>> {
         if augmentations.is_empty() {
             continue;
         }
+        let mut to_files: FxHashSet<&str> = FxHashSet::default();
         if let Some(resolutions) = resolved_modules.get(file.path()) {
             for (cache_key, resolved) in resolutions {
                 if augmentations.contains(cache_key.name) && resolved.is_resolved() {
                     augmenters.entry(key(resolved.resolved_file_name)).or_default().push(i);
+                    to_files.insert(cache_key.name);
                 }
             }
+        }
+        for &name in augmentations.iter().filter(|name| !to_files.contains(*name)) {
+            ambient_augmenters.entry(name).or_default().push(i);
         }
     }
     // `getAmbientModules()` with more than one declaration: every file references their declaring files
@@ -86,7 +94,12 @@ pub fn transform_order(program: &Program) -> Vec<P<SourceFile>> {
                         referenced.extend(augmenting.iter().copied());
                     }
                 } else if let Some(declaring) = ambient.get(cache_key.name) {
+                    // TS5's `getSymbolAtLocation` gives the merged ambient module: its declarations and the module
+                    // files augmenting it (they don't count in `getAmbientModules`, whose symbol is the unmerged one)
                     referenced.extend(declaring.iter().copied());
+                    if let Some(augmenting) = ambient_augmenters.get(cache_key.name) {
+                        referenced.extend(augmenting.iter().copied());
+                    }
                 }
             }
         }

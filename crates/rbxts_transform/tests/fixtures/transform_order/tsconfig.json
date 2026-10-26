@@ -1,6 +1,7 @@
 // roblox-ts's transform order (`getChangedFilePaths` of a clean build), which rbxts-rs builds in
-// (`build::transform_order`): imports, a triple-slash reference, a module augmentation and an import of an ambient
-// module make it differ from program order. `expected/`: stock roblox-ts's `rbxtsc build` output; `order.txt`: the
+// (`build::transform_order`): imports, a triple-slash reference, a module augmentation, an import of an ambient
+// module and a module file augmenting that ambient module (`a_augamb.ts`: its importer `f.ts` follows it, before
+// `a_plain.ts`) make it differ from program order. `expected/`: stock roblox-ts's `rbxtsc build` output; `order.txt`: the
 // order stock transforms the files in (`getChangedSourceFiles` on a fresh builder), which `tests/fixtures.rs` checks.
 {
 	"include": ["src"],

@@ -5,4 +5,6 @@ src/shared/e.ts
 src/shared/g.ts
 src/shared/c.ts
 src/shared/aug.ts
+src/shared/a_augamb.ts
 src/shared/f.ts
+src/shared/a_plain.ts
