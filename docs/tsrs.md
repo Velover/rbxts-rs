@@ -62,3 +62,18 @@ Re-check these after an update; they are where tsrs's behaviour reaches our outp
   index signature gives an `__index` symbol. There is no `__String`.
 - **Threading:** the checker is not `Send`, and `get_type_checker` takes a non-reentrant guard. Checking needs a
   512 MiB stack. Set only `checkers`: `single_threaded` also makes parsing and binding serial.
+
+## TypeScript 5 behaviour rbxts-rs does not reproduce
+Known, accepted differences from stock roblox-ts on TypeScript 5. None changes a build's correctness.
+
+- **Declaration-emit symlinks.** With `declaration: true`, TypeScript 5's pre-emit diagnostics run the declaration
+  emitter, and when it needs an `import("…")` specifier for a type from another module, its module-specifier code
+  (`getAllModulePathsWorker`) resolves every runtime dependency (`dependencies`, `peerDependencies`,
+  `optionalDependencies`) of the importing file's `package.json` and adds their links to the program's symlink cache.
+  roblox-ts's `guessVirtualPath` reads that cache, so from then on (in transform order) an import of a package's real
+  path, a relative import or a `paths` alias into a sibling package that is also a linked dependency, goes through
+  `node_modules` (`include/node_modules/@scope/pkg`). rbxts-rs's symlink map (`util/symlink_cache.rs`) is built from
+  the program's resolutions only, as TypeScript 5's cache starts out, so such an import keeps the package's own path
+  (`packages/pkg`). Not modelled: rbxts-rs runs no declaration diagnostics or declaration emit, and reproducing when
+  the emitter asks for a specifier would mean running it for every file. To get the `node_modules` path in both, import
+  the package by its name. (Probe: a relative import of a sibling `file:` dependency, with a declaration build.)
