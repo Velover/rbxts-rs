@@ -30,6 +30,10 @@ pub trait SetupBackend {
     /// Reads a file as UTF-8 and records it as a build input: watched, and hashed into every file's version, so
     /// a change (creation and deletion included) re-runs setup and re-transforms everything. `Ok(None)` when it
     /// does not exist (the absence is recorded too).
+    ///
+    /// The plugin's own state file may be read here (Flamework's candidate scan stops at its own
+    /// `flamework.build`), but `Shared` may then depend only on whether it exists, never on its contents
+    /// ([`crate::Plugin::Shared`]): the plugin's own write of it is not a changed input.
     fn read_input(&mut self, path: &Path) -> io::Result<Option<String>>;
     /// An environment variable, recorded as a build input (hashed for incremental builds; the process
     /// environment does not change during watch). [`crate::CxBackend::env`] reads the same snapshot during the
@@ -47,6 +51,10 @@ pub trait SetupBackend {
     fn state_origin(&self) -> StateOrigin;
     /// Reads a file this plugin persists itself ([`crate::FinishCx::write_state_file`]), to reload its state
     /// in a new process. Not a build input: the plugin writes it. `Ok(None)` when it does not exist.
+    ///
+    /// What it holds goes into `State`, never into `Shared` ([`crate::Plugin::Shared`]), and is read when the
+    /// state is [`StateOrigin::Fresh`]. A watch rebuild hands the committed state on in memory
+    /// ([`StateOrigin::Memory`]): the file is not re-read from disk between rebuilds (DESIGN §14).
     fn read_persisted(&mut self, path: &Path) -> io::Result<Option<Vec<u8>>>;
     /// An informational message, shown with `--verbose`.
     fn info(&mut self, message: &str);

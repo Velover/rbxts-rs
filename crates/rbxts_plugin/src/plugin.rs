@@ -28,13 +28,20 @@ pub trait Plugin: Send + Sync + 'static {
     /// Read-only state for the transform: config, env, ids decided up front. Made by `setup`; kept across watch
     /// rebuilds until a build input changes or `rebuild_start` asks for a new one, and only together with the
     /// committed state it was made from: a `Shared` whose build does not commit is dropped (see above).
+    ///
+    /// It never depends on the contents of the plugin's own state file ([`FinishCx::write_state_file`]): what the
+    /// plugin persists belongs in [`Plugin::State`], reloaded with [`SetupCx::read_persisted`] when `setup` starts
+    /// from [`crate::StateOrigin::Fresh`]. `setup` may read that file through [`SetupCx::read_input`] (Flamework's
+    /// candidate scan stops at its own `flamework.build`), but then only whether it exists may matter.
     type Shared: Send + Sync + 'static;
     /// Persistent state across builds (Flamework: the id table, salt, seed, mode), owned by the compiler.
     ///
     /// The compiler hands a working copy of the last committed state to `setup` and `finish` (a clone, so a
     /// failing build leaves the committed state untouched), and commits the working copy with the build's write
     /// phase. A clean build starts from `Default`. To survive across processes, the plugin persists it itself with
-    /// [`FinishCx::write_state_file`] and reloads it in `setup` ([`SetupCx::read_persisted`]).
+    /// [`FinishCx::write_state_file`] and reloads it in `setup` ([`SetupCx::read_persisted`]) when the state is
+    /// [`crate::StateOrigin::Fresh`]. In watch mode the committed state is handed on in memory and never re-read
+    /// from disk between rebuilds (DESIGN §14).
     ///
     /// It outlives the program it was made with, so it holds **no handles** (`P<…>`, `&'static` program or
     /// source text) **and no [`FileIndex`]**: key per-file data by the file's path (`cx.file().path`).
