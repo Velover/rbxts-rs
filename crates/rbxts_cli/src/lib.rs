@@ -215,6 +215,7 @@ impl Cli {
 
     /// Runs with these arguments (without the program name) and returns the exit status: 0 or 1.
     pub fn run_with(self, args: Vec<String>) -> u8 {
+        rbxts_project::use_tsrs_fast_preset();
         let thread =
             std::thread::Builder::new().name("rbxtsc".into()).stack_size(STACK_SIZE).spawn(move || self.main(args));
         match thread.map(|t| t.join()) {

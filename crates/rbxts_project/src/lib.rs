@@ -253,6 +253,24 @@ fn emulate_base_url(parsed: &mut ParsedCommandLine) -> bool {
     true
 }
 
+/// Turns tsrs's fast preset on for this process, unless `TSRS_FAST=0` (for debugging: tsrs's reference checker
+/// settings). Every entry point calls it first, and [`load_cached`] again before it makes a program; only the first
+/// call counts.
+///
+/// rbxts-rs: tsrs 0.20's defaults are TypeScript 7's own (Go's file assignment and checker history, eager type
+/// members); its fast preset holds what were tsrs 0.18's defaults, the settings rbxts-rs was validated with, and on
+/// the real project type checks about 20% faster with about 6% less memory. The parts that apply to rbxts-rs: lazy
+/// type members, the canonical checker history and its extra caches, and the locality assignment of files to
+/// checkers (static, a function of the program). The others never apply: the checker count is always given
+/// (`--checkers`), work stealing and file splitting are only in tsrs's own type-check pass (rbxts-rs checks with
+/// `for_each_checker_group`, which keeps every file on its owner), and lazy declaration parsing and leaf freeing are
+/// only switched on by their callers (rbxts-rs: `LoadOptions::lazy_dts`, which no build sets). It must run before any
+/// checker exists: tsrs reads the preset once, when a checker or a pool first asks for it.
+pub fn use_tsrs_fast_preset() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| tsrs_core::fast::set_enabled(std::env::var("TSRS_FAST").map_or(true, |v| v != "0")));
+}
+
 /// Parses the tsconfig and creates the program. Returns the config diagnostics when the config cannot be used.
 /// `lazy_dts` switches a process-wide tsrs mode on for good: only for one-shot processes that never check a
 /// declaration file.
@@ -390,6 +408,7 @@ pub fn load_cached(
     cache: Option<&Arc<SourceFileCache>>,
     logs: Option<&LoadLogs>,
 ) -> Result<Project, Vec<P<Diagnostic>>> {
+    use_tsrs_fast_preset();
     let cwd = tspath::normalize_path(&opts.cwd);
     let reads = logs.map(|logs| Arc::clone(&logs.program));
     let fs = recording_fs(reads.as_ref());

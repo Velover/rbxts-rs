@@ -253,6 +253,7 @@ fn run(args: &Args) -> i32 {
 }
 
 fn main() {
+    rbxts_project::use_tsrs_fast_preset();
     if std::env::args().nth(1).as_deref() == Some("watch-parity") {
         let status = std::thread::Builder::new()
             .name("watch-parity".into())

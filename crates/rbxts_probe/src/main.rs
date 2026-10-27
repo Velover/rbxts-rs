@@ -108,6 +108,7 @@ fn jsdoc_links(tsconfig: String, filter: &str) -> i32 {
 }
 
 fn main() {
+    rbxts_project::use_tsrs_fast_preset();
     let mut args = std::env::args().skip(1);
     let command = args.next().unwrap_or_default();
     let (mut tsconfig, mut filter) = ("tsconfig.json".to_owned(), "@flamework-experimental".to_owned());
