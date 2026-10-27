@@ -149,13 +149,28 @@ file nothing imports; the hub is imported by 76 files, and its closure (the reve
 | `rbxtsc build`, incremental, hub edit | 958-1042 | | | | | | | | |
 | `rbxtsc build`, clean (no incremental state) | 1511-2142 | | | | | | | | |
 
-- Every build loads the program again over the source cache (only edited files are parsed) and redoes the project
-  setup, as roblox-ts does: module resolution, the Rojo resolvers and the package mapping must see a package
-  installed or upgraded under `node_modules`, which no watcher watches. (Updating the program in place with tsrs
-  `reuse_program` and keeping the setup took a leaf rebuild to about 66 ms, but kept stale module resolutions.)
+- The table above is from before the load reuse and program freeing (2026-10-27, below). Then every build loaded the
+  program again over the source cache (only edited files parsed) and redid the project setup, as roblox-ts does;
   "invalidate" is the file facts of all 886 program files, the closure and the listing of the output directory;
   "write" is the Luau, the asset sync and the clean of stale outputs.
-- Programs are never freed (tsrs's `free_program` is `unsafe`), so the watcher's working set grows by the program
-  and checker of each rebuild: about 4 MiB per leaf edit and 55 MiB per hub edit here. `rbxtsc -w` restarts its process past
-  `RBXTS_WATCH_MEMORY_LIMIT_MB` (default 2048).
+- 2026-10-27, the same 52-rebuild script (s2w `mem.script.json`: 41 leaf and 11 hub edits, no clean builds), main
+  (477f537) and c/watchperf run back to back twice, quiet machine (ms, medians; working set over the run):
+
+  | build | main wall | branch wall | main program / setup / invalidate | branch program / setup / invalidate |
+  | --- | --- | --- | --- | --- |
+  | leaf edit | 157-159 | 60-64 | 59-62 / 38 / 40 | 16 / 0 / 31-34 |
+  | hub edit | 482-503 | 395-433 | 60-62 / 38 / 38-40 | 16-17 / 0 / 33-34 |
+  | working set, first / peak / last (MiB) | 242 / 1527 / 1527 | 248-250 / 340-347 / 242-324 | | |
+
+- A watch rebuild reuses the last load when every read it made reads the same now (`ReadLog::recheck`: each parent
+  directory listed once, in parallel, against the recorded files, texts, listings, links and the project setup's
+  own reads, about 5-10 ms here); the program is then made from the last one with tsrs `reuse_program` (the edited
+  files parsed again) and the setup is kept ("program" is the recheck and the reuse). Anything read differently (a
+  package installed or upgraded, a Rojo file in a package, a package.json changed) loads again, as before. 51 of the
+  52 rebuilds reused the load. "invalidate" lists the output directory and walks the assets with each directory
+  listed ahead in parallel, and checks the Luau outputs' stamps in parallel.
+- Each rebuild frees the program it replaced (tsrs `free_program`, programs loaded with checker regions), so the
+  working set stays near the first build's instead of growing by the program and checker of each rebuild (main:
+  about 4 MiB per leaf edit and 55 MiB per hub edit). `rbxtsc -w` still restarts its process past
+  `RBXTS_WATCH_MEMORY_LIMIT_MB` (default 2048), as a safety net that this run never comes near.
 - Stock roblox-ts takes about 29 s (quiet machine) for any build of this project.
