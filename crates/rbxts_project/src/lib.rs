@@ -7,6 +7,7 @@ pub mod graph;
 pub mod nodepath;
 pub mod packages;
 pub mod path_translator;
+pub mod read_check;
 pub mod read_log;
 pub mod rojo;
 pub mod setup;
@@ -73,7 +74,17 @@ pub struct Project {
     /// The tsconfig has no `types`, and the program has TypeScript 5's automatic type directives (`"types": ["*"]`).
     pub automatic_types: bool,
     module_resolver: OnceLock<ModuleResolver>,
+    /// The file system the program reads through (each program gets its own caching layer over it).
+    fs: Arc<dyn FS>,
+    /// The parsed files kept across loads, when the program was loaded with them ([`load_cached`]).
+    source_cache: Option<Arc<SourceFileCache>>,
+    /// The file-loader data the program shares with the programs [`Project::reuse`] made from it and the one it was
+    /// made from: freed with the last of them ([`Project::free`]).
+    lineage: Arc<Lineage>,
 }
+
+/// What the programs of one load and those reused from it share (`reuse_program` hands the loader's data on).
+struct Lineage(tsrs_compiler::SharedProgramData);
 
 struct ConfigHost {
     fs: Arc<dyn FS>,
@@ -168,6 +179,9 @@ pub fn load_cached(
         reads,
         automatic_types,
         module_resolver: OnceLock::new(),
+        lineage: Arc::new(Lineage(tsrs_compiler::shared_program_data(program))),
+        fs,
+        source_cache: cache.cloned(),
     })
 }
 
@@ -245,9 +259,66 @@ impl Project {
     /// caller copies the diagnostics it keeps: `DiagnosticExt::copy_deep`). No other program shares its data (a program
     /// from `load` never does).
     pub unsafe fn free(self) {
-        // SAFETY: the caller's contract, which includes `free_unshared_program`'s: `load_cached` made the program with
-        // `new_program`, and nothing else shares its processed files.
-        unsafe { tsrs_compiler::free_unshared_program(self.program) };
+        // SAFETY: the caller's contract, which includes `free_program`'s.
+        unsafe { tsrs_compiler::free_program(self.program) };
+        // the last program of its lineage: nothing else shares the loader's data
+        if let Ok(lineage) = Arc::try_unwrap(self.lineage) {
+            // SAFETY: every other program of the lineage was freed (it held a reference to `lineage` until then), and
+            // the caller's contract covers this one.
+            unsafe { lineage.0.free() };
+        }
+    }
+
+    /// A program for edited files, made from this one with tsrs's `reuse_program` (the path tsrs's own watcher takes):
+    /// each file of `changed` (file names) is parsed again and replaces its old version; every other file, the module
+    /// resolution and the options are this program's. With no file changed, a program over the same files, with
+    /// checkers of its own. `None` when tsrs cannot reuse the program for a file (its imports, references or module
+    /// augmentations changed, or it is not in the program): load the project again.
+    ///
+    /// The caller has made sure that nothing the load read reads differently now ([`ReadLog::recheck`]): the module
+    /// resolution kept is then the one a new load would make. The parsed files go to this project's source cache.
+    pub fn reuse(&self, changed: &[String]) -> Option<Project> {
+        let host = new_host(&self.cwd, &self.fs, self.source_cache.as_ref());
+        let case_sensitive = self.fs.use_case_sensitive_file_names();
+        let start = Instant::now();
+        // with nothing changed, the program is made again over one of its own files, unchanged
+        let unchanged = self.program.source_files().iter().find(|f| !f.get().file_name().starts_with("bundled:"));
+        let names: Vec<String> = if changed.is_empty() {
+            vec![unchanged?.get().file_name().to_owned()]
+        } else {
+            changed.to_vec()
+        };
+        let mut program = self.program;
+        for file_name in &names {
+            let path = tspath::to_path(file_name, &self.cwd, case_sensitive);
+            let reused = program
+                .get_source_file_by_path(&path)
+                .and_then(|_| {
+                    let (reused, _, ok) = program.reuse_program(&path, Arc::clone(&host), None, None);
+                    reused.filter(|_| ok)
+                });
+            if !std::ptr::eq(program, self.program) {
+                // SAFETY: a program made by an earlier turn of this loop, which nothing refers to: no checker of it was
+                // made, and the one reused from it (if any) shares only the lineage's data, which stays.
+                unsafe { tsrs_compiler::free_program(program) };
+            }
+            program = reused?;
+        }
+        // the edited files are bound before any checker exists (`LoadOptions::regions`)
+        program.bind_source_files();
+        Some(Project {
+            config: self.config,
+            program,
+            checkers: self.checkers,
+            config_time: Duration::ZERO,
+            program_time: start.elapsed(),
+            cwd: self.cwd.clone(),
+            reads: self.reads.clone(),
+            module_resolver: OnceLock::new(),
+            fs: Arc::clone(&self.fs),
+            source_cache: self.source_cache.clone(),
+            lineage: Arc::clone(&self.lineage),
+        })
     }
 
     /// What [`IncludeMatcher`] checks, for this project's tsconfig.
@@ -382,6 +453,10 @@ impl Project {
     /// `tsconfig_path` is used as spelled when absolute (roblox-ts's CLI passes it through `path.resolve`), else
     /// resolved against the current directory; the spelling carries into the project's paths.
     pub fn setup(&self, tsconfig_path: &str, overrides: &ProjectOptionLayer) -> Result<ProjectSetup, ProjectError> {
+        read_log::recording(self.reads.as_ref(), || self.setup_recorded(tsconfig_path, overrides))
+    }
+
+    fn setup_recorded(&self, tsconfig_path: &str, overrides: &ProjectOptionLayer) -> Result<ProjectSetup, ProjectError> {
         let tsconfig_path = if nodepath::is_absolute(tsconfig_path) {
             tsconfig_path.to_owned()
         } else {
@@ -393,12 +468,16 @@ impl Project {
         let reads = self.reads.as_deref();
         let mut data = setup::create_project_data_recorded(&tsconfig_path, options, reads)?;
         data.warnings.splice(0..0, rbxts.warnings);
-        self.setup_with_data(data)
+        self.setup_with_data_recorded(data)
     }
 
     /// [`Project::setup`] from project data made already: by [`graph::ProjectGraph`] for a project of a build with
     /// project references, whose options and Rojo file depend on the graph.
     pub fn setup_with_data(&self, data: ProjectData) -> Result<ProjectSetup, ProjectError> {
+        read_log::recording(self.reads.as_ref(), || self.setup_with_data_recorded(data))
+    }
+
+    fn setup_with_data_recorded(&self, data: ProjectData) -> Result<ProjectSetup, ProjectError> {
         let reads = self.reads.as_deref();
         let tsconfig_path = data.tsconfig_path.clone();
         let raw_options = self.program.options();

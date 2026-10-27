@@ -242,6 +242,8 @@ pub struct StepResult {
     pub all: bool,
     /// Files the watcher parsed (source cache misses).
     pub parsed: usize,
+    /// The watcher's build reused the last load (`BuildSummary::reused_load`).
+    pub reused: bool,
     /// A build with project references: the projects the watcher's build skipped (not dirty).
     pub skipped: usize,
     /// The kind of the watcher's build.
@@ -543,6 +545,7 @@ pub fn run(options: &ParityOptions<'_>, script: &Script) -> Result<Vec<StepResul
             transformed: report.files.len(),
             all: summary.all,
             parsed: summary.parsed,
+            reused: summary.reused_load,
             skipped: report.projects.iter().filter(|p| p.skipped).count(),
             kind: summary.kind,
             timings: report.timings,

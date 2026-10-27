@@ -40,6 +40,54 @@ pub(crate) fn map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> 
         .collect()
 }
 
+/// Directory listings made ahead of a walk, in parallel ([`prefetch`]): the walk takes each listing from here
+/// ([`Listings::take`]), the same entries in the system's order as its own `read_dir` would give, and lists any
+/// directory not here itself.
+#[derive(Default)]
+pub(crate) struct Listings(Mutex<rustc_hash::FxHashMap<String, Vec<std::fs::DirEntry>>>);
+
+impl Listings {
+    /// The entries of `dir` (spelled as the walk spells it), once; `None` when it was not listed ahead (or could not
+    /// be: the walk's own `read_dir` then meets the error).
+    pub(crate) fn take(&self, dir: &str) -> Option<Vec<std::fs::DirEntry>> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(dir)
+    }
+
+    /// `dir`'s entries: listed ahead, else listed now. `None` when it cannot be listed.
+    pub(crate) fn entries(&self, dir: &str) -> Option<Vec<std::fs::DirEntry>> {
+        self.take(dir).or_else(|| std::fs::read_dir(dir).ok().map(|entries| entries.flatten().collect()))
+    }
+}
+
+/// Lists the directories of a walk ahead, in parallel ([`map`]), level by level from `roots`: `enter` gives, for an
+/// entry of a listed directory (spelled as the walk spells it), the path of a subdirectory the walk will enter, if it
+/// will. A directory listing costs a file system round trip (and a virus scanner's look on Windows): a walk of a few
+/// hundred directories spends most of its time waiting on them one at a time.
+pub(crate) fn prefetch(roots: &[String], enter: impl Fn(&str, &std::fs::DirEntry) -> Option<String> + Sync) -> Listings {
+    let listings = Listings::default();
+    let mut level: Vec<String> = roots.to_vec();
+    while !level.is_empty() {
+        let listed = map(&level, |dir| {
+            let entries: Option<Vec<std::fs::DirEntry>> =
+                std::fs::read_dir(dir).ok().map(|entries| entries.flatten().collect());
+            let children: Vec<String> =
+                entries.iter().flatten().filter_map(|entry| enter(dir, entry)).collect();
+            (entries, children)
+        });
+        let mut next = Vec::new();
+        let mut map = listings.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (dir, (entries, children)) in level.into_iter().zip(listed) {
+            if let Some(entries) = entries {
+                map.insert(dir, entries);
+            }
+            next.extend(children);
+        }
+        drop(map);
+        level = next;
+    }
+    listings
+}
+
 #[cfg(test)]
 mod tests {
     use super::map;

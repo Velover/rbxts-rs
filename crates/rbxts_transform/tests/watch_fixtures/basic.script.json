@@ -413,6 +413,63 @@
 			]
 		},
 		{
+			"name": "load reuse: the package's types edited in place (no event, no save)",
+			"do": [
+				{"write":{"file":"node_modules/@rbxts/vpkg/lib/index.d.ts","text":"export declare const v: Array<number>;\n"}}
+			]
+		},
+		{
+			"name": "load reuse: a Rojo project file appears in the package (no event)",
+			"do": [
+				{"write":{"file":"node_modules/@rbxts/vpkg/default.project.json","text":"{ \"name\": \"vpkg\", \"tree\": { \"$path\": \"lib\" } }\n"}}
+			]
+		},
+		{
+			"name": "load reuse: an unrelated edit after it (the load is reused)",
+			"do": [
+				{"append":{"file":"src/shared/usePkg.ts","text":"// again\n"}}
+			]
+		},
+		{
+			"name": "load reuse: the package's Rojo project file edited (no event)",
+			"do": [
+				{"write":{"file":"node_modules/@rbxts/vpkg/default.project.json","text":"{ \"name\": \"vpkg\", \"tree\": { \"$className\": \"Folder\", \"lib\": { \"$path\": \"lib\" } } }\n"}}
+			]
+		},
+		{
+			"name": "load reuse: and gone (no event)",
+			"do": [
+				{"delete":"node_modules/@rbxts/vpkg/default.project.json"}
+			]
+		},
+		{
+			"name": "load reuse: another package installed (no event)",
+			"do": [
+				{"write":{"file":"node_modules/@rbxts/wpkg/package.json","text":"{ \"name\": \"@rbxts/wpkg\", \"version\": \"1.0.0\", \"main\": \"init.lua\", \"types\": \"index.d.ts\" }\n"}},
+				{"write":{"file":"node_modules/@rbxts/wpkg/index.d.ts","text":"export declare const w: number;\n"}},
+				{"write":{"file":"node_modules/@rbxts/wpkg/init.lua","text":"return { w = 1 }\n"}}
+			]
+		},
+		{
+			"name": "load reuse: its package.json main changed (no event, no save)",
+			"do": [
+				{"write":{"file":"node_modules/@rbxts/wpkg/lib/init.lua","text":"return { w = 2 }\n"}},
+				{"write":{"file":"node_modules/@rbxts/wpkg/package.json","text":"{ \"name\": \"@rbxts/wpkg\", \"version\": \"1.0.1\", \"main\": \"lib/init.lua\", \"types\": \"index.d.ts\" }\n"}}
+			]
+		},
+		{
+			"name": "load reuse: an import of it",
+			"do": [
+				{"write":{"file":"src/shared/useW.ts","text":"import { w } from \"@rbxts/wpkg\";\n\nexport const ww = w + 1;\n"}}
+			]
+		},
+		{
+			"name": "load reuse: its main moved back (no event, no save): the requires follow",
+			"do": [
+				{"write":{"file":"node_modules/@rbxts/wpkg/package.json","text":"{ \"name\": \"@rbxts/wpkg\", \"version\": \"1.0.2\", \"main\": \"init.lua\", \"types\": \"index.d.ts\" }\n"}}
+			]
+		},
+		{
 			"name": "K7: an asset beside a source, both emitting to one output (nothing written)",
 			"expect": "error",
 			"do": [

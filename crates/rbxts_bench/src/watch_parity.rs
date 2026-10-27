@@ -122,7 +122,7 @@ pub fn main(args: Vec<String>) -> i32 {
     for (index, result) in results.iter().enumerate() {
         let verdict = if result.problems.is_empty() { "PASS" } else { "FAIL" };
         out.push_str(&format!(
-            "{verdict} {index:>2} {:<44} {:<5} {:<13} transformed {:>4}{} watch {:>8.1} ms  clean {:>8.1} ms  parsed {}\n",
+            "{verdict} {index:>2} {:<44} {:<5} {:<13} transformed {:>4}{} watch {:>8.1} ms  clean {:>8.1} ms  parsed {}{}\n",
             result.name,
             match result.kind {
                 Some(rbxts_plugin::BuildKind::Clean) => "clean".to_owned(),
@@ -136,6 +136,7 @@ pub fn main(args: Vec<String>) -> i32 {
             result.watch_ms,
             result.clean_ms,
             result.parsed,
+            if result.reused { " (load reused)" } else { "" },
         ));
         let t = &result.timings;
         let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;

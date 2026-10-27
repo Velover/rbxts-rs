@@ -2,11 +2,15 @@
 //! (watch mode, the parity harness).
 //!
 //! A build is `build(kind, changes)`:
-//! 1. **Load the program** and the project setup, every build, as roblox-ts does: module resolution, the Rojo
+//! 1. **Load the program** and the project setup, as roblox-ts does every build: module resolution, the Rojo
 //!    resolvers and the package mapping are redone (a package installed or upgraded under `node_modules`, which no
 //!    watcher sees, is picked up). Unchanged files come from the session's [`SourceFileCache`] (the same
-//!    `SourceFile` objects), so only edited files are parsed again. (tsrs's `reuse_program` would keep the old
-//!    module resolution: an import that failed to resolve stays unresolved after its package is installed.)
+//!    `SourceFile` objects), so only edited files are parsed again. A watch rebuild reuses the last load instead when
+//!    every read it made (files, texts, listings, links, the project setup's included) reads the same now
+//!    ([`ReadLog::recheck`](rbxts_project::ReadLog::recheck)): the program is made again from the last one with the
+//!    edited files parsed again (tsrs's `reuse_program`), and the setup stands. Exact: a load is a function of
+//!    what it read. (`reuse_program` alone, without the check, kept stale module resolutions: an import that
+//!    failed to resolve stayed unresolved after its package was installed.)
 //! 2. **Decide the files to transform** ([`super::graph`]): every project file in a clean build, after a change of
 //!    the salt (compiler, options, configs, Rojo files, plugin list), after a plugin's `setup` re-ran or read a
 //!    changed build input, after a plugin state file the last commit left went missing or changed (its plugin
@@ -47,6 +51,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rbxts_luau::{LateStrings, Stmt};
 use rbxts_plugin::erased::{ErasedPart, ErasedShared, ErasedState};
 use rbxts_plugin::{BuildKind, ChangeSet, FileIndex, RebuildPlan, StateOrigin};
+use rbxts_project::read_check::{Recheck, Settled};
 use rbxts_project::{LoadOptions, Project, ProjectDiagnostic, ProjectServices, SourceFileCache, nodepath};
 use tsrs_ast::{Diagnostic, SourceFile};
 use tsrs_compiler::{Context, Program};
@@ -92,6 +97,8 @@ struct Loaded {
     base_salt: String,
     /// Text versions by file object, across every program of the session.
     versions: FxHashMap<P<SourceFile>, Version>,
+    /// What the checks of this load's reads found settled (`read_check`), kept across the rebuilds that reuse it.
+    settled: Settled,
 }
 
 /// A committed file: its facts and, for project files, what the plugins and the late-string re-render need.
@@ -312,6 +319,9 @@ pub struct BuildSummary {
     pub all: bool,
     /// Files parsed for this build (source cache misses).
     pub parsed: usize,
+    /// The build reused the last load (`reuse`): nothing it read read differently, and the program was made again
+    /// from the last one with the edited files parsed again.
+    pub reused_load: bool,
     /// Project files re-rendered because their late strings changed value.
     pub rerendered: Vec<String>,
     /// Outputs written (Luau, assets, artifacts, state files) and deleted.
@@ -779,7 +789,60 @@ impl<'p> BuildSession<'p> {
             config_paths,
             base_salt,
             versions,
+            settled: Settled::default(),
         })
+    }
+
+    /// A watch rebuild's load when nothing the last load read reads differently now ([`ReadLog::recheck`]): its
+    /// tsconfig parse, module resolution and project setup stand, and the program is made again from the last one
+    /// with the edited files parsed again (`Project::reuse`, tsrs's `reuse_program`). `Err` gives `last` back when the
+    /// check or the reuse fails (a file's imports changed): the project is loaded again then.
+    ///
+    /// Exact: a load is a function of what it read (the log has every answer it got, the project setup's reads
+    /// included), so a load with every answer the same, and the same files but the edited ones, is this one. Not in a
+    /// build with project references (a project's setup there depends on the graph), and not outside watch mode (one
+    /// build per session).
+    fn reuse(&mut self, report: &mut CompileReport, mut last: Loaded) -> Result<(Loaded, Project), Loaded> {
+        let Some(reads) = self.reads.clone().filter(|_| self.watch && self.graph.is_none()) else { return Err(last) };
+        let start = Instant::now();
+        let program: Vec<(String, Option<(Option<std::time::SystemTime>, i64)>)> = last
+            .project
+            .program
+            .source_files()
+            .iter()
+            .filter(|f| !f.get().file_name().starts_with("bundled:"))
+            .map(|f| (f.get().file_name().to_owned(), self.cache.stamp(f.path())))
+            .collect();
+        let case_sensitive = last.services.use_case_sensitive_file_names;
+        let changed = match reads.recheck(&program, case_sensitive, &mut last.settled) {
+            Recheck::Same { changed } => changed,
+            Recheck::Different(why) => {
+                if std::env::var_os("RBXTS_WATCH_DEBUG").is_some() {
+                    eprintln!("[rbxtsc watch] loading again: {why}");
+                }
+                return Err(last);
+            }
+        };
+        let checked = start.elapsed();
+        let Some(project) = last.project.reuse(&changed) else { return Err(last) };
+        report.timings.config = checked;
+        report.timings.program = project.program_time;
+        report.timings.setup = std::time::Duration::ZERO;
+        let Loaded { project: replaced, mut services, setup_diagnostics, setup_fatal, config_paths, base_salt, versions, settled } =
+            last;
+        // a fresh package.json cache: the transform's lookups read the disk again, as a new load's do
+        services.packages = Default::default();
+        let loaded = Loaded {
+            project,
+            services,
+            setup_diagnostics,
+            setup_fatal,
+            config_paths,
+            base_salt,
+            versions,
+            settled,
+        };
+        Ok((loaded, replaced))
     }
 
     /// The salt's text before the plugin list: what roblox-ts salts every file version with (compiler version,
@@ -834,14 +897,29 @@ impl<'p> BuildSession<'p> {
         let parses_before = self.cache.parses();
 
         // 1. load the program, over the source cache
-        let versions = match last {
-            Some(Loaded { project, versions, .. }) => {
+        // a watch rebuild reuses the last load when everything it read reads the same (`reuse`)
+        let last = match last.map(|last| self.reuse(&mut report, last)) {
+            Some(Ok((loaded, project))) => {
                 replaced.push(project);
-                versions
+                summary.reused_load = true;
+                Ok(loaded)
             }
-            None => FxHashMap::default(),
+            Some(Err(last)) => Err(Some(last)),
+            None => Err(None),
         };
-        let loaded = self.load(&mut report, versions);
+        let loaded = match last {
+            Ok(loaded) => Some(loaded),
+            Err(last) => {
+                let versions = match last {
+                    Some(Loaded { project, versions, .. }) => {
+                        replaced.push(project);
+                        versions
+                    }
+                    None => FxHashMap::default(),
+                };
+                self.load(&mut report, versions)
+            }
+        };
         let Some(loaded) = loaded else {
             summary.parsed = self.cache.parses() - parses_before;
             return (report, summary, committed, None);
@@ -1107,6 +1185,14 @@ impl<'p> BuildSession<'p> {
             files.clone()
         } else {
             let committed = committed.as_ref().expect("a committed build");
+            // the Luau outputs' checks first, in parallel (one written by the last build has its bytes read)
+            let out_dir_override = self.options.out_dir_override.as_deref();
+            let keys: Vec<String> = files
+                .iter()
+                .filter(|f| !affected.contains(f.path().as_str()))
+                .map(|f| path_key_of(services, &output_path(services, f.get().file_name(), out_dir_override)))
+                .collect();
+            listing.check_all(&keys, &committed.output_stamps);
             files
                 .iter()
                 .copied()

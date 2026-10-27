@@ -14,7 +14,7 @@ use tsrs_tsoptions::{CompilerOptionsValue, parse_config_file_text_to_json};
 
 use crate::nodepath;
 use crate::path_translator::PathTranslator;
-use crate::read_log::{ReadLog, Seen};
+use crate::read_log::{ReadLog, Seen, recorded, recording};
 use crate::rojo::{NetworkType, RbxPath, RojoError, RojoResolver, js_object_keys};
 
 const NODE_MODULES: &str = "node_modules";
@@ -244,7 +244,7 @@ pub fn find_tsconfig_path(project: &str, cwd: &str) -> Result<String, ProjectErr
 
 /// The tsconfig's raw JSON (comments and trailing commas allowed), as TypeScript's `readConfigFile` reads it.
 pub fn read_config_json(config_path: &str) -> Result<Value, ProjectError> {
-    let text = fs::read_to_string(config_path)
+    let text = recorded::read_to_string(config_path)
         .map_err(|_| ProjectError::new(format!("Cannot read file '{}'.", tspath::normalize_slashes(config_path))))?;
     let normalized = tspath::normalize_path(config_path);
     let path = tspath::to_path(&normalized, "", false);
@@ -292,7 +292,9 @@ impl OsResolutionHost {
 
 impl tsrs_module::ResolutionHost for OsResolutionHost {
     fn fs(&self) -> &dyn tsrs_vfs::FS {
-        tsrs_vfs::osvfs::fs()
+        // what the resolution reads goes to this thread's recording, if any
+        static FS: crate::read_log::ThreadRecordingFs = crate::read_log::ThreadRecordingFs;
+        &FS
     }
 
     fn get_current_directory(&self) -> &str {
@@ -308,7 +310,7 @@ fn get_extended_config_paths(config_path: &str, extends: Option<&Value>) -> Resu
         Some(Value::Array(items)) => items.iter().filter_map(Value::as_str).collect(),
         _ => Vec::new(),
     };
-    let file_exists = |p: &str| fs::metadata(p).is_ok_and(|m| m.is_file());
+    let file_exists = |p: &str| recorded::metadata(p).is_ok_and(|m| m.is_file());
     let mut paths = Vec::new();
     for value in values {
         let normalized = tspath::normalize_slashes(value);
@@ -609,7 +611,7 @@ pub fn validate_compiler_options(opts: &CompilerOptions, project_path: &str) -> 
         let roots = opts.type_roots.as_ref().unwrap_or(&default_roots);
         let found = roots.iter().any(|root| {
             let types_path = nodepath::resolve(&[project_path, root, types_location]);
-            Path::new(&types_path).exists() || Path::new(&format!("{types_path}.d.ts")).exists()
+            recorded::exists(&types_path) || recorded::exists(format!("{types_path}.d.ts"))
         });
         if !found {
             errors.push(format!(
@@ -783,10 +785,8 @@ pub fn create_node_modules_path_mapping_recorded(
         if !exists {
             continue;
         }
-        let entries = fs::read_dir(scope_path)
+        let mut names: Vec<String> = recorded::read_dir_names(scope_path)
             .map_err(|e| ProjectError::new(format!("cannot read directory \"{scope_path}\": {e}")))?;
-        let mut names: Vec<String> =
-            entries.filter_map(Result::ok).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
         if cfg!(not(windows)) {
             names.sort();
         }
@@ -956,22 +956,28 @@ impl ProjectSetup {
         let type_roots = opts.type_roots.clone().unwrap_or_default();
         // The project's resolver, the package resolvers and the package mapping each walk directories on their own
         // (the first two can cover all of node_modules/@rbxts), so they are built at the same time.
+        // each thread records into this thread's recording, if any
+        let log = crate::read_log::current();
+        let log = log.as_ref();
         let (rojo_resolver, pkg_rojo_resolvers, node_modules_path_mapping) = std::thread::scope(|scope| {
             let pkg = scope.spawn(|| {
                 type_roots
                     .iter()
-                    .map(|root| scope.spawn(move || RojoResolver::synthetic(root)))
+                    .map(|root| scope.spawn(move || recording(log, || RojoResolver::synthetic(root))))
                     .collect::<Vec<_>>()
                     .into_iter()
                     .map(|h| h.join().expect("package resolver thread"))
                     .collect::<Result<Vec<_>, _>>()
             });
-            let mapping = scope
-                .spawn(|| create_node_modules_path_mapping_recorded(&type_roots, use_case_sensitive_file_names, reads));
+            let mapping = scope.spawn(|| {
+                recording(log, || {
+                    create_node_modules_path_mapping_recorded(&type_roots, use_case_sensitive_file_names, reads)
+                })
+            });
             let main = match &data.rojo_config_path {
                 Some(path) => {
                     // getRojoProject reads the file before the resolver does, so a missing file is an error here
-                    fs::read(path)
+                    recorded::read(path)
                         .map_err(|e| rojo_error(path, RojoError(e.to_string())))
                         .and_then(|_| RojoResolver::from_path(path).map_err(|e| rojo_error(path, e)))
                 }

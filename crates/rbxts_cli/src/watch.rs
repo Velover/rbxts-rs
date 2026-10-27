@@ -1160,11 +1160,12 @@ impl<'a> Scan<'a> {
         if whole && metadata.modified().is_ok_and(|t| t >= self.since) && !self.own_dirs.contains(&k) {
             stale.push(text.clone());
         }
-        // what the load read here: a file or directory there or not, as it was
+        // what the load read here: a file or directory there or not, as it was (a directory the build made for its
+        // own outputs since, such as the include folder the load's Rojo setup found missing, is its own write)
         for (path, seen) in self.reads.get(&k).into_iter().flatten() {
             let metadata = std::fs::metadata(path);
             let (is_file, is_dir) = metadata.map_or((false, false), |m| (m.is_file(), m.is_dir()));
-            if seen.contradicted(is_file, is_dir) {
+            if seen.contradicted(is_file, is_dir) && !(is_dir && holds_only_own(Path::new(path), self.own)) {
                 stale.push((*path).to_owned());
             }
         }

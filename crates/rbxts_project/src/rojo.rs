@@ -6,11 +6,12 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::{Map, Value};
 
 use crate::nodepath;
+use crate::read_log::recorded;
 
 const LUA_EXT: &str = ".lua";
 const LUAU_EXT: &str = ".luau";
@@ -241,7 +242,7 @@ impl RojoResolver {
     pub fn find_rojo_config_file_path(project_path: &str) -> Result<FoundRojoConfig, RojoError> {
         let mut warnings = Vec::new();
         let default_path = nodepath::join(&[project_path, ROJO_DEFAULT_NAME]);
-        if Path::new(&default_path).exists() {
+        if recorded::exists(&default_path) {
             return Ok(FoundRojoConfig { path: Some(default_path), warnings });
         }
         let mut candidates = Vec::new();
@@ -405,11 +406,24 @@ fn read_dir_names(dir: &str) -> Result<Vec<String>, RojoError> {
 }
 
 fn read_dir_entries(dir: &str) -> Result<Vec<(String, fs::DirEntry)>, RojoError> {
-    let read = fs::read_dir(dir).map_err(|e| io_error("cannot read directory", dir, &e))?;
+    let read = fs::read_dir(dir).map_err(|e| {
+        recorded::not_listed(dir);
+        io_error("cannot read directory", dir, &e)
+    })?;
     let mut entries = Vec::new();
     for entry in read {
         let entry = entry.map_err(|e| io_error("cannot read directory", dir, &e))?;
         entries.push((entry.file_name().to_string_lossy().into_owned(), entry));
+    }
+    // a watch rebuild compares the entries and their kinds again (`read_check`)
+    if crate::read_log::current().is_some() {
+        recorded::listed(
+            dir,
+            entries.iter().map(|(name, entry)| {
+                let (kind, link) = recorded::entry_kind(entry);
+                (name.clone(), kind, link)
+            }),
+        );
     }
     if cfg!(not(windows)) {
         entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
@@ -467,11 +481,11 @@ impl Builder {
 
     fn parse_config(&mut self, rojo_config_file_path: &str, do_not_push: bool) -> Result<(), RojoError> {
         self.config_files.push(rojo_config_file_path.to_owned());
-        if !Path::new(rojo_config_file_path).exists() {
+        if !recorded::exists(rojo_config_file_path) {
             self.warnings.push(format!("RojoResolver: Path does not exist \"{rojo_config_file_path}\""));
             return Ok(());
         }
-        let text = fs::read_to_string(rojo_config_file_path)
+        let text = recorded::read_to_string(rojo_config_file_path)
             .map_err(|e| io_error("cannot read", rojo_config_file_path, &e))?;
         let config: Value = serde_json::from_str(&text)
             .map_err(|e| RojoError(format!("invalid JSON in \"{rojo_config_file_path}\": {e}")))?;
@@ -561,7 +575,7 @@ impl Builder {
         let item_path = convert_to_luau(item_path);
         // a project file contributes its tree at the mount point, without adding its project name
         if is_rojo_project_file_name(nodepath::basename(&item_path)) {
-            if Path::new(&item_path).exists() {
+            if recorded::exists(&item_path) {
                 self.parse_config(&item_path, true)?;
             } else {
                 // its creation changes the resolver
@@ -574,7 +588,7 @@ impl Builder {
             self.file_path_to_rbx_path.insert(item_path.clone(), self.rbx_path.clone());
             return Ok(());
         }
-        let is_directory = fs::metadata(&item_path).is_ok_and(|m| m.is_dir());
+        let is_directory = recorded::metadata(&item_path).is_ok_and(|m| m.is_dir());
         if is_directory && read_dir_names(&item_path)?.iter().any(|n| n == ROJO_DEFAULT_NAME) {
             return self.parse_config(&nodepath::join(&[&item_path, ROJO_DEFAULT_NAME]), true);
         }

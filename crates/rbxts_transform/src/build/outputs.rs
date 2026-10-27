@@ -195,6 +195,23 @@ pub fn get_project_outputs(inputs: &OutputInputs<'_>) -> Result<ProjectOutputs, 
         root_dirs.iter().map(|d| (d.clone(), std::fs::metadata(d).is_ok_and(|m| m.is_dir()))).collect();
     let mut assets = Vec::new();
     let mut declaration_assets = Vec::new();
+    // the directories the walk enters, listed ahead in parallel (the walk below visits them in its own order)
+    let skipped = |path: &str| {
+        let name = nodepath::basename(path);
+        let key = path_key(services, path);
+        name == "node_modules" || name == ".git" || excluded.iter().any(|root| is_descendant_key(&key, root))
+    };
+    let roots: Vec<String> = stack.iter().filter(|(d, is_dir)| *is_dir && !skipped(d)).map(|(d, _)| d.clone()).collect();
+    let listings = super::parallel::prefetch(&roots, |dir, entry| {
+        let file_type = entry.file_type().ok()?;
+        let is_dir = if file_type.is_symlink() {
+            std::fs::metadata(entry.path()).is_ok_and(|m| m.is_dir())
+        } else {
+            file_type.is_dir()
+        };
+        let path = nodepath::join(&[dir, &entry.file_name().to_string_lossy()]);
+        (is_dir && !skipped(&path)).then_some(path)
+    });
     while let Some((input, is_dir)) = stack.pop() {
         let key = path_key(services, &input);
         if excluded.iter().any(|root| is_descendant_key(&key, root)) {
@@ -205,9 +222,9 @@ pub fn get_project_outputs(inputs: &OutputInputs<'_>) -> Result<ProjectOutputs, 
             if name == "node_modules" || name == ".git" {
                 continue;
             }
-            let Ok(entries) = std::fs::read_dir(&input) else { continue };
+            let Some(entries) = listings.entries(&input) else { continue };
             let mut children = Vec::new();
-            for entry in entries.flatten() {
+            for entry in entries {
                 let Ok(file_type) = entry.file_type() else { continue };
                 let is_dir = if file_type.is_symlink() {
                     std::fs::metadata(entry.path()).is_ok_and(|m| m.is_dir())
@@ -588,13 +605,24 @@ impl Listing {
 
     /// [`Stamp::check`] for the listed file with this key, once per listing.
     pub fn checked(&self, key: &str, stamp: &Stamp) -> Option<Stamp> {
-        let mut checked = self.checked.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(known) = checked.get(key) {
+        let lock = || self.checked.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(known) = lock().get(key) {
             return *known;
         }
+        // checked without the lock (a check may read the file), so checks run in parallel ([`Listing::check_all`])
         let now = self.spelled.get(key).and_then(|path| stamp.check(path, self.found.get(key).copied()));
-        checked.insert(key.to_owned(), now);
-        now
+        *lock().entry(key.to_owned()).or_insert(now)
+    }
+
+    /// [`Listing::intact`] for many outputs at once, in parallel (a check after a build that wrote the output reads
+    /// its bytes), for the answers [`Listing::intact`] then gives.
+    pub fn check_all(&self, keys: &[String], committed: &FxHashMap<String, Stamp>) {
+        let unknown: Vec<(&str, &Stamp)> = keys
+            .iter()
+            .filter_map(|key| Some((key.as_str(), committed.get(key)?)))
+            .filter(|(key, stamp)| stamp.modified == 0 || self.found.get(*key).is_none_or(|f| f.modified != stamp.modified))
+            .collect();
+        super::parallel::map(&unknown, |&(key, stamp)| self.checked(key, stamp));
     }
 }
 
@@ -626,10 +654,20 @@ pub fn list(services: &ProjectServices, roots: &[String], out_dir_override: Opti
         .filter(|r| std::fs::symlink_metadata(r.as_str()).is_ok_and(|m| m.file_type().is_dir()))
         .cloned()
         .collect();
+    // the directories the walk enters, listed ahead in parallel (the walk below visits them in its own order)
+    let listings = super::parallel::prefetch(&stack, |dir, entry| {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let file_type = entry.file_type().ok()?;
+        if name == ".git" || !file_type.is_dir() || file_type.is_symlink() {
+            return None;
+        }
+        let path = nodepath::join(&[dir, &name]);
+        (!is_descendant_key(&path_key(services, &path), &include)).then_some(path)
+    });
     while let Some(directory) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&directory) else { continue };
+        let Some(entries) = listings.entries(&directory) else { continue };
         let mut count = 0;
-        for entry in entries.flatten() {
+        for entry in entries {
             count += 1;
             let name = entry.file_name().to_string_lossy().into_owned();
             if name == ".git" {
