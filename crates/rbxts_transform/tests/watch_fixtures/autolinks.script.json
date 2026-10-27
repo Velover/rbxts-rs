@@ -1,0 +1,41 @@
+{
+	"prepare": [
+		{ "link": { "link": "node_modules/@rbxts/zeta", "target": "packages/greeter" } },
+		{ "link": { "link": "node_modules/@rbxts/mid", "target": "packages/greeter" } },
+		{ "link": { "link": "node_modules/@rbxts/beta", "target": "packages/greeter" } },
+		{ "link": { "link": "node_modules/@rbxts/omega", "target": "packages/greeter" } },
+		{ "link": { "link": "node_modules/@rbxts/alpha", "target": "packages/greeter" } }
+	],
+	"steps": [
+		{
+			"name": "an edit: the import goes through the first link in the type root's order, alpha",
+			"do": [{ "patch": { "file": "src/shared/a.ts", "find": "greet(\"t\")", "replace": "greet(\"u\")" } }]
+		},
+		{
+			"name": "alpha unlinked (no event), the importer saved: through beta",
+			"do": [{ "delete": "node_modules/@rbxts/alpha" }, { "touch": "src/shared/a.ts" }]
+		},
+		{
+			"name": "a link that sorts first (no event), the importer saved: through it",
+			"do": [
+				{ "link": { "link": "node_modules/@rbxts/aardvark", "target": "packages/greeter" } },
+				{ "touch": "src/shared/a.ts" }
+			]
+		},
+		{
+			"name": "an unrelated edit after it (the load is reused)",
+			"do": [{ "patch": { "file": "src/shared/a.ts", "find": "greet(\"u\")", "replace": "greet(\"v\")" } }]
+		},
+		{
+			"name": "every link gone (no event), the importer saved: the package is no type-root package",
+			"do": [
+				{ "delete": "node_modules/@rbxts/aardvark" },
+				{ "delete": "node_modules/@rbxts/beta" },
+				{ "delete": "node_modules/@rbxts/mid" },
+				{ "delete": "node_modules/@rbxts/omega" },
+				{ "delete": "node_modules/@rbxts/zeta" },
+				{ "touch": "src/shared/a.ts" }
+			]
+		}
+	]
+}

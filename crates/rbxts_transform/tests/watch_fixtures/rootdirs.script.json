@@ -1,0 +1,28 @@
+{
+	"steps": [
+		{
+			"name": "an edit of the module rootDirs resolves",
+			"do": [{ "patch": { "file": "src/b/y.ts", "find": "y = 2", "replace": "y = 4" } }]
+		},
+		{
+			"name": "a source in a third folder: the common source directory stays src",
+			"do": [{ "write": { "file": "src/c/z.ts", "text": "export const z = 1;\n" } }]
+		},
+		{
+			"name": "it goes again",
+			"do": [{ "delete": "src/c" }]
+		},
+		{
+			"name": "every source in src/a: the common source directory moves there, and the outputs with it",
+			"do": [{ "rename": { "from": "src/b/y.ts", "to": "src/a/y.ts" } }]
+		},
+		{
+			"name": "an edit there",
+			"do": [{ "patch": { "file": "src/a/y.ts", "find": "y = 4", "replace": "y = 5" } }]
+		},
+		{
+			"name": "back in src/b",
+			"do": [{ "rename": { "from": "src/a/y.ts", "to": "src/b/y.ts" } }]
+		}
+	]
+}

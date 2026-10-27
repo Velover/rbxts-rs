@@ -1,0 +1,76 @@
+{
+	"steps": [
+		{
+			"name": "an edit of a module only baseUrl resolves",
+			"do": [{ "patch": { "file": "src/shared/mod.ts", "find": "m = 1", "replace": "m = 3" } }]
+		},
+		{
+			"name": "a new module only baseUrl resolves, imported",
+			"do": [
+				{ "write": { "file": "src/shared/extra.ts", "text": "export const e = 5;\n" } },
+				{
+					"patch": {
+						"file": "src/shared/a.ts",
+						"find": "export const a = m + t;",
+						"replace": "import { e } from \"shared/extra\";\n\nexport const a = m + t + e;"
+					}
+				}
+			]
+		},
+		{
+			"name": "a paths pattern that matches the name: no fallback to baseUrl",
+			"do": [
+				{
+					"patch": {
+						"file": "tsconfig.json",
+						"find": "\"paths\": { \"@lib/*\": [\"lib/*\"] }",
+						"replace": "\"paths\": { \"@lib/*\": [\"lib/*\"], \"shared/*\": [\"lib/*\"] }"
+					}
+				}
+			],
+			"expect": "error"
+		},
+		{
+			"name": "the pattern removed",
+			"do": [
+				{
+					"patch": {
+						"file": "tsconfig.json",
+						"find": ", \"shared/*\": [\"lib/*\"]",
+						"replace": ""
+					}
+				}
+			]
+		},
+		{
+			"name": "baseUrl removed: the names it resolved fail, the paths substitution is relative to the tsconfig",
+			"do": [{ "patch": { "file": "tsconfig.json", "find": "\"baseUrl\": \"./src\",", "replace": "" } }],
+			"expect": "error"
+		},
+		{
+			"name": "baseUrl back",
+			"do": [
+				{
+					"patch": {
+						"file": "tsconfig.json",
+						"find": "\"outDir\": \"out\",",
+						"replace": "\"outDir\": \"out\",\n\t\t\"baseUrl\": \"./src\","
+					}
+				}
+			]
+		},
+		{
+			"name": "the new module deleted",
+			"do": [
+				{ "delete": "src/shared/extra.ts" },
+				{
+					"patch": {
+						"file": "src/shared/a.ts",
+						"find": "import { e } from \"shared/extra\";\n\nexport const a = m + t + e;",
+						"replace": "export const a = m + t;"
+					}
+				}
+			]
+		}
+	]
+}

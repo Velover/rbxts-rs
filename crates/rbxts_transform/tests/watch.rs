@@ -8,6 +8,8 @@
 //!   referenced project, errors, new and deleted files, hand-deleted outputs, a referenced tsconfig edit, projects
 //!   skipped while not dirty, edits made while a reference fails); `midsolution.script.json` on
 //!   `tests/watch_fixtures/midsolution`: the same through a solution config in the middle of the graph;
+//! - `baseurl`, `rootdirs` and `autolinks` (`.script.json` on the fixtures of those names): `baseUrl`, `rootDirs`
+//!   without `rootDir`, and a package linked into the type root under several names, as TypeScript 5 has them;
 //! - the kept-`Shared` contract, with a plugin that counts its `setup` and `rebuild_start` calls;
 //! - the clean of a declaration build over a used output directory, against roblox-ts's keep set, with a junction.
 //!
@@ -273,6 +275,34 @@ fn automatic_type_packages_rebuild_as_clean_builds() {
 /// Also: the first rebuild of the session keeps the program, though the first build made the output and include
 /// folders (the tsconfig parse lists the folder they are made in, and the Rojo resolver searches them): the parse and
 /// the setup are made again, and find the same; an asset added, which the include globs do not take, keeps it too.
+/// `baseUrl` (TypeScript 5's resolution, which TypeScript 7 dropped) in watch (`baseurl.script.json`): an edit of a
+/// module only `baseUrl` resolves, a new one, a `paths` pattern that matches without falling back to `baseUrl`,
+/// `baseUrl` removed (the `paths` substitution then relative to the tsconfig) and back.
+#[test]
+fn base_url_rebuilds_as_clean_builds() {
+    run_fixture("baseurl", "baseurl", &[], false);
+    run_fixture("baseurl", "baseurl-inc", &[], true);
+}
+
+/// `rootDirs` without `rootDir` in watch (`rootdirs.script.json`): TypeScript 5's common source directory as the
+/// layout, kept when a source is added in a third folder, moved when every source ends up in one folder (the outputs
+/// move with it) and back.
+#[test]
+fn root_dirs_rebuild_as_clean_builds() {
+    run_fixture("rootdirs", "rootdirs", &[], false);
+    run_fixture("rootdirs", "rootdirs-inc", &[], true);
+}
+
+/// A package linked into the type root under several names, with automatic type directives
+/// (`autolinks.script.json`): the import goes through the first link in the type root's order, and through the next
+/// one when that link goes, through a new one that sorts first, and through the package's own path when none is left.
+#[test]
+fn type_root_links_rebuild_as_clean_builds() {
+    let copy = &["src", "packages", "tsconfig.json", "default.project.json", "package.json"];
+    run_fixture_copying("autolinks", "autolinks", &[], false, copy);
+    run_fixture_copying("autolinks", "autolinks-inc", &[], true, copy);
+}
+
 #[test]
 fn watch_rebuilds_equal_clean_builds_without_plugins() {
     let Some(results) = run_basic("plain", &[], false) else { return };

@@ -460,7 +460,7 @@ impl Project {
     }
 
     /// Parses the tsconfig again, recording what it reads in `log`, and tells whether the parse finds the same files
-    /// with the same automatic type directives. A watch rebuild asks when the parse's directory listings read
+    /// with the same options. A watch rebuild asks when the parse's directory listings read
     /// differently (an output folder made at the tsconfig's directory, a file added that the include globs do not
     /// take): when the other answers are the same too ([`ReadLog::same_but_listings`]), the parse is this one, as
     /// the listings only decide the files.
@@ -469,7 +469,19 @@ impl Project {
         let host: &'static ConfigHost =
             Box::leak(Box::new(ConfigHost { fs: recording_fs(Some(log)), cwd: self.cwd.clone() }));
         let Ok((parsed, automatic_types)) = parse_config(&self.tsconfig, self.checkers, host) else { return false };
-        automatic_types == self.automatic_types && parsed.file_names() == self.config.file_names()
+        // the options too (the automatic type directives come from the type roots' listings), with the `rootDir` the
+        // program was given for TypeScript 5's layout
+        let same_options = match (parsed.compiler_options(), self.config.compiler_options()) {
+            (Some(new), Some(old)) => {
+                let mut new = CompilerOptions::clone(&new);
+                if self.ts5_root_dir {
+                    new.root_dir.clone_from(&old.root_dir);
+                }
+                new == *old
+            }
+            (new, old) => new.is_none() && old.is_none(),
+        };
+        same_options && automatic_types == self.automatic_types && parsed.file_names() == self.config.file_names()
     }
 
     /// A second owner of the program ([`ProgramOwner`]). While it lives, freeing the program through its

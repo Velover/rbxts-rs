@@ -21,7 +21,8 @@
 //! where `prepare` edits the watched copy before the initial build. Actions: `{"write":
 //! {"file", "text"}}`, `{"append": {"file", "text"}}`, `{"patch": {"file", "find", "replace"}}` (the text must occur), `{"delete": file}`, `{"rename":
 //! {"from", "to"}}`, `{"mkdir": dir}`, `{"delete-output": file}` (relative to the project, a hand-deleted output),
-//! `{"touch": file}`. Paths are relative to the project directory.
+//! `{"touch": file}`, `{"link": {"link", "target"}}` (a directory link: a junction on Windows). Paths are relative to the
+//! project directory.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -78,6 +79,14 @@ pub enum Action {
     DeleteOutput(String),
     /// Writes a file's bytes back unchanged (a save without a change).
     Touch(String),
+    /// Makes `link` a link to the directory `target` (a junction on Windows, a symbolic link elsewhere), as a
+    /// package manager links a package.
+    Link {
+        /// The link, relative to the project.
+        link: String,
+        /// The directory it leads to, relative to the project.
+        target: String,
+    },
 }
 
 /// One step: its edits and whether the build after them succeeds.
@@ -129,6 +138,7 @@ fn parse_actions(list: &Value, context: &str) -> Result<Vec<Action>, String> {
             "mkdir" => Action::Mkdir(path_of(body, "mkdir")?),
             "delete-output" => Action::DeleteOutput(path_of(body, "delete-output")?),
             "touch" => Action::Touch(path_of(body, "touch")?),
+            "link" => Action::Link { link: text_of(body, "link")?, target: text_of(body, "target")? },
             other => return Err(format!("{context}: unknown action `{other}`")),
         });
     }
@@ -773,6 +783,17 @@ fn apply(dir: &Path, actions: &[Action]) -> Result<Vec<String>, String> {
                 let path = abs(file)?;
                 let bytes = std::fs::read(&path).map_err(|e| format!("{file}: {e}"))?;
                 std::fs::write(&path, bytes).map_err(|e| format!("{file}: {e}"))?;
+                touched.add(text(&path));
+            }
+            Action::Link { link, target } => {
+                let (path, target_path) = (abs(link)?, abs(target)?);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                #[cfg(windows)]
+                junction(&path, &target_path).map_err(|e| format!("{link}: {e}"))?;
+                #[cfg(not(windows))]
+                std::os::unix::fs::symlink(&target_path, &path).map_err(|e| format!("{link}: {e}"))?;
                 touched.add(text(&path));
             }
         }
