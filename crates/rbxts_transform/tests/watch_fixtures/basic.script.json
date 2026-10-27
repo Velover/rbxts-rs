@@ -30,6 +30,30 @@
 			]
 		},
 		{
+			"name": "K2: a text read (the Rojo project) rewritten the same way: the include folder's name",
+			"do": [
+				{
+					"patch-keep-time": {
+						"file": "default.project.json",
+						"find": "\"include\": {",
+						"replace": "\"inclxde\": {"
+					}
+				}
+			]
+		},
+		{
+			"name": "K2: and back",
+			"do": [
+				{
+					"patch-keep-time": {
+						"file": "default.project.json",
+						"find": "\"inclxde\": {",
+						"replace": "\"include\": {"
+					}
+				}
+			]
+		},
+		{
 			"name": "C → B → D: Inner.a array to map",
 			"do": [
 				{

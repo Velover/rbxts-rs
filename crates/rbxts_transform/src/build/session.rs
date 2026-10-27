@@ -51,7 +51,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rbxts_luau::{LateStrings, Stmt};
 use rbxts_plugin::erased::{ErasedPart, ErasedShared, ErasedState};
 use rbxts_plugin::{BuildKind, ChangeSet, FileIndex, RebuildPlan, StateOrigin};
-use rbxts_project::read_check::{ProgramStamp, Recheck};
+use rbxts_project::read_check::{ProgramStamp, ProgramStamps, Recheck};
 use rbxts_project::{LoadOptions, Project, ProjectDiagnostic, ProjectServices, SourceFileCache, nodepath};
 use tsrs_ast::{Diagnostic, SourceFile};
 use tsrs_compiler::{Context, Program};
@@ -876,7 +876,15 @@ impl<'p> BuildSession<'p> {
             .map(|f| (f.get().file_name().to_owned(), self.cache.stamp(f.path())))
             .collect();
         let case_sensitive = last.services.use_case_sensitive_file_names;
-        let changed = match reads.recheck(&program, case_sensitive) {
+        // the three logs over one listing of the directories they ask about (they share most of them)
+        let (Some(config_reads), Some(setup_reads)) = (self.config_reads.clone(), self.setup_reads.clone()) else {
+            return Err(last);
+        };
+        let logs: [(&rbxts_project::ReadLog, ProgramStamps<'_>); 3] =
+            [(&reads, &program), (&config_reads, &[]), (&setup_reads, &[])];
+        let [program_answer, config_answer, setup_answer]: [Recheck; 3] =
+            rbxts_project::ReadLog::recheck_all(&logs, case_sensitive).try_into().expect("one answer per log");
+        let changed = match program_answer {
             Recheck::Same { changed } => changed,
             Recheck::Different(why) => {
                 if std::env::var_os("RBXTS_WATCH_DEBUG").is_some() {
@@ -887,13 +895,10 @@ impl<'p> BuildSession<'p> {
         };
         // the tsconfig parse's reads: the same, or the parse is made again, and stands for this one when only its
         // listings read differently and it finds the same files
-        let config = self.config_reads.clone().map(|log| {
-            let recheck = log.recheck(&[], case_sensitive);
-            (log, recheck)
-        });
-        match config {
-            Some((_, Recheck::Same { .. })) => {}
-            Some((old, Recheck::Different(why))) => {
+        match config_answer {
+            Recheck::Same { .. } => {}
+            Recheck::Different(why) => {
+                let old = config_reads;
                 if std::env::var_os("RBXTS_WATCH_DEBUG").is_some() {
                     eprintln!("[rbxtsc watch] parsing the tsconfig again: {why}");
                 }
@@ -905,14 +910,13 @@ impl<'p> BuildSession<'p> {
                 old.clear();
                 self.config_reads = Some(log);
             }
-            None => return Err(last),
         }
         // the setup's reads: the same, or the setup is made again (over the last program, whose files and options
         // the reused one has)
         let setup_start = Instant::now();
-        let setup = match self.setup_reads.as_ref().map(|log| log.recheck(&[], case_sensitive)) {
-            Some(Recheck::Same { .. }) => None,
-            Some(Recheck::Different(why)) => {
+        let setup = match setup_answer {
+            Recheck::Same { .. } => None,
+            Recheck::Different(why) => {
                 if std::env::var_os("RBXTS_WATCH_DEBUG").is_some() {
                     eprintln!("[rbxtsc watch] setting up again: {why}");
                 }
@@ -926,7 +930,6 @@ impl<'p> BuildSession<'p> {
                     }
                 }
             }
-            None => return Err(last),
         };
         let setup_time = setup_start.elapsed();
         let checked = start.elapsed() - setup_time;

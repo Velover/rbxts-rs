@@ -19,6 +19,8 @@ use std::time::SystemTime;
 
 use tsrs_vfs::{Entries, FS, FileInfo};
 
+use crate::stamp::{self, FileStamp};
+
 /// What reads of one path learned (several reads of a path add up).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Seen(u8);
@@ -93,10 +95,17 @@ pub struct ReadLog {
     texts: Mutex<HashMap<String, u64>>,
     /// [`text_hash`] of every file read as text (JSON included).
     contents: Mutex<HashMap<String, u64>>,
+    /// The stamp of each text read ([`crate::stamp`]), taken before the read, when it was settled: a check whose
+    /// stamp of the file is the same needs not read it again.
+    content_stamps: Mutex<HashMap<String, FileStamp>>,
     /// Each directory listing, by path and view: [`listing_hash`] of what the reader saw.
     listings: Mutex<HashMap<(String, ListingView), u64>>,
     /// Each `realpath` asked, with its answer.
     realpaths: Mutex<HashMap<String, String>>,
+    /// Moves with every write: what [`crate::read_check`]'s prepared questions were made from.
+    version: std::sync::atomic::AtomicU64,
+    /// The questions a check asks of this log, made once ([`crate::read_check::Prepared`]).
+    pub(crate) prepared: Mutex<Option<Arc<crate::read_check::Prepared>>>,
 }
 
 /// The hash a read log keeps of a directory listing in a view: the entries sorted by name, each with what the view
@@ -158,6 +167,16 @@ pub fn current() -> Option<Arc<ReadLog>> {
     CURRENT.with(|current| current.borrow().clone())
 }
 
+/// A file's stamp taken before it is read for a log, when settled ([`crate::stamp`]): taken first, a text read after
+/// an edit that the stamp missed is the newer text, which the next check finds the same, and an edit after the read
+/// moves the stamp, so the check reads the text again. Unsettled, nothing is kept and the check reads the text.
+pub(crate) fn stamp_before_read(path: &str) -> Option<FileStamp> {
+    if path.starts_with("bundled:") {
+        return None;
+    }
+    stamp::stat(path).file().filter(|s| s.settled)
+}
+
 /// File system reads that go to this thread's recording ([`recording`]), for the project setup.
 pub mod recorded {
     use std::fs;
@@ -189,9 +208,11 @@ pub mod recorded {
     /// `fs::read_to_string`, recorded with the text.
     pub fn read_to_string(path: impl AsRef<Path>) -> io::Result<String> {
         let path = path.as_ref();
+        let log = current();
+        let stamp = log.as_ref().map(|_| super::stamp_before_read(&path.to_string_lossy()));
         let result = fs::read_to_string(path);
-        if let Some(log) = current() {
-            log.see_text(&path.to_string_lossy(), result.as_ref().ok().map(String::as_str));
+        if let Some(log) = log {
+            log.see_text_stamped(&path.to_string_lossy(), result.as_ref().ok().map(String::as_str), stamp.flatten());
         }
         result
     }
@@ -199,10 +220,12 @@ pub mod recorded {
     /// `fs::read`, recorded with the text (bytes that are not text record as missing: a check never reuses them).
     pub fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
         let path = path.as_ref();
+        let log = current();
+        let stamp = log.as_ref().map(|_| super::stamp_before_read(&path.to_string_lossy()));
         let result = fs::read(path);
-        if let Some(log) = current() {
+        if let Some(log) = log {
             let text = result.as_ref().ok().and_then(|bytes| std::str::from_utf8(bytes).ok());
-            log.see_text(&path.to_string_lossy(), text);
+            log.see_text_stamped(&path.to_string_lossy(), text, stamp.flatten());
         }
         result
     }
@@ -277,9 +300,11 @@ impl FS for ThreadRecordingFs {
     }
 
     fn read_file(&self, path: &str) -> Option<String> {
+        let log = current();
+        let stamp = log.as_ref().map(|_| stamp_before_read(path));
         let text = tsrs_vfs::osvfs::fs().read_file(path);
-        if let Some(log) = current() {
-            log.see_text(path, text.as_deref());
+        if let Some(log) = log {
+            log.see_text_stamped(path, text.as_deref(), stamp.flatten());
         }
         text
     }
@@ -369,6 +394,25 @@ impl ReadLog {
                 paths.insert(path.to_owned(), seen);
             }
         }
+        self.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// [`ReadLog::see_text`] with the file's stamp, taken before the read ([`stamp_before_read`]).
+    pub fn see_text_stamped(&self, path: &str, text: Option<&str>, stamp: Option<FileStamp>) {
+        self.see_text(path, text);
+        if text.is_some() && !path.starts_with("bundled:") {
+            let mut stamps = self.content_stamps.lock().expect("read log");
+            match stamp {
+                Some(stamp) => stamps.insert(path.to_owned(), stamp),
+                None => stamps.remove(path),
+            };
+        }
+        self.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The stamp a text read was made under, when one was kept ([`ReadLog::see_text_stamped`]).
+    pub fn content_stamp(&self, path: &str) -> Option<FileStamp> {
+        self.content_stamps.lock().expect("read log").get(path).copied()
     }
 
     /// Records a file read: there with `text`, or not there. The text is hashed ([`text_hash`]).
@@ -383,6 +427,7 @@ impl ReadLog {
             }
             self.contents.lock().expect("read log").insert(path.to_owned(), hash);
         }
+        self.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Records a directory listing as a reader saw it (`entries`: every entry, with its kind and whether it is a link;
@@ -393,6 +438,7 @@ impl ReadLog {
         }
         self.see(dir, if view == ListingView::Ts { Seen::LISTED } else { Seen::DIR });
         self.listings.lock().expect("read log").insert((dir.to_owned(), view), listing_hash(view, entries));
+        self.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Records a `realpath` answer.
@@ -401,6 +447,12 @@ impl ReadLog {
             return;
         }
         self.realpaths.lock().expect("read log").insert(path.to_owned(), answer.to_owned());
+        self.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// How many times the log was written.
+    pub(crate) fn version(&self) -> u64 {
+        self.version.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Every file read as text, with the hash of its text (unordered).
@@ -447,8 +499,11 @@ impl ReadLog {
         self.paths.lock().expect("read log").clear();
         self.texts.lock().expect("read log").clear();
         self.contents.lock().expect("read log").clear();
+        self.content_stamps.lock().expect("read log").clear();
         self.listings.lock().expect("read log").clear();
         self.realpaths.lock().expect("read log").clear();
+        *self.prepared.lock().expect("read log") = None;
+        self.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// How many paths were read.
