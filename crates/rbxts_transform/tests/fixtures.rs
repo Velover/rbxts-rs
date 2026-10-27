@@ -29,6 +29,11 @@
 //!   `super` calls), methods with unusual names, static members and blocks, `this` in static members, hoisting,
 //!   default exports, and every kind of decorator. TypeScript 5 lists exported functions first and TypeScript 7 in
 //!   source order, so the fixture declares its exported functions first.
+//! - `base_url`: `baseUrl` with `paths` (TypeScript 5's resolution, which TypeScript 7 dropped), a declaration build;
+//!   checked as the written output tree (`expected/` is stock `rbxtsc build`'s `out`).
+//! - `root_dirs`: `rootDirs` (`src/a`, `src/b`) without `rootDir`, a declaration build: the written output tree is
+//!   laid out under the common source directory, as TypeScript 5 lays it out (`expected/` is stock `rbxtsc build`'s
+//!   `out`).
 //! - `declarations`: a package with `declaration` and `declarationMap`: the `.d.ts` / `.d.ts.map` of each source
 //!   (`paths` specifiers rewritten to relative ones, a `types` reference directive to `@rbxts/types`), a declaration
 //!   file under `src` printed again as an asset, a Luau asset. Checked as a written output tree; its maps are
@@ -492,6 +497,20 @@ fn exprs() {
 #[test]
 fn json() {
     check_tree("json");
+}
+
+/// `baseUrl`, which TypeScript 7 removed: names resolved against it, `paths` substitutions relative to it, and the
+/// declarations' import types (`rbxts_project::emulate_base_url`).
+#[test]
+fn base_url() {
+    check_tree("base_url");
+}
+
+/// `rootDirs` without `rootDir`: TypeScript 5 lays the outputs (Luau, declarations, a copied asset) out under the
+/// files' common source directory (`src`), where TypeScript 7 alone stops at TS5011 (`Project::options`).
+#[test]
+fn root_dirs() {
+    check_tree("root_dirs");
 }
 
 #[test]

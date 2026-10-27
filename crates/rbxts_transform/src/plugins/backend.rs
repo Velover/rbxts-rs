@@ -547,7 +547,7 @@ impl CxBackend for HookBackend<'_, '_> {
     }
 
     fn options(&self) -> P<CompilerOptions> {
-        self.state.program.options()
+        self.state.compiler_options
     }
 
     fn file(&self) -> &FileInfo {

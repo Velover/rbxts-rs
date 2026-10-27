@@ -1,0 +1,12 @@
+{
+	"name": "root-dirs-fixture",
+	"tree": {
+		"$className": "DataModel",
+		"ReplicatedStorage": {
+			"$className": "ReplicatedStorage",
+			"a": { "$path": "out/a" },
+			"b": { "$path": "out/b" },
+			"include": { "$path": "include", "node_modules": { "$className": "Folder", "@rbxts": { "$path": "node_modules/@rbxts" } } }
+		}
+	}
+}

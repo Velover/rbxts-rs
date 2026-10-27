@@ -118,7 +118,8 @@ impl<'a> TransformState<'a> {
             module_resolver: project.module_resolver(),
             checker,
             services,
-            compiler_options: program.options(),
+            // roblox-ts's view (`Project::options`)
+            compiler_options: project.options(),
             macro_manager,
             multi_transform_state,
             source_file,

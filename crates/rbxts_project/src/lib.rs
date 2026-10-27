@@ -73,6 +73,11 @@ pub struct Project {
     pub reads: Option<Arc<ReadLog>>,
     /// The tsconfig has no `types`, and the program has TypeScript 5's automatic type directives (`"types": ["*"]`).
     pub automatic_types: bool,
+    /// The tsconfig has no `rootDir`, and the program has TypeScript 5's common source directory as its `rootDir`
+    /// ([`ts5_root_dir`]).
+    pub ts5_root_dir: bool,
+    /// [`Project::options`], made once.
+    user_options: OnceLock<P<CompilerOptions>>,
     module_resolver: OnceLock<ModuleResolver>,
     /// The file system the program reads through (each program gets its own caching layer over it).
     fs: Arc<dyn FS>,
@@ -120,6 +125,88 @@ fn add_automatic_type_directives(parsed: &mut ParsedCommandLine) -> bool {
     true
 }
 
+/// TypeScript 5's output layout without `rootDir`: the common source directory of the files it emits
+/// (`getCommonSourceDirectory`). TypeScript 7 lays the outputs out under the tsconfig's directory instead, and refuses
+/// a project whose files have another common directory (`TS5011: The common source directory of 'tsconfig.json' is
+/// './src'. The 'rootDir' setting must be explicitly set`), as a tsconfig with `rootDirs` but no `rootDir` meets
+/// whenever its files share a folder below the tsconfig. So that such a project builds as with stock roblox-ts, that
+/// directory goes into the program's options as `rootDir` when it is not the tsconfig's own: the outputs (the
+/// declarations TypeScript emits included) are laid out as TypeScript 5 lays them out. roblox-ts sees the tsconfig's
+/// options ([`Project::options`]).
+///
+/// `files` are the files TypeScript 5 would emit (its `sourceFileMayBeEmitted` ones, declarations excepted); `None`
+/// when TypeScript 7 lays the outputs out by `rootDir` or the tsconfig anyway (tsrs's condition for TS5011: an output
+/// directory, no `rootDir`, not composite). Returns the `rootDir` to set, if any.
+fn ts5_root_dir(options: &CompilerOptions, user_root_dir: bool, files: &[String], cwd: &str) -> Option<String> {
+    let laid_out_by_config = !options.no_emit.is_true()
+        && !options.composite.is_true()
+        && !user_root_dir
+        && !options.config_file_path.is_empty()
+        && (!options.out_dir.is_empty()
+            || (options.get_emit_declarations() && !options.declaration_dir.is_empty())
+            || !options.out_file.is_empty());
+    if !laid_out_by_config {
+        return None;
+    }
+    let case_sensitive = osvfs::fs().use_case_sensitive_file_names();
+    let common = tsrs_tsoptions::outputpaths::get_computed_common_source_directory(files, cwd, case_sensitive);
+    let config_dir = tspath::ensure_trailing_directory_separator(&tspath::get_directory_path(&options.config_file_path));
+    (!common.is_empty()
+        && tspath::get_canonical_file_name(&common, case_sensitive)
+            != tspath::get_canonical_file_name(&config_dir, case_sensitive))
+    .then(|| tspath::remove_trailing_directory_separator(&common).to_owned())
+}
+
+/// Sets the program's `rootDir` (`ts5_root_dir`), unless the tsconfig has one.
+fn set_root_dir_if(parsed: &mut ParsedCommandLine, user_root_dir: bool, root_dir: Option<&str>) {
+    let Some(root_dir) = root_dir.filter(|_| !user_root_dir) else { return };
+    let Some(options) = parsed.parsed_config.compiler_options.as_ref() else { return };
+    let mut options = CompilerOptions::clone(options);
+    options.root_dir = root_dir.to_owned();
+    parsed.parsed_config.compiler_options = Some(P::new(options));
+}
+
+/// The files of `program` TypeScript 5's `getCommonSourceDirectory` takes (as tsrs's TS5011 check takes them).
+fn emitted_files(program: &Program) -> Vec<String> {
+    program
+        .source_files()
+        .iter()
+        .filter(|&&f| !f.is_declaration_file.get() && program.source_file_may_be_emitted(f, false))
+        .map(|f| f.file_name().to_owned())
+        .collect()
+}
+
+/// TypeScript 5's `baseUrl`, which TypeScript 7 removed (`TS5102: Option 'baseUrl' has been removed`; an import that
+/// only resolves through it is `TS2307`). TypeScript 5 tries a non-relative module name against `paths` (whose
+/// substitutions are relative to `baseUrl` then), and only when no pattern matched it, against `baseUrl` itself
+/// (`tryLoadModuleUsingOptionalResolutionSettings`: a matched pattern whose substitutions all fail is the answer). The
+/// same as `paths` alone: each substitution made absolute against `baseUrl`, and `"*": ["<baseUrl>/*"]` for the names
+/// no pattern matches (a pattern matches by its longest prefix, so `*` only takes the rest; a `"*"` of the tsconfig's
+/// own leaves no name to `baseUrl`); then `baseUrl` is cleared. Returns whether the tsconfig had one.
+fn emulate_base_url(parsed: &mut ParsedCommandLine) -> bool {
+    let Some(options) = parsed.parsed_config.compiler_options.as_ref() else { return false };
+    if options.base_url.is_empty() {
+        return false;
+    }
+    let mut options = CompilerOptions::clone(options);
+    // absolute already (the parse resolves it against the tsconfig that sets it)
+    let base_url = std::mem::take(&mut options.base_url);
+    let under_base = |path: &str| tspath::normalize_path(&tspath::combine_paths(&base_url, &[path]));
+    let mut paths = options.paths.take().unwrap_or_default();
+    for substitutions in paths.values_mut() {
+        let Some(substitutions) = substitutions else { continue };
+        for substitution in substitutions.iter_mut() {
+            *substitution = under_base(substitution);
+        }
+    }
+    if !paths.contains_key("*") {
+        paths.insert("*".to_owned(), Some(vec![under_base("*")]));
+    }
+    options.paths = Some(paths);
+    parsed.parsed_config.compiler_options = Some(P::new(options));
+    true
+}
+
 /// Parses the tsconfig and creates the program. Returns the config diagnostics when the config cannot be used.
 /// `lazy_dts` switches a process-wide tsrs mode on for good: only for one-shot processes that never check a
 /// declaration file.
@@ -146,24 +233,55 @@ pub fn load_cached(
     let overrides = CompilerOptions { checkers: Some(opts.checkers as i64), ..CompilerOptions::default() };
     let start = Instant::now();
     // On the compiler's worker pool, as tsrs's CLI does: the include glob's parallel listing runs on it.
-    let (parsed, errors) = tsrs_compiler::worker_pool()
-        .install(|| get_parsed_command_line_of_config_file(&opts.tsconfig, Some(&overrides), None, host, None));
-    let config_time = start.elapsed();
-    let Some(mut parsed) = parsed.filter(|_| errors.is_empty()) else {
-        return Err(errors);
+    let parse = || {
+        let (parsed, errors) = tsrs_compiler::worker_pool()
+            .install(|| get_parsed_command_line_of_config_file(&opts.tsconfig, Some(&overrides), None, host, None));
+        let Some(mut parsed) = parsed.filter(|_| errors.is_empty()) else {
+            return Err(errors);
+        };
+        let automatic_types = add_automatic_type_directives(&mut parsed);
+        emulate_base_url(&mut parsed);
+        Ok((parsed, automatic_types))
     };
-    let automatic_types = add_automatic_type_directives(&mut parsed);
-    let config = P::new(parsed);
+    let (mut parsed, automatic_types) = parse()?;
+    let config_time = start.elapsed();
+    let user_root_dir = parsed.compiler_options().is_some_and(|o| !o.root_dir.is_empty());
+    // TypeScript 5's common source directory, from the root files: the program's files are known once it is made,
+    // and a file outside the root files' directory that the program reaches (rare) makes it again, below
+    let roots: Vec<String> =
+        parsed.file_names().iter().filter(|f| !tspath::is_declaration_file_name(f)).cloned().collect();
+    let mut root_dir = parsed.compiler_options().and_then(|o| ts5_root_dir(&o, user_root_dir, &roots, &cwd));
+    set_root_dir_if(&mut parsed, user_root_dir, root_dir.as_deref());
+    let mut config = P::new(parsed);
 
     if opts.lazy_dts && tsrs_compiler::lazy_dts_allowed() {
         tsrs_compiler::enable_lazy_dts();
     }
-    let compiler_host = new_host(&cwd, &fs, cache);
     let start = Instant::now();
-    let mut program_options = ProgramOptions::new(config, compiler_host);
-    program_options.checker_regions = opts.regions;
-    program_options.checker_diagnostic_regions = opts.regions;
-    let program = new_program(program_options);
+    let make = |config: P<ParsedCommandLine>| {
+        let mut program_options = ProgramOptions::new(config, new_host(&cwd, &fs, cache));
+        program_options.checker_regions = opts.regions;
+        program_options.checker_diagnostic_regions = opts.regions;
+        new_program(program_options)
+    };
+    let mut program = make(config);
+    if let Some(options) = config.compiler_options() {
+        let wanted = ts5_root_dir(&options, user_root_dir, &emitted_files(program), &cwd);
+        if wanted != root_dir {
+            let (mut parsed, _) = parse()?;
+            set_root_dir_if(&mut parsed, user_root_dir, wanted.as_deref());
+            config = P::new(parsed);
+            let first = program;
+            program = make(config);
+            // SAFETY: no checker of the first program was made, and nothing refers to it or its loader data
+            unsafe {
+                let lineage = Lineage(tsrs_compiler::shared_program_data(first));
+                tsrs_compiler::free_program(first);
+                lineage.0.free();
+            }
+            root_dir = wanted;
+        }
+    }
     if opts.regions {
         program.bind_source_files();
     }
@@ -178,6 +296,8 @@ pub fn load_cached(
         cwd,
         reads,
         automatic_types,
+        ts5_root_dir: root_dir.is_some(),
+        user_options: OnceLock::new(),
         module_resolver: OnceLock::new(),
         lineage: Arc::new(Lineage(tsrs_compiler::shared_program_data(program))),
         fs,
@@ -319,6 +439,22 @@ impl Project {
             source_cache: self.source_cache.clone(),
             lineage: Arc::clone(&self.lineage),
             automatic_types: self.automatic_types,
+            ts5_root_dir: self.ts5_root_dir,
+            user_options: OnceLock::new(),
+        })
+    }
+
+    /// The compiler options as roblox-ts (and a plugin) sees them: the tsconfig's, without the `rootDir` rbxts-rs
+    /// gives the program for TypeScript 5's output layout ([`ts5_root_dir`]). The program's own (`program.options()`)
+    /// are what TypeScript sees.
+    pub fn options(&self) -> P<CompilerOptions> {
+        if !self.ts5_root_dir {
+            return self.program.options();
+        }
+        *self.user_options.get_or_init(|| {
+            let mut options = CompilerOptions::clone(&self.program.options());
+            options.root_dir = String::new();
+            P::new(options)
         })
     }
 
@@ -481,7 +617,7 @@ impl Project {
     fn setup_with_data_recorded(&self, data: ProjectData) -> Result<ProjectSetup, ProjectError> {
         let reads = self.reads.as_deref();
         let tsconfig_path = data.tsconfig_path.clone();
-        let raw_options = self.program.options();
+        let raw_options = self.options();
         // getParsedCommandLine: a composite project without rootDir gets the tsconfig's directory, before validation
         // and for everything after it (the build info path was already computed from the raw options)
         let mut options = (*raw_options).clone();

@@ -425,7 +425,7 @@ impl<'p> BuildSession<'p> {
     /// The output roots of the last loaded project: its outDir (or the override) and its `declarationDir`.
     pub fn output_roots(&self) -> Vec<String> {
         let Some(last) = &self.last else { return Vec::new() };
-        outputs::output_roots(&last.services, &last.project.program.options(), self.options.out_dir_override.as_deref())
+        outputs::output_roots(&last.services, &last.project.options(), self.options.out_dir_override.as_deref())
     }
 
     /// The tsconfig and `extends` files, the Rojo project files (the project's and the package resolvers') and the
@@ -612,7 +612,7 @@ impl<'p> BuildSession<'p> {
     pub fn watch_roots(&self) -> Option<(&ProjectServices, Vec<String>, Vec<String>)> {
         let last = self.last.as_ref()?;
         let files = last.project.program.source_files().iter().map(|f| f.get().file_name().to_owned()).collect();
-        let options = last.project.program.options();
+        let options = last.project.options();
         let mut roots = rbxts_project::setup::get_root_dirs(&options);
         if roots.is_empty() {
             roots.push(last.services.data.project_path.clone());
@@ -1028,7 +1028,7 @@ impl<'p> BuildSession<'p> {
         // the outputs on disk before anything is written: the missing-output check and the clean
         let listing = outputs::list(
             services,
-            &outputs::output_roots(services, &project.program.options(), self.options.out_dir_override.as_deref()),
+            &outputs::output_roots(services, &project.options(), self.options.out_dir_override.as_deref()),
             self.options.out_dir_override.as_deref(),
         );
         let facts = graph::program_facts(project.program, &mut loaded.versions);
@@ -1279,6 +1279,7 @@ impl<'p> BuildSession<'p> {
                 };
                 let mut backend = Setup {
                     program: project.program,
+                    options: project.options(),
                     services,
                     plugin: plugin.info.name,
                     entry: plugin.entry.as_ref(),
@@ -1572,7 +1573,7 @@ impl<'p> BuildSession<'p> {
             to_transform.iter().enumerate().map(|(i, &f)| (f, i)).collect();
         let mut late_strings = LateStrings::new();
         let mut queue = CommitQueue::default();
-        let rules = DirRules::new(services, &project.program.options(), &report.out_dir);
+        let rules = DirRules::new(services, &project.options(), &report.out_dir);
         let mut finished = run.is_none();
         if !any_errors && let Some(run) = run.as_mut() {
             let mut luau_outputs = FxHashSet::default();
@@ -1806,7 +1807,7 @@ impl<'p> BuildSession<'p> {
 
         // the declarations of the files transformed (compileFiles: emitted before anything is written, so a
         // declaration error writes nothing)
-        let options = project.program.options();
+        let options = project.options();
         let transform_paths = TransformPaths::new(options, &self.options.cwd);
         let mut extra_outputs: Vec<(String, String)> = Vec::new();
         if options.get_emit_declarations() {
@@ -2317,7 +2318,7 @@ impl<'p> BuildSession<'p> {
                 (name.to_owned(), output_path(services, name, out_dir_override), declarations)
             })
             .collect();
-        let options = loaded.project.program.options();
+        let options = loaded.project.options();
         let ts_build_info = rbxts_project::setup::ts5_build_info_path(&options);
         outputs::get_project_outputs(&OutputInputs {
             services,

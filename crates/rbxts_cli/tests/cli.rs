@@ -107,6 +107,13 @@ fn empty_types_stop_at_the_macro_manager_as_stock() {
     diagnostics_like_stock("types_empty");
 }
 
+/// `baseUrl` with `paths`: a name a `paths` pattern matches is not tried against `baseUrl` when no substitution resolves
+/// (TypeScript 5's rule, which `rbxts_project`'s `baseUrl` emulation keeps): TS2307 as stock.
+#[test]
+fn base_url_does_not_back_a_matched_paths_pattern_as_stock() {
+    diagnostics_like_stock("base_url_paths_no_fallback");
+}
+
 /// `"types": []` and no source to transform (a declaration file alone): stock still makes its MacroManager, so its
 /// error is the build's.
 #[test]

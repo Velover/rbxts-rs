@@ -1,0 +1,5 @@
+[96msrc/shared/a.ts[0m:[93m5[0m:[93m19[0m - [91merror[0m[90m TS2307: [0mCannot find module '@lib/fallback' or its corresponding type declarations.
+
+[7m5[0m import { f } from "@lib/fallback";
+[7m [0m [91m                  ~~~~~~~~~~~~~~~[0m
+

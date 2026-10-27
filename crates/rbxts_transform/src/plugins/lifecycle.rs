@@ -448,6 +448,8 @@ fn real_key(services: &ProjectServices, path: &str) -> String {
 /// The compiler's side of `SetupCx` for one plugin.
 pub(crate) struct Setup<'s> {
     pub program: &'static Program,
+    /// The compiler options as roblox-ts sees them (`Project::options`).
+    pub options: P<CompilerOptions>,
     pub services: &'s ProjectServices,
     pub plugin: &'static str,
     pub entry: Option<&'s Map<String, Value>>,
@@ -472,7 +474,7 @@ impl SetupBackend for Setup<'_> {
     }
 
     fn options(&self) -> P<CompilerOptions> {
-        self.program.options()
+        self.options
     }
 
     fn project(&self) -> &ProjectServices {
