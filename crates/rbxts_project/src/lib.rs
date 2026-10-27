@@ -318,6 +318,7 @@ impl Project {
             fs: Arc::clone(&self.fs),
             source_cache: self.source_cache.clone(),
             lineage: Arc::clone(&self.lineage),
+            automatic_types: self.automatic_types,
         })
     }
 
