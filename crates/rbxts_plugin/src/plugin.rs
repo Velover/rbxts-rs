@@ -33,11 +33,30 @@ use crate::{
 /// `P<Node>`, `P<Symbol>`, `P<Type>`, `P<Signature>`, `P<Diagnostic>`, `P<SourceFile>`, `&'static Program` or
 /// `&'static str` borrowed from source text or a checker; and no [`FileIndex`], which is renumbered every build.
 /// Keep owned data: strings, numbers, paths (a file is keyed by `cx.file().path`). Handles belong in the
-/// [`PluginInstance`], which lives for one build. The types enforce most of it: the three types must be
-/// `UnwindSafe + RefUnwindSafe` (the compiler catches a panic in a hook and goes on with them), which the handles to
-/// tsrs's objects are not, as those objects have interior mutability: a `P<…>` field, or a collection of them, does
-/// not compile. Borrowed source text (`&'static str`) passes the bound and is the plugin's to avoid. Wrapping a value
-/// in [`std::panic::AssertUnwindSafe`] silences the bound: only for a value that holds no handle (an `Arc<dyn Fn>`).
+/// [`PluginInstance`], which lives for one build.
+///
+/// **What the types check, and what they do not.** The three types must be `UnwindSafe + RefUnwindSafe` (the
+/// compiler catches a panic in a hook and goes on with them). The handles to tsrs's objects are neither, as those
+/// objects have interior mutability, which makes the bound the nearest stable Rust comes to "holds no handle". It is
+/// not exact either way:
+///
+/// - *Rejected:* a handle to an object with interior mutability (`P<Node>`, `P<Symbol>`, `P<Type>`, `P<Signature>`,
+///   `P<Diagnostic>`, `P<SourceFile>`, `&'static Program`, `&'static Checker`), held directly or through `Box`,
+///   `Arc`, `Rc`, `Vec`, `Option`, `HashMap`, a slice, tuple or array, `OnceLock`, `AtomicPtr`, or a struct or enum
+///   of these: it does not compile (the first example below).
+/// - *Not rejected, and the plugin's to avoid:* a handle inside a `Mutex` or `RwLock` (unwind-safe whatever they
+///   hold, as a panic poisons them) or inside [`std::panic::AssertUnwindSafe`]; a handle to an object without
+///   interior mutability (`P<CompilerOptions>`); borrowed source text (`&'static str`) and a [`FileIndex`], which are
+///   plain data.
+/// - *Rejected though they hold no handle:* `Cell`, `RefCell` and the other types over `UnsafeCell`, and a trait
+///   object that does not name the two traits (`Arc<dyn Fn(&str) -> String + Send + Sync>`,
+///   `Box<dyn Any + Send + Sync>`).
+///
+/// For a trait object, name the two traits: `Arc<dyn Fn(&str) -> String + Send + Sync + UnwindSafe + RefUnwindSafe>`
+/// compiles and keeps the check, as a closure that captures a handle does not coerce to it (the last two examples
+/// below). For a `Cell` or a `RefCell`, use an atomic or a `Mutex` (`Shared` is `Sync`, and needs them anyway), or
+/// wrap that one field in [`std::panic::AssertUnwindSafe`] after making sure it holds no handle: nothing inside a
+/// `Mutex`, `RwLock` or `AssertUnwindSafe` is checked.
 ///
 /// ```compile_fail
 /// use std::sync::Arc;
@@ -74,6 +93,64 @@ use crate::{
 ///     fn end_file(&self, _: &mut Cx<'_>) -> PResult<KeptPart> {
 ///         unimplemented!()
 ///     }
+/// }
+/// ```
+///
+/// A trait object that names the two traits, and a counter in an atomic rather than a `Cell`:
+///
+/// ```
+/// use std::panic::{RefUnwindSafe, UnwindSafe};
+/// use std::sync::Arc;
+/// use std::sync::atomic::AtomicU32;
+/// use rbxts_plugin::*;
+///
+/// type Rename = Arc<dyn Fn(&str) -> String + Send + Sync + UnwindSafe + RefUnwindSafe>;
+/// struct Renamer;
+/// struct RenamerShared { rename: Rename, renamed: AtomicU32 }
+/// struct RenamerInstance;
+///
+/// impl Plugin for Renamer {
+///     type Shared = RenamerShared;
+///     type State = ();
+///     type FilePart = ();
+///     type Instance = RenamerInstance;
+///     fn info(&self) -> PluginInfo {
+///         PluginInfo { name: "renamer", version: "0", tsconfig_transform: None }
+///     }
+///     fn setup(&self, _: &mut SetupCx<'_>, _: &mut ()) -> Result<Arc<RenamerShared>, Fatal> {
+///         let rename: Rename = Arc::new(|name| format!("{name}_"));
+///         Ok(Arc::new(RenamerShared { rename, renamed: AtomicU32::new(0) }))
+///     }
+///     fn instance(&self, _: Arc<RenamerShared>, _: CheckerInfo) -> RenamerInstance {
+///         RenamerInstance
+///     }
+///     fn finish(&self, _: &RenamerShared, _: &mut (), _: &[(FileIndex, &())], _: &mut FinishCx<'_>) -> Result<(), Fatal> {
+///         Ok(())
+///     }
+/// }
+///
+/// impl PluginInstance for RenamerInstance {
+///     type FilePart = ();
+///     fn interest(&self, _: &mut Interest) {}
+///     fn end_file(&self, _: &mut Cx<'_>) -> PResult<()> {
+///         Ok(())
+///     }
+/// }
+/// ```
+///
+/// A closure that captures a handle does not coerce to that trait object:
+///
+/// ```compile_fail
+/// use std::panic::{RefUnwindSafe, UnwindSafe};
+/// use std::sync::Arc;
+/// use rbxts_plugin::ts::{Node, P};
+///
+/// type Rename = Arc<dyn Fn(&str) -> String + Send + Sync + UnwindSafe + RefUnwindSafe>;
+/// fn keep(node: P<Node>) -> Rename {
+///     Arc::new(move |name| {
+///         let _kept = node;
+///         name.to_owned()
+///     })
 /// }
 /// ```
 pub trait Plugin: Send + Sync + 'static {

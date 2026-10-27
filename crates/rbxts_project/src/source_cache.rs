@@ -1,6 +1,8 @@
 //! Parsed source files kept across the builds of one process (watch mode, DESIGN §14): a compiler host that hands
-//! out the same `SourceFile` for a file whose modification time, size and parse options are unchanged, as roblox-ts's
-//! program factory does (an unchanged file is the same object in the next program) and as tsrs's own watcher does.
+//! out the same `SourceFile` for a file whose stamp ([`crate::stamp`]: modification and change times and size, asked of
+//! the file) and parse options are unchanged, as roblox-ts's program factory does (an unchanged file is the same object
+//! in the next program) and as tsrs's own watcher does. A stamp taken too soon after the file changed to tell a later
+//! edit apart (not settled) serves the file only when its text is the same.
 //!
 //! The files outlive the programs that use them: a watch session frees each program once a later one replaces it
 //! ([`crate::Project::free`]), and the files, bound before any checker existed, go on in the next program. A file's
@@ -9,7 +11,6 @@
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
 
 use tsrs_ast::{SourceFile, SourceFileParseOptions};
 use tsrs_compiler::CompilerHost;
@@ -19,11 +20,13 @@ use tsrs_diagnostics::Message;
 use tsrs_tsoptions::ParsedCommandLine;
 use tsrs_vfs::FS;
 
+use crate::read_log::{ReadLog, Seen};
+use crate::stamp::{self, FileStamp, PathStat};
+
 struct Entry {
     file: P<SourceFile>,
     options: SourceFileParseOptions,
-    mod_time: Option<SystemTime>,
-    size: i64,
+    stamp: FileStamp,
 }
 
 /// The parsed files of a process's builds, by path. Shared by every program the process makes for one project.
@@ -45,10 +48,10 @@ impl SourceFileCache {
         self.parses.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// The modification time and size a file had when it was parsed into the cache: what the last program that
-    /// loaded it read (a watcher compares it with the disk).
-    pub fn stamp(&self, path: &Path) -> Option<(Option<SystemTime>, i64)> {
-        self.files.lock().expect("source file cache").get(path).map(|e| (e.mod_time, e.size))
+    /// The stamp a file had when the cache last served or parsed it: what the last program that loaded it read (a
+    /// watcher compares it with the disk).
+    pub fn stamp(&self, path: &Path) -> Option<FileStamp> {
+        self.files.lock().expect("source file cache").get(path).map(|e| e.stamp)
     }
 }
 
@@ -56,6 +59,8 @@ impl SourceFileCache {
 pub(crate) struct CachingHost {
     pub inner: Arc<dyn CompilerHost>,
     pub cache: Arc<SourceFileCache>,
+    /// The load's read log: the stamp's question is a read (the file's kind).
+    pub reads: Option<Arc<ReadLog>>,
 }
 
 impl CompilerHost for CachingHost {
@@ -76,24 +81,47 @@ impl CompilerHost for CachingHost {
     }
 
     fn get_source_file(&self, opts: SourceFileParseOptions) -> Option<P<SourceFile>> {
-        let info = self.inner.fs().stat(&opts.file_name);
-        if let Some(info) = &info {
-            let files = self.cache.files.lock().expect("source file cache");
-            if let Some(entry) = files.get(&opts.path)
-                && entry.options == opts
-                && entry.mod_time == info.mod_time()
-                && entry.size == info.size()
-            {
-                return Some(entry.file);
+        let stamp = if tsrs_vfs::bundled::embedded_file(&opts.file_name).is_some() {
+            Some(FileStamp::FIXED)
+        } else {
+            let stat = stamp::stat(&opts.file_name);
+            if let Some(log) = &self.reads {
+                log.see(&opts.file_name, match stat {
+                    PathStat::Missing => Seen::NO_FILE | Seen::NO_DIR,
+                    PathStat::Dir => Seen::DIR,
+                    PathStat::File(_) => Seen::FILE,
+                });
+            }
+            stat.file()
+        };
+        if let Some(stamp) = stamp {
+            let cached = {
+                let files = self.cache.files.lock().expect("source file cache");
+                files
+                    .get(&opts.path)
+                    .filter(|entry| entry.options == opts && entry.stamp.same(&stamp))
+                    .map(|entry| (entry.file, entry.stamp.settled))
+            };
+            if let Some((file, settled)) = cached {
+                // a stamp too close to the change it saw: the text tells (and the new stamp may be settled)
+                if settled || self.inner.fs().read_file(&opts.file_name).is_some_and(|text| text == file.text()) {
+                    if !settled {
+                        let mut files = self.cache.files.lock().expect("source file cache");
+                        if let Some(entry) = files.get_mut(&opts.path) {
+                            entry.stamp = stamp;
+                        }
+                    }
+                    return Some(file);
+                }
             }
         }
         let path = opts.path.clone();
         let parsed = self.inner.get_source_file(opts.clone());
         self.cache.parses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut files = self.cache.files.lock().expect("source file cache");
-        match (parsed, info) {
-            (Some(file), Some(info)) => {
-                files.insert(path, Entry { file, options: opts, mod_time: info.mod_time(), size: info.size() });
+        match (parsed, stamp) {
+            (Some(file), Some(stamp)) => {
+                files.insert(path, Entry { file, options: opts, stamp });
             }
             _ => {
                 files.remove(&path);

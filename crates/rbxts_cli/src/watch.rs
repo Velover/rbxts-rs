@@ -266,8 +266,9 @@ struct Watched {
     anchors: FxHashSet<String>,
     /// What the last load read (path, what it learned), for comparing a directory watched for the first time.
     reads: Vec<(String, Seen)>,
-    /// The program's files with the modification time and size they were parsed at.
-    stamps: Vec<(String, Option<SystemTime>, i64)>,
+    /// The program's files with the stamps they were last served with (and their texts' hashes, for stamps not
+    /// settled).
+    stamps: Vec<(String, rbxts_project::stamp::FileStamp, Option<u64>)>,
     /// The plugins' recorded inputs.
     inputs: inputs::InputWatches,
     /// Path keys of the plugin state files the last committed build left: an event counts when the file no longer
@@ -1067,8 +1068,8 @@ impl Subscriptions {
     }
 }
 
-/// A program file, with the modification time and size it was parsed at.
-type Stamp<'a> = (&'a str, Option<SystemTime>, i64);
+/// A program file, with the stamp it was last served with (and its text's hash when the stamp is not settled).
+type Stamp<'a> = (&'a str, rbxts_project::stamp::FileStamp, Option<u64>);
 
 /// Compares a directory watched for the first time with what the build read: what changed there since the build
 /// started raised no event (the watch did not exist yet).
@@ -1094,9 +1095,9 @@ impl<'a> Scan<'a> {
             }
         }
         let mut stamps: FxHashMap<String, Vec<Stamp<'_>>> = FxHashMap::default();
-        for (path, time, size) in &watched.stamps {
+        for (path, stamp, hash) in &watched.stamps {
             if let Some(parent) = parent_of(path) {
-                stamps.entry(key(parent)).or_default().push((path, *time, *size));
+                stamps.entry(key(parent)).or_default().push((path, *stamp, *hash));
             }
         }
         let own_dirs = own.keys().filter_map(|k| parent_of(k).map(str::to_owned)).collect();
@@ -1161,10 +1162,14 @@ impl<'a> Scan<'a> {
                 stale.push((*path).to_owned());
             }
         }
-        // the program's files: the time and size they were parsed at (a file replaced with an old time)
-        for (path, time, size) in self.stamps.get(&k).into_iter().flatten() {
-            let now = std::fs::metadata(path).ok().map(|m| (m.modified().ok(), m.len() as i64));
-            if now != Some((*time, *size)) {
+        // the program's files: the stamps they were last served with (a file replaced with an old time), or the
+        // text when the stamp is not settled
+        for (path, stamp, hash) in self.stamps.get(&k).into_iter().flatten() {
+            let same = rbxts_project::stamp::stat(path).file().is_some_and(|now| now.same(stamp))
+                && hash.is_none_or(|hash| {
+                    std::fs::read_to_string(path).is_ok_and(|text| rbxts_project::text_hash(&text) == hash)
+                });
+            if !same {
                 stale.push((*path).to_owned());
             }
         }

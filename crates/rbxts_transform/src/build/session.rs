@@ -51,7 +51,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rbxts_luau::{LateStrings, Stmt};
 use rbxts_plugin::erased::{ErasedPart, ErasedShared, ErasedState};
 use rbxts_plugin::{BuildKind, ChangeSet, FileIndex, RebuildPlan, StateOrigin};
-use rbxts_project::read_check::{ProgramStamp, Recheck, Settled};
+use rbxts_project::read_check::{ProgramStamp, Recheck};
 use rbxts_project::{LoadOptions, Project, ProjectDiagnostic, ProjectServices, SourceFileCache, nodepath};
 use tsrs_ast::{Diagnostic, SourceFile};
 use tsrs_compiler::{Context, Program};
@@ -97,8 +97,6 @@ struct Loaded {
     base_salt: String,
     /// Text versions by file object, across every program of the session.
     versions: FxHashMap<P<SourceFile>, Version>,
-    /// What the checks of this load's reads found settled (`read_check`), kept across the rebuilds that reuse it.
-    settled: Settled,
 }
 
 /// A committed file: its facts and, for project files, what the plugins and the late-string re-render need.
@@ -496,9 +494,10 @@ impl<'p> BuildSession<'p> {
         self.reads.clone()
     }
 
-    /// The last program's files on disk, each with the modification time and size it had when parsed (a watcher
-    /// compares them with the disk for directories it starts watching).
-    pub fn loaded_stamps(&self) -> Vec<(String, Option<std::time::SystemTime>, i64)> {
+    /// The last program's files on disk, each with the stamp it had when last served ([`rbxts_project::stamp`]: a
+    /// watcher compares them with the disk for directories it starts watching), and the hash of the text it was
+    /// parsed from when the stamp is not settled (the text tells then).
+    pub fn loaded_stamps(&self) -> Vec<(String, rbxts_project::stamp::FileStamp, Option<u64>)> {
         let Some(last) = &self.last else { return Vec::new() };
         last.project
             .program
@@ -506,8 +505,9 @@ impl<'p> BuildSession<'p> {
             .iter()
             .filter_map(|f| {
                 let file = f.get();
-                let (time, size) = self.cache.stamp(file.path())?;
-                Some((file.file_name().to_owned(), time, size))
+                let stamp = self.cache.stamp(file.path())?;
+                let hash = (!stamp.settled).then(|| rbxts_project::text_hash(file.text()));
+                Some((file.file_name().to_owned(), stamp, hash))
             })
             .collect()
     }
@@ -789,7 +789,6 @@ impl<'p> BuildSession<'p> {
             config_paths,
             base_salt,
             versions,
-            settled: Settled::default(),
         })
     }
 
@@ -802,7 +801,7 @@ impl<'p> BuildSession<'p> {
     /// included), so a load with every answer the same, and the same files but the edited ones, is this one. Not in a
     /// build with project references (a project's setup there depends on the graph), and not outside watch mode (one
     /// build per session).
-    fn reuse(&mut self, report: &mut CompileReport, mut last: Box<Loaded>) -> Result<(Loaded, Project), Box<Loaded>> {
+    fn reuse(&mut self, report: &mut CompileReport, last: Box<Loaded>) -> Result<(Loaded, Project), Box<Loaded>> {
         let Some(reads) = self.reads.clone().filter(|_| self.watch && self.graph.is_none()) else { return Err(last) };
         let start = Instant::now();
         let program: Vec<ProgramStamp> = last
@@ -814,7 +813,7 @@ impl<'p> BuildSession<'p> {
             .map(|f| (f.get().file_name().to_owned(), self.cache.stamp(f.path())))
             .collect();
         let case_sensitive = last.services.use_case_sensitive_file_names;
-        let changed = match reads.recheck(&program, case_sensitive, &mut last.settled) {
+        let changed = match reads.recheck(&program, case_sensitive) {
             Recheck::Same { changed } => changed,
             Recheck::Different(why) => {
                 if std::env::var_os("RBXTS_WATCH_DEBUG").is_some() {
@@ -828,7 +827,7 @@ impl<'p> BuildSession<'p> {
         report.timings.config = checked;
         report.timings.program = project.program_time;
         report.timings.setup = std::time::Duration::ZERO;
-        let Loaded { project: replaced, mut services, setup_diagnostics, setup_fatal, config_paths, base_salt, versions, settled } =
+        let Loaded { project: replaced, mut services, setup_diagnostics, setup_fatal, config_paths, base_salt, versions } =
             *last;
         // a fresh package.json cache: the transform's lookups read the disk again, as a new load's do
         services.packages = Default::default();
@@ -840,7 +839,6 @@ impl<'p> BuildSession<'p> {
             config_paths,
             base_salt,
             versions,
-            settled,
         };
         Ok((loaded, replaced))
     }

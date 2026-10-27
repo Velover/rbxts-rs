@@ -12,6 +12,7 @@ pub mod read_log;
 pub mod rojo;
 pub mod setup;
 pub mod source_cache;
+pub mod stamp;
 
 pub use packages::{ModuleResolver, PackageInfo, PackageJsonCache, ResolvedModuleInfo};
 pub use path_translator::PathTranslator;
@@ -214,8 +215,8 @@ pub fn load(opts: &LoadOptions) -> Result<Project, Vec<P<Diagnostic>>> {
     load_cached(opts, None, None)
 }
 
-/// [`load`] with parsed files kept in `cache` across loads (watch mode): a file whose modification time, size
-/// and parse options are unchanged is the same `SourceFile` in the new program. `reads`: where to record what the
+/// [`load`] with parsed files kept in `cache` across loads (watch mode): a file whose stamp ([`stamp`]) and parse
+/// options are unchanged is the same `SourceFile` in the new program. `reads`: where to record what the
 /// tsconfig parse and the program load read (filled even when the load fails).
 pub fn load_cached(
     opts: &LoadOptions,
@@ -259,7 +260,7 @@ pub fn load_cached(
     }
     let start = Instant::now();
     let make = |config: P<ParsedCommandLine>| {
-        let mut program_options = ProgramOptions::new(config, new_host(&cwd, &fs, cache));
+        let mut program_options = ProgramOptions::new(config, new_host(&cwd, &fs, cache, reads.as_ref()));
         program_options.checker_regions = opts.regions;
         program_options.checker_diagnostic_regions = opts.regions;
         new_program(program_options)
@@ -307,10 +308,15 @@ pub fn load_cached(
 
 /// A compiler host for one program: a fresh caching layer over the file system (directory listings and reads are
 /// cached for the program's lifetime), serving parsed files from `cache` when there is one.
-fn new_host(cwd: &str, fs: &Arc<dyn FS>, cache: Option<&Arc<SourceFileCache>>) -> Arc<dyn tsrs_compiler::CompilerHost> {
+fn new_host(
+    cwd: &str,
+    fs: &Arc<dyn FS>,
+    cache: Option<&Arc<SourceFileCache>>,
+    reads: Option<&Arc<ReadLog>>,
+) -> Arc<dyn tsrs_compiler::CompilerHost> {
     let host = new_cached_fs_compiler_host(cwd, Arc::clone(fs), &bundled::default_lib_path(), None, None, None);
     match cache {
-        Some(cache) => Arc::new(source_cache::CachingHost { inner: host, cache: Arc::clone(cache) }),
+        Some(cache) => Arc::new(source_cache::CachingHost { inner: host, cache: Arc::clone(cache), reads: reads.cloned() }),
         None => host,
     }
 }
@@ -398,7 +404,7 @@ impl Project {
     /// The caller has made sure that nothing the load read reads differently now ([`ReadLog::recheck`]): the module
     /// resolution kept is then the one a new load would make. The parsed files go to this project's source cache.
     pub fn reuse(&self, changed: &[String]) -> Option<Project> {
-        let host = new_host(&self.cwd, &self.fs, self.source_cache.as_ref());
+        let host = new_host(&self.cwd, &self.fs, self.source_cache.as_ref(), self.reads.as_ref());
         let case_sensitive = self.fs.use_case_sensitive_file_names();
         let start = Instant::now();
         // with nothing changed, the program is made again over one of its own files, unchanged
