@@ -23,6 +23,61 @@ export function subRebinds() {
 	return text.sub(rebind());
 }
 
+// a builtin called directly: the local argument is captured when a later argument may reassign it
+export function mathMaxRebinds() {
+	let a = 1;
+	function rebind() {
+		a = 100;
+		return 2;
+	}
+	return math.max(a, rebind());
+}
+
+export function bitOrRebinds() {
+	let a = 1;
+	const rebind = () => {
+		a = 8;
+		return 2;
+	};
+	return bit32.bor(a, rebind());
+}
+
+export function tonumberRebinds() {
+	let text = "10";
+	function rebind() {
+		text = "11";
+		return 2;
+	}
+	return tonumber(text, rebind());
+}
+
+// an element access with a name is written as the member: the same call
+export function mathElementRebinds() {
+	let a = 1;
+	function rebind() {
+		a = 100;
+		return 2;
+	}
+	return math["max"](a, rebind());
+}
+
+// four arguments are no FASTCALL: stock's call
+export function mathMaxFour() {
+	let a = 1;
+	function rebind() {
+		a = 100;
+		return 2;
+	}
+	return math.max(a, 0, 0, rebind());
+}
+
+// no closure assigns the argument: stock's call
+export function mathMaxPlain() {
+	let a = 1;
+	a = 3;
+	return math.max(a, math.min(a, 2));
+}
+
 // nothing reassigns the receiver: stock's call
 export function pushPlain() {
 	const target = [1];

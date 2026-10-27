@@ -8,7 +8,7 @@ emulate TypeScript 5 behaviour that TypeScript 7 changed.
 - **Where:** a worktree of the tsrs clone at `E:\Projects\TS\Flamework\worktrees\tsrs-rbxts-fork`, on branch
   `rbxts-fork`. `Cargo.toml` points at its crates by absolute path, so every rbxts-rs worktree uses the same tsrs.
 - **What:** tsrs **v0.18.0** (`5f92808`) plus commits that change only visibility, `pub(crate)` → `pub`. That is
-  20 lines in 8 files:
+  10 lines in 8 files:
 
 | Commit | Item | File | Used for |
 |---|---|---|---|
@@ -17,21 +17,12 @@ emulate TypeScript 5 behaviour that TypeScript 7 changed.
 | 63b22eb | `Checker::get_number_literal_type` | `tsrs_checker/src/checker_12.rs` | the transform's type queries |
 | 63b22eb | `Checker::get_type_of_assignment_pattern` | `tsrs_checker/src/services.rs` | destructuring assignments |
 | cf8498b | `Program::get_semantic_diagnostics_with_checker` | `tsrs_compiler/src/program.rs` | checking that honours `@ts-ignore` and the other comment directives |
-| adadb25 | `Checker::get_contextual_signature` | `tsrs_checker/src/checker_05.rs` | TS5's contextual `this` in `util/is_method.rs` |
-| 67b5330 | `Checker::is_type_related_to` | `tsrs_checker/src/relater_1.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
-| 67b5330 | `Checker::get_parameter_count` | `tsrs_checker/src/relater_1.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
-| 67b5330 | `Checker::get_non_array_rest_type` | `tsrs_checker/src/relater_1.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
-| 67b5330 | `Checker::get_this_type_of_signature` | `tsrs_checker/src/relater_1.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
-| 67b5330 | `Checker::check_expression_with_contextual_type` | `tsrs_checker/src/checker_04.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
-| 67b5330 | `Checker::check_non_null_expression` | `tsrs_checker/src/checker_04.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
-| 67b5330 | `Checker::get_this_argument_of_call` | `tsrs_checker/src/checker_05.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
-| 67b5330 | `Checker::get_this_argument_type` | `tsrs_checker/src/checker_05.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
-| 67b5330 | `Checker::has_correct_arity` | `tsrs_checker/src/checker_05.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
-| 67b5330 | `Checker::reorder_candidates` | `tsrs_checker/src/checker_05.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
-| 67b5330 | `Checker::get_regular_type_of_object_literal` | `tsrs_checker/src/checker_14.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
-| 67b5330 | `Checker::get_spread_argument_type` | `tsrs_checker/src/checker_14.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
-| 67b5330 | `Checker::push_contextual_type` | `tsrs_checker/src/checker_15.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
-| 67b5330 | `Checker::pop_contextual_type` | `tsrs_checker/src/checker_15.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
+| adadb25 | `Checker::get_contextual_signature` | `tsrs_checker/src/checker_05.rs` | nothing since TypeScript 5's context sensitivity is marked on the tree (below); kept, as the fork is shared |
+| 87958da | `Checker::is_readonly_array_type` | `tsrs_checker/src/checker_11.rs` | Flamework's macro types (`flamework_rs`) |
+| 87958da | `Checker::get_literal_type_from_property` | `tsrs_checker/src/checker_13.rs` | Flamework's macros (`flamework_rs`) |
+| 87958da | `is_declaration_readonly` | `tsrs_checker/src/utilities.rs`, `tsrs_checker/src/lib.rs` | Flamework's macro types (`flamework_rs`) |
+
+  The branch also carries 67b5330 (overload internals made public) and its revert c796de98, which cancel out.
 
 - **Rule:** the fork gets visibility flips and nothing else. Behaviour fixes and workarounds go in rbxts-rs with a
   `// rbxts-rs:` comment. If a needed function is too entangled to make public, copy a small helper into rbxts-rs
@@ -76,8 +67,16 @@ Re-check these after an update; they are where tsrs's behaviour reaches our outp
 - `Node::text()` panics on a `QualifiedName`.
 - Positions are UTF-8 byte offsets. `tsrs_ast::positionmap` converts them to UTF-16 where text positions reach the
   output.
-- **TS7 gives no contextual `this`** to a function expression that doesn't use `this`; TS5 did. `is_method` emulates
-  TS5 through `get_contextual_signature` (see `util/is_method.rs`).
+- **Context-sensitive functions.** TypeScript 5 takes every function expression and object literal method without
+  type parameters and without a `this` parameter for context sensitive (its implicit `this` is contextually typed);
+  TypeScript 7's `has_context_sensitive_parameters` takes only one that uses `this` (its `ContainsThis` flag).
+  That decides whether such a function gets its contextual `this` (`function () {}` in a `(this: Foo) => void` slot
+  is `function(self)` in stock's output), and in an overloaded call it decides which overload fixes that `this`
+  (TypeScript 5 fixes it from the first overload it checks the function against in full, even one it then rejects),
+  generic inference, and when no overload matches (TS2769). `rbxts_project` (`mark_ts5_context_sensitive_functions`)
+  sets `ContainsThis` on those functions after binding, before anything is checked, so TypeScript 7's checker judges
+  them as TypeScript 5's; watch marks each file it binds again. Nothing else reads the flag on a function node:
+  re-check that (`ContainsThis` in `tsrs_checker` and `tsrs_ast`) after an update.
 - `implements` entries are TypeReference nodes. `getIndexTypeOfType` takes a key type. A property access through an
   index signature gives an `__index` symbol. There is no `__String`.
 - TypeScript 7 gives the related information of `TS1007` ("The parser expected to find a '}' to match the '{' token
@@ -107,8 +106,9 @@ Re-check these after an update; they are where tsrs's behaviour reaches our outp
   512 MiB stack. Set only `checkers`: `single_threaded` also makes parsing and binding serial.
 
 ## TypeScript 5 behaviour rbxts-rs does not reproduce
-Known, accepted differences from stock roblox-ts on TypeScript 5, each inherent to TypeScript 7. None makes an output
-wrong; a few make a build fail where stock's passes, and the entry says how to write it for both.
+Known, accepted differences from stock roblox-ts on TypeScript 5, each inherent to TypeScript 7. A few make a build
+fail where stock's passes, and the entry says how to write it for both; one changes only a diagnostic's text. The
+last section is a Luau bug that makes stock's output and rbxts-rs's wrong alike.
 
 - **Union and mapped key order.** Where an output lists the properties of a union or a mapped type, TypeScript 7's
   type ids order them, not TypeScript 5's (`util/ts5_property_order.rs` restores TypeScript 5's order where it can be
@@ -137,3 +137,32 @@ wrong; a few make a build fail where stock's passes, and the entry says how to w
   differs.
 - **Declaration maps.** TypeScript 7 maps some declarations (constructors, a specifier `transformPaths` rewrites)
   differently from TypeScript 5: `.d.ts.map` files are not byte-equal to stock roblox-ts's. The `.d.ts` files are.
+- **TS2769's elaboration.** When no overload matches a call and two or three were tried, TypeScript 5 elaborates the
+  error of each (`Overload 1 of 2, '(cb: (this: Foo) => number): void', gave the following error.` and the same for
+  overload 2, each with its own chain); TypeScript 7 (`report_call_resolution_errors`) elaborates only the last
+  (`The last overload gave the following error.`, with related information `The last overload is declared here.`),
+  as TypeScript 5 does from four on. The error itself is stock's: the same place, code and first line
+  (`TS2769: No overload matches this call.`), exit code 1 and nothing written
+  (`rbxts_cli/tests/fixtures/overload_error`: `stock-stdout.txt` is stock's). Reproducing TypeScript 5's text would
+  change tsrs's checker, which the fork does not do.
+
+## Luau bugs
+- **A builtin call's local argument at `--!optimize 2`.** Luau compiles a call of a builtin (`math.max`,
+  `bit32.bor`, `string.sub`, `table.insert`, `tonumber`, … with at most three arguments) to FASTCALL, which at O2
+  reads a local argument's register after the later arguments ran: in `math.max(a, rebind())` where `rebind`
+  assigns `a`, O2 uses the new value, O0 and O1 (and JavaScript) the old one. rbxts-rs captures such an argument
+  first (`local _a = a`), in its macros' output and in calls written in the source, only when the argument is a local
+  some closure assigns and a later argument may call one (`luau-o2-fastcall`); every other call is stock's.
+- **A numeric `for` from a constant `-0` at `--!optimize 2`.** Luau's compiler (Lune 0.10.5; Studio compiles
+  scripts at O2) runs `for i = -0, 0 do` with `i` = `0`, not `-0`; O0 and O1 give `-0`, and a start that is `-0` only
+  at runtime is not affected:
+
+  ```lua
+  for i = -0, 0 do print(1 / i) end -- O0/O1: -inf; O2: inf
+  local box = { start = -0 }
+  for i = box.start, 0 do print(1 / i) end -- -inf at every level
+  ```
+
+  rbxts-rs lowers a `for` statement whose start it folds to `-0` (`for (let i = -0; …)`, `0 * -1`, a `const` of
+  `-0`) to the while loop instead (`luau-o2-negzero`), but writes `$range(-0, …)` as stock does, a numeric `for`,
+  which O2 runs from `0`.

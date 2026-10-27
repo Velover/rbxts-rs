@@ -23,6 +23,59 @@ local function subRebinds()
 	local _exp = text
 	return string.sub(_exp, rebind())
 end
+-- a builtin called directly: the local argument is captured when a later argument may reassign it
+local function mathMaxRebinds()
+	local a = 1
+	local function rebind()
+		a = 100
+		return 2
+	end
+	local _a = a
+	return math.max(_a, rebind())
+end
+local function bitOrRebinds()
+	local a = 1
+	local rebind = function()
+		a = 8
+		return 2
+	end
+	local _a = a
+	return bit32.bor(_a, rebind())
+end
+local function tonumberRebinds()
+	local text = "10"
+	local function rebind()
+		text = "11"
+		return 2
+	end
+	local _text = text
+	return tonumber(_text, rebind())
+end
+-- an element access with a name is written as the member: the same call
+local function mathElementRebinds()
+	local a = 1
+	local function rebind()
+		a = 100
+		return 2
+	end
+	local _a = a
+	return math.max(_a, rebind())
+end
+-- four arguments are no FASTCALL: stock's call
+local function mathMaxFour()
+	local a = 1
+	local function rebind()
+		a = 100
+		return 2
+	end
+	return math.max(a, 0, 0, rebind())
+end
+-- no closure assigns the argument: stock's call
+local function mathMaxPlain()
+	local a = 1
+	a = 3
+	return math.max(a, math.min(a, 2))
+end
 -- nothing reassigns the receiver: stock's call
 local function pushPlain()
 	local target = { 1 }
@@ -70,6 +123,12 @@ end
 return {
 	pushRebinds = pushRebinds,
 	subRebinds = subRebinds,
+	mathMaxRebinds = mathMaxRebinds,
+	bitOrRebinds = bitOrRebinds,
+	tonumberRebinds = tonumberRebinds,
+	mathElementRebinds = mathElementRebinds,
+	mathMaxFour = mathMaxFour,
+	mathMaxPlain = mathMaxPlain,
 	pushPlain = pushPlain,
 	negativeZeroLoop = negativeZeroLoop,
 	negativeZeroConstantLoop = negativeZeroConstantLoop,
