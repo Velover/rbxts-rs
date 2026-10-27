@@ -1,6 +1,6 @@
 // Shapes of stock roblox-ts's output that Luau's `--!optimize 2` (Studio's default for scripts) runs otherwise than
-// JavaScript, through Luau engine bugs (docs/tsrs.md, "Luau bugs"). rbxts-rs emits them as stock does: `expected/` is
-// stock's output.
+// JavaScript (docs/tsrs.md, "Luau behaviour that roblox-ts output can meet"). rbxts-rs emits them as stock does:
+// `expected/` is stock's output.
 
 // a builtin call (FASTCALL) whose local argument a later argument reassigns through a closure
 export function pushRebinds() {

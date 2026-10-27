@@ -82,7 +82,7 @@ fn is_method_inner(state: &mut TransformState<'_>, node: P<Node>, t: P<Type>) ->
 
     for &signature in state.checker.get_signatures_of_type_exported(t, SignatureKind::Call) {
         // a function expression or object literal method has its contextual `this` as TypeScript 5 gives it
-        // (`rbxts_project::ts5_context_sensitive_functions`)
+        // (`rbxts_project`'s `mark_ts5_context_sensitive_functions`)
         if let Some(this_parameter) = signature.this_parameter() {
             let this_type = state
                 .checker

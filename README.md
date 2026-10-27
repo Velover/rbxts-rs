@@ -88,6 +88,14 @@ Roblox type: possibly-undefined arguments of Roblox calls are not wrapped in par
 in such a layout, set `"preserveSymlinks": true` in the tsconfig (the linked path then counts), as stock needs too
 (`util/types.rs` `is_in_rbxts_types`, a roblox-ts bug kept for parity).
 
+**Deliberate differences from stock (roblox-ts bugs fixed).** In outputs, the fixes the divergence manifest names
+(`crates/rbxts_bench/parity/divergences.json`, each with its description; the `stockfix` fixture). In diagnostics,
+the error for a comment directive without `--allowCommentDirectives` (`@ts-ignore`, `@ts-expect-error`,
+`@ts-nocheck`) spans its comment: stock's `createDiagnosticWithLocation` gives a range's diagnostic the length
+`range.end` instead of `end - pos`, so its underline runs from the comment past it, to the end of the file once the
+comment is far enough down (`compile.rs` `comment_directive_diagnostics`; test `every_ts_nocheck_pragma_is_reported`).
+In watch and project-reference builds, the deviations listed there (a case-only rename, a failing solution root).
+
 Hand-written transform fixtures live in `crates/rbxts_transform/tests/fixtures/<area>`: a roblox-ts project without
 `node_modules` (`src`, `tsconfig.json`, `default.project.json`) and `expected/`, stock roblox-ts's output for it
 (`node roblox-ts-test/probe/rbxts-driver.cjs <roblox-ts checkout> tsconfig.json --backend ts5`, from the fixture with a
