@@ -181,15 +181,34 @@ directives. tsrs 0.20 also refuses network paths ("Projects on a network path", 
 renames: diagnostic messages, compiler option kinds and `INTERNAL_SYMBOL_NAME_MISSING` are `SCREAMING_SNAKE_CASE`,
 `compilerOptions.paths` is an `Arc`, and `DefaultResolver` borrows its host.
 
-**Checker defaults, and the cost.** tsrs 0.19 changed its defaults to TypeScript's own: Go's file assignment and
-checker history, eager type members. On 0.18, lazy members, the canonical history and locality scheduling with work
-stealing were the defaults; on 0.20 they are, with three extra checker caches, the opt-in fast preset (`--fast`,
-`TSRS_FAST=1`, `tsrs_core::fast::set_enabled`). rbxts-rs sets its checker count itself and sets
-nothing else, so it now checks with TypeScript's defaults: type checking (`rbxts-bench load`) takes about 17-22% more
-time and a clean build about 5-10% more CPU time, with about 5-7% more peak memory (`bench/RESULTS.md`). With
-`TSRS_FAST=1` the numbers are 0.18's again and both parity corpora are unchanged; whether rbxts-rs turns the preset on
-is open (it changes the checker's scheduling and history, which tsrs documents can change diagnostics in rare
-history-dependent cases). Output does not depend on the file assignment (determinism check).
+**Checker defaults: the fast preset is on.** tsrs 0.19 changed its defaults to TypeScript's own: Go's file assignment
+and checker history, eager type members. On 0.18, lazy members, the canonical history and locality scheduling were the
+defaults; on 0.20 they are, with three extra checker caches and more, the opt-in fast preset (`--fast`, `TSRS_FAST=1`,
+`tsrs_core::fast::set_enabled`; tsrs `docs/COMPATIBILITY.md`, "Performance preset"). With TypeScript's defaults
+rbxts-rs type checked the real project (`rbxts-bench load`) 17-22% slower than on 0.18, with 5-7% more peak memory.
+So rbxts-rs turns the preset on (user decision, 2026-10-28): `rbxts_project::use_tsrs_fast_preset`, called first by
+rbxtsc and rbxtsc-fw (`Cli::run_with`), rbxts-bench and rbxts-probe, and again by `load_cached` before it makes a
+program (the tests and any other caller). It must run before a checker exists, as tsrs reads the preset once.
+`TSRS_FAST=0` turns it off, for debugging against tsrs's reference settings. How each part of the preset meets
+rbxts-rs:
+- **Lazy type members, the canonical history and its caches (union-front, indexed-access, inference-walk):** on.
+  Checker internals; tsrs 0.18 had the first two by default, the settings rbxts-rs was validated with. Everything
+  rbxts-rs reads from the checker goes through its public API (`ts5_property_order`, `overload_errors.rs`, the
+  transform's and Flamework's type queries), and the `ContainsThis` marks of `mark_ts5_context_sensitive_functions`
+  are on the bound tree, before any checker exists. Parity, the 169 diagnostics files and Flamework's output are the
+  same with the preset on and off.
+- **The locality assignment of files to checkers:** on, in place of Go's FENNEL assignment. It is static, a function
+  of the program, made when the pool is; rbxts-rs transforms each file on that owner (`build/checker_groups.rs`,
+  `Program::checker_index_of_file`). Module affinity joins it only from 16 checkers on, still static. Output does
+  not depend on the assignment (the determinism check, at 1 to 12 checkers and random assignments).
+- **Adaptive checker counts:** never apply: rbxts-rs always gives the count (`DEFAULT_CHECKERS`, `--checkers`,
+  `RBXTS_CHECKERS`), and an explicit count wins over the preset.
+- **Work stealing and file splitting:** never apply: tsrs uses them only in its own type-check pass
+  (`get_semantic_diagnostics`, `allow_steal`). rbxts-rs checks with `for_each_checker_group`, which keeps every file on
+  its owner and visits them in order, and its transform takes the same owners.
+- **Lazy declaration parsing (`TSRS_LAZY_DTS`) and leaf freeing:** off. tsrs switches them on only when its caller
+  asks (`enable_lazy_dts`; `ProgramOptions::leaf_files`): rbxts-rs asks only for `rbxts-bench load --lazy-dts`, so the
+  declaration files rbxts-rs and Flamework read are parsed in full, as before.
 
 ## TypeScript 5 behaviour rbxts-rs does not reproduce
 Known, accepted differences from stock roblox-ts on TypeScript 5, each inherent to TypeScript 7. A few make a build

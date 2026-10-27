@@ -177,6 +177,9 @@ file nothing imports; the hub is imported by 76 files, and its closure (the reve
 
 ## tsrs 0.20 (TypeScript 7.1 beta) against tsrs 0.18 (2026-10-28)
 
+First with tsrs 0.20's default checker settings (c/ts71 at 5c5c8c7), then with the fast preset on, as rbxts-rs
+runs now (338d603; docs/tsrs.md, "Checker defaults: the fast preset is on").
+
 main (aea93f9, tsrs 0.18) and c/ts71 (tsrs 0.20), `measure` profile, the real project, 4 checkers unless noted, run
 back to back and interleaved on a machine with other work open (Studio, browsers; 51-80% idle). Medians, with ranges.
 
@@ -212,6 +215,23 @@ runs per side, main ts71 ts71 main main ts71):
 | hub edit, median per run | 418.4 / 425.9 / 421.6 ms | 379.2 / 382.9 / 386.7 ms (-9%) |
 | working set, peak over the run | 351 / 337 / 365 MiB | 383 / 359 / 406 MiB (+8%) |
 
-- The slower type check and the extra memory come from tsrs 0.19's new defaults (docs/tsrs.md, "Checker defaults,
-  and the cost"): on 0.18, lazy members, the canonical history and locality scheduling were on by default; on 0.20
-  they are part of the fast preset. With it the numbers are 0.18's.
+- The slower type check and the extra memory came from tsrs 0.19's new defaults: on 0.18, lazy members, the
+  canonical history and locality scheduling were on by default; on 0.20 they are part of the fast preset.
+
+With the fast preset on (c/ts71 at 338d603), the same machine and method, run back to back:
+
+| build | wall main | wall 0.20 | CPU main | CPU 0.20 | peak WS main | peak WS 0.20 |
+| --- | --- | --- | --- | --- | --- | --- |
+| clean, Flamework off (12 rounds) | 1299 ms (1087-2272) | 1217 ms (1107-1779), -6% | 2992 ms (2781-4031) | 3172 ms (2906-3906), +6% | 239.8 MiB | 237.3 MiB, -1% |
+| clean, Flamework on (12 rounds) | 1757 ms (1649-2394) | 1757 ms (1688-2391), 0% | 4188 ms (3938-5125) | 4203 ms (3969-5094), 0% | 253.4 MiB | 251.5 MiB, -1% |
+
+| `rbxts-bench load` | total main | total 0.20 | check main | check 0.20 | peak WS main | peak WS 0.20 | peak commit main | peak commit 0.20 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 4 checkers | 365 ms (358-394) | 374 ms (370-442), +2% | 270 ms | 283 ms, +5% | 193.4 MiB | 191.7 MiB, -1% | 417 MiB | 430 MiB, +3% |
+| 1 checker | 659 ms (653-662) | 673 ms (663-682), +2% | 566 ms | 581 ms, +3% | 137.4 MiB | 137.3 MiB, 0% | 276 MiB | 278 MiB, +1% |
+
+| watch (`mem.script.json`, main ts71 ts71 main main ts71) | main | 0.20 |
+| --- | --- | --- |
+| leaf edit, median per run | 68.2 / 65.5 / 64.2 ms | 61.5 / 70.5 / 62.1 ms |
+| hub edit, median per run | 429.5 / 432.2 / 419.9 ms | 422.3 / 453.1 / 427.0 ms |
+| working set, peak over the run | 342 / 337 / 364 MiB | 352 / 333 / 322 MiB |
