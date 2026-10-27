@@ -428,6 +428,29 @@ impl ReadLog {
         self.paths.lock().expect("read log").iter().map(|(p, s)| (p.clone(), *s)).collect()
     }
 
+    /// Whether `other` got the same answers but for directory listings: the same paths with the same kinds, texts and
+    /// `realpath`s (a read made again, compared with the one it replaces).
+    pub fn same_but_listings(&self, other: &ReadLog) -> bool {
+        fn sorted<T: Ord>(mut items: Vec<T>) -> Vec<T> {
+            items.sort();
+            items
+        }
+        let entries = |log: &ReadLog| sorted(log.entries().into_iter().map(|(p, s)| (p, s.0)).collect());
+        entries(self) == entries(other)
+            && sorted(self.contents()) == sorted(other.contents())
+            && sorted(self.realpaths()) == sorted(other.realpaths())
+    }
+
+    /// Forgets every read: a log no longer used (a config host, leaked for the process, keeps a handle on the log it
+    /// recorded into).
+    pub fn clear(&self) {
+        self.paths.lock().expect("read log").clear();
+        self.texts.lock().expect("read log").clear();
+        self.contents.lock().expect("read log").clear();
+        self.listings.lock().expect("read log").clear();
+        self.realpaths.lock().expect("read log").clear();
+    }
+
     /// How many paths were read.
     pub fn len(&self) -> usize {
         self.paths.lock().expect("read log").len()

@@ -257,8 +257,17 @@ pub struct BuildSession<'p> {
     seed: Option<Vec<(&'static str, ErasedState)>>,
     /// The incremental state was looked at (only the first build reads it).
     disk_checked: bool,
-    /// What the last load read (recorded in watch sessions only), kept when the load failed.
+    /// What the last load's program read (recorded in watch sessions only): its files and module resolution.
     reads: Option<Arc<rbxts_project::ReadLog>>,
+    /// What the last tsconfig parse read (the configs, the include globs' listings), kept when the load failed: a
+    /// log of its own, as the parse is made again on its own (`reuse`).
+    config_reads: Option<Arc<rbxts_project::ReadLog>>,
+    /// What the last project setup read (the Rojo resolvers, the package mapping, the project data): a log of its own,
+    /// as a setup is made again on its own (`reuse`).
+    setup_reads: Option<Arc<rbxts_project::ReadLog>>,
+    /// A second owner of every program a watch session made and has not freed (`free_replaced`): when a build
+    /// panics, its `Project`s unwind with it, and the session frees their programs through these.
+    owners: Vec<rbxts_project::ProgramOwner>,
     /// What the last build that ran `finish` read through `FinishCx` (globs, listings, existence, files).
     finish_reads: Vec<FinishRead>,
     /// The last build ran `finish` (`finish_reads` are its own).
@@ -355,6 +364,9 @@ impl<'p> BuildSession<'p> {
             seed: None,
             disk_checked: false,
             reads: None,
+            config_reads: None,
+            setup_reads: None,
+            owners: Vec::new(),
             finish_reads: Vec::new(),
             finish_ran: false,
             retransform: FxHashSet::default(),
@@ -384,6 +396,12 @@ impl<'p> BuildSession<'p> {
     /// The committed plugin states, by plugin name (to seed a clean build with).
     pub fn committed_states(&self) -> Vec<(&'static str, ErasedState)> {
         self.committed.as_ref().map_or_else(Vec::new, |c| c.plugins.iter().map(|p| (p.name, p.state.clone())).collect())
+    }
+
+    /// How many programs this watch session holds and has not freed: between builds, its last load's (one), after a
+    /// build that panicked none (a long watch's memory stays flat).
+    pub fn live_programs(&self) -> usize {
+        self.owners.len()
     }
 
     /// A build has committed in this session (or the incremental state was read).
@@ -487,11 +505,11 @@ impl<'p> BuildSession<'p> {
         names
     }
 
-    /// What the last program load read from the file system (the tsconfig parse and the program: files, directories
-    /// and the paths module resolution probed that did not exist), for a watcher; also when that load failed (a
-    /// tsconfig extending a package not installed yet).
-    pub fn read_log(&self) -> Option<Arc<rbxts_project::ReadLog>> {
-        self.reads.clone()
+    /// What the last load read from the file system (the tsconfig parse and the program: files, directories and the
+    /// paths module resolution probed that did not exist; and the project setup), for a watcher; also when that load
+    /// failed (a tsconfig extending a package not installed yet).
+    pub fn read_logs(&self) -> Vec<Arc<rbxts_project::ReadLog>> {
+        self.config_reads.iter().chain(&self.reads).chain(&self.setup_reads).cloned().collect()
     }
 
     /// The last program's files on disk, each with the stamp it had when last served ([`rbxts_project::stamp`]: a
@@ -646,14 +664,33 @@ impl<'p> BuildSession<'p> {
         let last = self.last.take();
         // the programs this build replaces: the last build's, and the first run's when the build starts over
         let mut replaced: Vec<Project> = Vec::new();
-        let (mut report, mut summary, mut committed, mut last) = self.run(touched, committed, last, &mut replaced);
-        if !self.retransform.is_empty() {
-            // cached files whose late strings changed value with no Luau kept to render again (their parts came from
-            // the incremental state): the build starts over once, transforming them
-            self.rebuilds = rebuilds;
-            (report, summary, committed, last) = self.run(&[], committed, last, &mut replaced);
-            self.retransform.clear();
-        }
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let (mut report, mut summary, mut committed, mut last) = self.run(touched, committed, last, &mut replaced);
+            if !self.retransform.is_empty() {
+                // cached files whose late strings changed value with no Luau kept to render again (their parts came
+                // from the incremental state): the build starts over once, transforming them
+                self.rebuilds = rebuilds;
+                (report, summary, committed, last) = self.run(&[], committed, last, &mut replaced);
+                self.retransform.clear();
+            }
+            (report, summary, committed, last)
+        }));
+        let (report, summary, committed, last) = match result {
+            Ok(result) => result,
+            Err(panic) => {
+                // the build's programs, the last build's included, unwound with it (the session forgets the last
+                // build: `committed` and `last` were taken); free them as `free_replaced` frees a replaced one
+                drop(replaced);
+                for owner in std::mem::take(&mut self.owners) {
+                    // SAFETY: as in `free_replaced`: nothing reads these programs again. Every `Project` of them is
+                    // gone (dropped as the build unwound, or with `replaced`), the session keeps nothing of the last
+                    // build, the plugins' data holds no program handle, and the build's threads were joined and its
+                    // region scopes left (they are guards) as the panic unwound to here.
+                    unsafe { owner.free() };
+                }
+                std::panic::resume_unwind(panic);
+            }
+        };
         self.committed = committed;
         self.last = last;
         self.free_replaced(replaced);
@@ -662,11 +699,13 @@ impl<'p> BuildSession<'p> {
 
     /// Frees the programs a watch build replaced (the memory of a long watch stays flat). A session that does not
     /// watch keeps them (its programs have no regions to give back: one build, or the harness's clean builds).
-    fn free_replaced(&self, replaced: Vec<Project>) {
+    fn free_replaced(&mut self, replaced: Vec<Project>) {
         if !self.watch {
             return;
         }
         for project in replaced {
+            // its second owner goes first, so that the last program of a lineage frees the lineage's data
+            self.owners.retain(|owner| !owner.owns(&project));
             // SAFETY: nothing reads the replaced program or what was made under its checkers again. The session
             // keeps no handle into it: the committed state holds copies of the diagnostics it keeps (`detach`), the
             // project setup and file facts are owned data, and the parsed files are the source cache's (bound before
@@ -712,11 +751,8 @@ impl<'p> BuildSession<'p> {
         let mut exact: FxHashSet<String> = files.iter().map(|f| key(f)).collect();
         exact.extend(self.config_inputs().iter().map(|c| key(c)));
         exact.extend(self.state_files().iter().map(|s| key(&s.path)));
-        let reads: Vec<String> = self
-            .reads
-            .as_ref()
-            .map(|log| log.entries().into_iter().map(|(path, _)| key(&path)).collect())
-            .unwrap_or_default();
+        let reads: Vec<String> =
+            self.read_logs().iter().flat_map(|log| log.entries()).map(|(path, _)| key(&path)).collect();
         touched.iter().any(|path| {
             let k = key(path);
             k.contains("/node_modules/")
@@ -737,7 +773,21 @@ impl<'p> BuildSession<'p> {
 
     /// Loads the program and the project setup.
     fn load(&mut self, report: &mut CompileReport, versions: FxHashMap<P<SourceFile>, Version>) -> Option<Loaded> {
-        self.reads = self.watch.then(|| Arc::new(rbxts_project::ReadLog::default()));
+        // the logs this load replaces are emptied: the last load's config host, leaked, keeps one
+        let new_log = || self.watch.then(|| Arc::new(rbxts_project::ReadLog::default()));
+        for log in [
+            std::mem::replace(&mut self.config_reads, new_log()),
+            std::mem::replace(&mut self.reads, new_log()),
+            std::mem::replace(&mut self.setup_reads, new_log()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            log.clear();
+        }
+        let logs = self.config_reads.as_ref().zip(self.reads.as_ref()).map(|(config, program)| {
+            rbxts_project::LoadLogs { config: Arc::clone(config), program: Arc::clone(program) }
+        });
         let project = match rbxts_project::load_cached(
             &LoadOptions {
                 tsconfig: self.options.tsconfig.clone(),
@@ -747,7 +797,7 @@ impl<'p> BuildSession<'p> {
                 regions: self.watch,
             },
             Some(&self.cache),
-            self.reads.clone(),
+            logs.as_ref(),
         ) {
             Ok(project) => project,
             Err(diagnostics) => {
@@ -756,13 +806,17 @@ impl<'p> BuildSession<'p> {
                 return None;
             }
         };
+        if self.watch {
+            self.owners.push(project.owner());
+        }
         report.timings.config = project.config_time;
         report.timings.program = project.program_time;
         let start = Instant::now();
         let tsconfig_path = self.tsconfig_path();
+        let setup_reads = self.setup_reads.as_ref();
         let setup = match &self.graph {
-            Some(graph) => project.setup_with_data(graph.data.clone()),
-            None => project.setup(&tsconfig_path, &self.options.project_options),
+            Some(graph) => project.setup_with_data_into(setup_reads, graph.data.clone()),
+            None => project.setup_into(setup_reads, &tsconfig_path, &self.options.project_options),
         };
         let setup = match setup.map(|mut setup| {
             if let Some(graph) = &self.graph {
@@ -774,6 +828,8 @@ impl<'p> BuildSession<'p> {
             Err(error) => {
                 report.fatal = error.messages;
                 report.timings.setup = start.elapsed();
+                // no checker of the program was made, and nothing refers to it
+                self.free_replaced(vec![project]);
                 return None;
             }
         };
@@ -794,13 +850,20 @@ impl<'p> BuildSession<'p> {
 
     /// A watch rebuild's load when nothing the last load read reads differently now ([`ReadLog::recheck`]): its
     /// tsconfig parse, module resolution and project setup stand, and the program is made again from the last one
-    /// with the edited files parsed again (`Project::reuse`, tsrs's `reuse_program`). `Err` gives `last` back when the
-    /// check or the reuse fails (a file's imports changed): the project is loaded again then.
+    /// with the edited files parsed again (`Project::reuse`, tsrs's `reuse_program`). When only what the project
+    /// setup read reads differently (the output and include folders the first build made, which the Rojo resolver
+    /// searches; an output deleted by hand), the program stands and the setup is made again; when only the tsconfig
+    /// parse's listings do (those folders made at the tsconfig's directory, an asset added), the parse is made again
+    /// and stands for the last one if it finds the same files. `Err` gives `last` back when a check, the parse, the
+    /// setup or the reuse fails (a file's imports changed): the project is loaded again then.
     ///
-    /// Exact: a load is a function of what it read (the log has every answer it got, the project setup's reads
-    /// included), so a load with every answer the same, and the same files but the edited ones, is this one. Not in a
-    /// build with project references (a project's setup there depends on the graph), and not outside watch mode (one
-    /// build per session).
+    /// Exact: a load is a function of what it read (the logs have every answer it got: the tsconfig parse's, the
+    /// program's and the project setup's apart), so a load with every answer the same, and the same files but the
+    /// edited ones, is this one. A parse whose answers are the same but for its listings, which only decide its files,
+    /// is the last one when it finds the same files; and a setup is a function of what it read and of the program's
+    /// options and files, which are the same. Not in a build
+    /// with project references (a project's setup there depends on the graph), and not outside watch mode (one build
+    /// per session).
     fn reuse(&mut self, report: &mut CompileReport, last: Box<Loaded>) -> Result<(Loaded, Project), Box<Loaded>> {
         let Some(reads) = self.reads.clone().filter(|_| self.watch && self.graph.is_none()) else { return Err(last) };
         let start = Instant::now();
@@ -822,23 +885,79 @@ impl<'p> BuildSession<'p> {
                 return Err(last);
             }
         };
-        let checked = start.elapsed();
+        // the tsconfig parse's reads: the same, or the parse is made again, and stands for this one when only its
+        // listings read differently and it finds the same files
+        let config = self.config_reads.clone().map(|log| {
+            let recheck = log.recheck(&[], case_sensitive);
+            (log, recheck)
+        });
+        match config {
+            Some((_, Recheck::Same { .. })) => {}
+            Some((old, Recheck::Different(why))) => {
+                if std::env::var_os("RBXTS_WATCH_DEBUG").is_some() {
+                    eprintln!("[rbxtsc watch] parsing the tsconfig again: {why}");
+                }
+                let log = Arc::new(rbxts_project::ReadLog::default());
+                if !(last.project.reparse_config(&log) && old.same_but_listings(&log)) {
+                    log.clear();
+                    return Err(last);
+                }
+                old.clear();
+                self.config_reads = Some(log);
+            }
+            None => return Err(last),
+        }
+        // the setup's reads: the same, or the setup is made again (over the last program, whose files and options
+        // the reused one has)
+        let setup_start = Instant::now();
+        let setup = match self.setup_reads.as_ref().map(|log| log.recheck(&[], case_sensitive)) {
+            Some(Recheck::Same { .. }) => None,
+            Some(Recheck::Different(why)) => {
+                if std::env::var_os("RBXTS_WATCH_DEBUG").is_some() {
+                    eprintln!("[rbxtsc watch] setting up again: {why}");
+                }
+                let log = Arc::new(rbxts_project::ReadLog::default());
+                let tsconfig_path = self.tsconfig_path();
+                match last.project.setup_into(Some(&log), &tsconfig_path, &self.options.project_options) {
+                    Ok(setup) => Some((setup, log)),
+                    Err(_) => {
+                        log.clear();
+                        return Err(last);
+                    }
+                }
+            }
+            None => return Err(last),
+        };
+        let setup_time = setup_start.elapsed();
+        let checked = start.elapsed() - setup_time;
         let Some(project) = last.project.reuse(&changed) else { return Err(last) };
+        self.owners.push(project.owner());
         report.timings.config = checked;
         report.timings.program = project.program_time;
-        report.timings.setup = std::time::Duration::ZERO;
+        report.timings.setup = setup.as_ref().map_or(std::time::Duration::ZERO, |_| setup_time);
         let Loaded { project: replaced, mut services, setup_diagnostics, setup_fatal, config_paths, base_salt, versions } =
             *last;
-        // a fresh package.json cache: the transform's lookups read the disk again, as a new load's do
-        services.packages = Default::default();
-        let loaded = Loaded {
-            project,
-            services,
-            setup_diagnostics,
-            setup_fatal,
-            config_paths,
-            base_salt,
-            versions,
+        let loaded = match setup {
+            Some((setup, log)) => {
+                if let Some(old) = self.setup_reads.replace(log) {
+                    old.clear();
+                }
+                let base_salt = self.base_salt(&setup.services, &config_paths);
+                Loaded {
+                    project,
+                    services: setup.services,
+                    setup_diagnostics: setup.diagnostics,
+                    setup_fatal: setup.fatal,
+                    config_paths,
+                    base_salt,
+                    versions,
+                }
+            }
+            None => {
+                // a fresh package.json cache: the transform's lookups read the disk again, as a new load's do
+                services.packages = Default::default();
+                Loaded { project, services, setup_diagnostics, setup_fatal, config_paths, base_salt, versions }
+            }
         };
         Ok((loaded, replaced))
     }

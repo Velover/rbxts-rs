@@ -763,7 +763,7 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
         watched.open_dirs.insert(key(&dir));
         watched.flat.insert(dir);
     }
-    if let Some(log) = session.read_log() {
+    for log in session.read_logs() {
         watched.add_log(&log, &mut dirs);
     }
     watched.add_rojo_dirs(session.rojo_partitions(), &mut dirs);
@@ -839,7 +839,7 @@ fn add_referenced_project(watched: &mut Watched, session: &BuildSession<'_>, dir
         watched.open_dirs.insert(key(&dir));
         watched.flat.insert(dir);
     }
-    if let Some(log) = session.read_log() {
+    for log in session.read_logs() {
         watched.add_log(&log, dirs);
     }
     watched.add_rojo_dirs(session.rojo_partitions(), dirs);
@@ -1408,10 +1408,10 @@ fn rebuild(
         // installed yet)
         None => {
             let mut set = watched.good.clone();
-            if let Some(log) = session.read_log() {
+            for log in session.read_logs() {
                 set.add_log(&log, &mut FxHashMap::default());
-                set.dedupe();
             }
+            set.dedupe();
             watched.failed = Some(set);
         }
     }

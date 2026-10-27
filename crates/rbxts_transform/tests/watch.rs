@@ -270,9 +270,14 @@ fn automatic_type_packages_rebuild_as_clean_builds() {
     run_fixture("autotypes", "autotypes-inc", &[], true);
 }
 
+/// Also: the first rebuild of the session keeps the program, though the first build made the output and include
+/// folders (the tsconfig parse lists the folder they are made in, and the Rojo resolver searches them): the parse and
+/// the setup are made again, and find the same; an asset added, which the include globs do not take, keeps it too.
 #[test]
 fn watch_rebuilds_equal_clean_builds_without_plugins() {
-    run_basic("plain", &[], false);
+    let Some(results) = run_basic("plain", &[], false) else { return };
+    assert!(step(&results, "C → B → D: Inner.a array to map").reused, "the first rebuild keeps the program");
+    assert!(step(&results, "an asset edited, one added").reused);
 }
 
 #[test]
@@ -355,6 +360,89 @@ impl PluginInstance for CounterInstance {
     fn end_file(&self, _cx: &mut Cx<'_>) -> PResult<()> {
         Ok(())
     }
+}
+
+/// Panics in `instance` (outside the per-file catch: the panic unwinds the whole build) while its build input
+/// `crash.txt` says `crash`.
+struct Crasher;
+
+struct CrasherInstance;
+
+impl Plugin for Crasher {
+    type Shared = bool;
+    type State = ();
+    type FilePart = ();
+    type Instance = CrasherInstance;
+
+    fn info(&self) -> PluginInfo {
+        PluginInfo { name: "crasher", version: "0.1.0", tsconfig_transform: None }
+    }
+
+    fn setup(&self, cx: &mut SetupCx<'_>, _state: &mut ()) -> Result<Arc<bool>, Fatal> {
+        let input = cx.read_input("crash.txt").map_err(|e| Fatal::new(e.to_string()))?;
+        Ok(Arc::new(input.is_some_and(|text| text.contains("crash"))))
+    }
+
+    fn instance(&self, crash: Arc<bool>, _checker: CheckerInfo) -> CrasherInstance {
+        assert!(!*crash, "crasher: crash.txt says crash");
+        CrasherInstance
+    }
+
+    fn finish(&self, _: &bool, _: &mut (), _: &[(FileIndex, &())], _: &mut FinishCx<'_>) -> Result<(), Fatal> {
+        Ok(())
+    }
+}
+
+impl PluginInstance for CrasherInstance {
+    type FilePart = ();
+
+    fn interest(&self, _interest: &mut Interest) {}
+
+    fn end_file(&self, _cx: &mut Cx<'_>) -> PResult<()> {
+        Ok(())
+    }
+}
+
+/// A build that panics (here in a plugin's `instance`, outside the per-file catch) frees the programs it unwound
+/// with, the last build's included, rather than leaking them; the session, reset as the watcher resets it, builds
+/// again from scratch.
+#[test]
+fn a_panicking_build_frees_its_programs() {
+    let Some((copy, root)) = keeper_copy("crash", false) else { return };
+    let plugins = vec![erase(Crasher)];
+    let path = |p: &str| root.join(p).to_string_lossy().replace('\\', "/");
+    let write = |p: &str, text: &str| std::fs::write(root.join(p), text).unwrap();
+    big_stack(|| {
+        let options =
+            PluginOptions { plugins: &plugins, ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
+        let mut session = keeper_session(&root, &options, true);
+        let (report, _) = session.build(&[]);
+        assert!(!report.has_errors(), "{:?}", report.fatal);
+        assert_eq!(session.live_programs(), 1);
+        // an edit (the program is reused) and the crash
+        write("src/shared/d.ts", D_TS);
+        write("crash.txt", "crash");
+        let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            session.build(&[path("src/shared/d.ts"), path("crash.txt")])
+        }));
+        assert!(crashed.is_err(), "the build panics");
+        assert_eq!(session.live_programs(), 0, "the last program and the new one are freed");
+        session.reset();
+        // a crash on the first build of a session (a full load)
+        let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| session.build(&[path("crash.txt")])));
+        assert!(crashed.is_err());
+        assert_eq!(session.live_programs(), 0);
+        session.reset();
+        write("crash.txt", "calm");
+        let (report, _) = session.build(&[path("crash.txt")]);
+        assert!(!report.has_errors(), "{:?}", report.fatal);
+        assert_eq!(session.live_programs(), 1);
+        write("src/shared/d.ts", D_TS_BROKEN);
+        let (report, _) = session.build(&[path("src/shared/d.ts")]);
+        assert!(report.has_errors());
+        assert_eq!(session.live_programs(), 1, "the replaced program is freed");
+    });
+    drop(copy);
 }
 
 /// A copy of the basic fixture with a linked node_modules; removed on drop.

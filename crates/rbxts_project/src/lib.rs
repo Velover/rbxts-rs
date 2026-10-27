@@ -68,6 +68,8 @@ pub struct Project {
     pub config_time: Duration,
     /// `new_program`: reading, parsing, binding and module resolution of every file.
     pub program_time: Duration,
+    /// The tsconfig as the load was given it.
+    tsconfig: String,
     /// The working directory the project was loaded from (TypeScript spelling).
     pub cwd: String,
     /// What the tsconfig parse and the program load read from the file system, when the load was asked to record it.
@@ -91,6 +93,48 @@ pub struct Project {
 
 /// What the programs of one load and those reused from it share (`reuse_program` hands the loader's data on).
 struct Lineage(tsrs_compiler::SharedProgramData);
+
+/// A second owner of a project's program ([`Project::owner`]): a watch session keeps one for every program it has
+/// not freed, so that the programs of a build that panics, whose `Project`s unwind with it, are freed rather than
+/// leaked.
+pub struct ProgramOwner {
+    program: &'static Program,
+    lineage: Arc<Lineage>,
+}
+
+impl ProgramOwner {
+    /// Whether this owns `project`'s program.
+    pub fn owns(&self, project: &Project) -> bool {
+        std::ptr::eq(self.program, project.program)
+    }
+
+    /// [`Project::free`] through this owner.
+    ///
+    /// # Safety
+    ///
+    /// [`Project::free`]'s contract, and no `Project` of the program and no other owner of it is left (the loader's
+    /// data goes with the last owner of the lineage).
+    pub unsafe fn free(self) {
+        // SAFETY: the caller's contract
+        unsafe { free_program_and_lineage(self.program, self.lineage) };
+    }
+}
+
+/// Frees `program`, and its lineage's data when no other program shares it.
+///
+/// # Safety
+///
+/// [`Project::free`]'s contract.
+unsafe fn free_program_and_lineage(program: &'static Program, lineage: Arc<Lineage>) {
+    // SAFETY: the caller's contract, which includes `free_program`'s.
+    unsafe { tsrs_compiler::free_program(program) };
+    // the last program of its lineage: nothing else shares the loader's data
+    if let Ok(lineage) = Arc::try_unwrap(lineage) {
+        // SAFETY: every other program of the lineage was freed (it held a reference to `lineage` until then), and
+        // the caller's contract covers this one.
+        unsafe { lineage.0.free() };
+    }
+}
 
 struct ConfigHost {
     fs: Arc<dyn FS>,
@@ -215,35 +259,60 @@ pub fn load(opts: &LoadOptions) -> Result<Project, Vec<P<Diagnostic>>> {
     load_cached(opts, None, None)
 }
 
+/// Where a load records what it reads: the tsconfig parse (the configs, and the include glob's listings) and the
+/// program (its files, module resolution) apart, as a watch rebuild can parse the tsconfig again on its own
+/// ([`Project::reparse_config`]).
+pub struct LoadLogs {
+    /// The tsconfig parse's reads.
+    pub config: Arc<ReadLog>,
+    /// The program's reads.
+    pub program: Arc<ReadLog>,
+}
+
+/// A file system that records what is read through it in `log`, when there is one.
+fn recording_fs(log: Option<&Arc<ReadLog>>) -> Arc<dyn FS> {
+    match log {
+        Some(log) => Arc::new(read_log::RecordingFs { inner: bundled::wrap_fs(osvfs::fs()), log: Arc::clone(log) }),
+        None => Arc::new(bundled::wrap_fs(osvfs::fs())),
+    }
+}
+
+/// Parses the tsconfig as a load does: TypeScript 7's parse, with TypeScript 5's automatic type directives
+/// ([`add_automatic_type_directives`], whether it added them) and `baseUrl` ([`emulate_base_url`]). On the compiler's
+/// worker pool, as tsrs's CLI does: the include glob's parallel listing runs on it.
+fn parse_config(
+    tsconfig: &str,
+    checkers: usize,
+    host: &'static ConfigHost,
+) -> Result<(ParsedCommandLine, bool), Vec<P<Diagnostic>>> {
+    // Only the checker count: `single_threaded` would also make reading, parsing and binding serial.
+    let overrides = CompilerOptions { checkers: Some(checkers as i64), ..CompilerOptions::default() };
+    let (parsed, errors) = tsrs_compiler::worker_pool()
+        .install(|| get_parsed_command_line_of_config_file(tsconfig, Some(&overrides), None, host, None));
+    let Some(mut parsed) = parsed.filter(|_| errors.is_empty()) else {
+        return Err(errors);
+    };
+    let automatic_types = add_automatic_type_directives(&mut parsed);
+    emulate_base_url(&mut parsed);
+    Ok((parsed, automatic_types))
+}
+
 /// [`load`] with parsed files kept in `cache` across loads (watch mode): a file whose stamp ([`stamp`]) and parse
-/// options are unchanged is the same `SourceFile` in the new program. `reads`: where to record what the
-/// tsconfig parse and the program load read (filled even when the load fails).
+/// options are unchanged is the same `SourceFile` in the new program. `logs`: where to record what the tsconfig
+/// parse and the program load read (filled even when the load fails).
 pub fn load_cached(
     opts: &LoadOptions,
     cache: Option<&Arc<SourceFileCache>>,
-    reads: Option<Arc<ReadLog>>,
+    logs: Option<&LoadLogs>,
 ) -> Result<Project, Vec<P<Diagnostic>>> {
     let cwd = tspath::normalize_path(&opts.cwd);
-    let fs: Arc<dyn FS> = match &reads {
-        Some(log) => Arc::new(read_log::RecordingFs { inner: bundled::wrap_fs(osvfs::fs()), log: Arc::clone(log) }),
-        None => Arc::new(bundled::wrap_fs(osvfs::fs())),
-    };
-    let host: &'static ConfigHost = Box::leak(Box::new(ConfigHost { fs: Arc::clone(&fs), cwd: cwd.clone() }));
+    let reads = logs.map(|logs| Arc::clone(&logs.program));
+    let fs = recording_fs(reads.as_ref());
+    let config_fs = recording_fs(logs.map(|logs| &logs.config));
+    let host: &'static ConfigHost = Box::leak(Box::new(ConfigHost { fs: config_fs, cwd: cwd.clone() }));
 
-    // Only the checker count: `single_threaded` would also make reading, parsing and binding serial.
-    let overrides = CompilerOptions { checkers: Some(opts.checkers as i64), ..CompilerOptions::default() };
     let start = Instant::now();
-    // On the compiler's worker pool, as tsrs's CLI does: the include glob's parallel listing runs on it.
-    let parse = || {
-        let (parsed, errors) = tsrs_compiler::worker_pool()
-            .install(|| get_parsed_command_line_of_config_file(&opts.tsconfig, Some(&overrides), None, host, None));
-        let Some(mut parsed) = parsed.filter(|_| errors.is_empty()) else {
-            return Err(errors);
-        };
-        let automatic_types = add_automatic_type_directives(&mut parsed);
-        emulate_base_url(&mut parsed);
-        Ok((parsed, automatic_types))
-    };
+    let parse = || parse_config(&opts.tsconfig, opts.checkers, host);
     let (mut parsed, automatic_types) = parse()?;
     let config_time = start.elapsed();
     let user_root_dir = parsed.compiler_options().is_some_and(|o| !o.root_dir.is_empty());
@@ -294,6 +363,7 @@ pub fn load_cached(
         checkers: opts.checkers,
         config_time,
         program_time,
+        tsconfig: opts.tsconfig.clone(),
         cwd,
         reads,
         automatic_types,
@@ -385,14 +455,27 @@ impl Project {
     /// caller copies the diagnostics it keeps: `DiagnosticExt::copy_deep`). No other program shares its data (a program
     /// from `load` never does).
     pub unsafe fn free(self) {
-        // SAFETY: the caller's contract, which includes `free_program`'s.
-        unsafe { tsrs_compiler::free_program(self.program) };
-        // the last program of its lineage: nothing else shares the loader's data
-        if let Ok(lineage) = Arc::try_unwrap(self.lineage) {
-            // SAFETY: every other program of the lineage was freed (it held a reference to `lineage` until then), and
-            // the caller's contract covers this one.
-            unsafe { lineage.0.free() };
-        }
+        // SAFETY: the caller's contract
+        unsafe { free_program_and_lineage(self.program, self.lineage) };
+    }
+
+    /// Parses the tsconfig again, recording what it reads in `log`, and tells whether the parse finds the same files
+    /// with the same automatic type directives. A watch rebuild asks when the parse's directory listings read
+    /// differently (an output folder made at the tsconfig's directory, a file added that the include globs do not
+    /// take): when the other answers are the same too ([`ReadLog::same_but_listings`]), the parse is this one, as
+    /// the listings only decide the files.
+    pub fn reparse_config(&self, log: &Arc<ReadLog>) -> bool {
+        // leaked, as a load's is (the parse wants a host for the process): the caller empties the log it replaces
+        let host: &'static ConfigHost =
+            Box::leak(Box::new(ConfigHost { fs: recording_fs(Some(log)), cwd: self.cwd.clone() }));
+        let Ok((parsed, automatic_types)) = parse_config(&self.tsconfig, self.checkers, host) else { return false };
+        automatic_types == self.automatic_types && parsed.file_names() == self.config.file_names()
+    }
+
+    /// A second owner of the program ([`ProgramOwner`]). While it lives, freeing the program through its
+    /// `Project` keeps the lineage's data: drop it (or free through it) first.
+    pub fn owner(&self) -> ProgramOwner {
+        ProgramOwner { program: self.program, lineage: Arc::clone(&self.lineage) }
     }
 
     /// A program for edited files, made from this one with tsrs's `reuse_program` (the path tsrs's own watcher takes):
@@ -438,6 +521,7 @@ impl Project {
             checkers: self.checkers,
             config_time: Duration::ZERO,
             program_time: start.elapsed(),
+            tsconfig: self.tsconfig.clone(),
             cwd: self.cwd.clone(),
             reads: self.reads.clone(),
             module_resolver: OnceLock::new(),
@@ -596,10 +680,26 @@ impl Project {
     /// `tsconfig_path` is used as spelled when absolute (roblox-ts's CLI passes it through `path.resolve`), else
     /// resolved against the current directory; the spelling carries into the project's paths.
     pub fn setup(&self, tsconfig_path: &str, overrides: &ProjectOptionLayer) -> Result<ProjectSetup, ProjectError> {
-        read_log::recording(self.reads.as_ref(), || self.setup_recorded(tsconfig_path, overrides))
+        self.setup_into(self.reads.as_ref(), tsconfig_path, overrides)
     }
 
-    fn setup_recorded(&self, tsconfig_path: &str, overrides: &ProjectOptionLayer) -> Result<ProjectSetup, ProjectError> {
+    /// [`Project::setup`], recording what it reads in `reads` (a log of its own, so that a watch rebuild can tell
+    /// the setup's reads from the program's).
+    pub fn setup_into(
+        &self,
+        reads: Option<&Arc<ReadLog>>,
+        tsconfig_path: &str,
+        overrides: &ProjectOptionLayer,
+    ) -> Result<ProjectSetup, ProjectError> {
+        read_log::recording(reads, || self.setup_recorded(reads.map(|r| &**r), tsconfig_path, overrides))
+    }
+
+    fn setup_recorded(
+        &self,
+        reads: Option<&ReadLog>,
+        tsconfig_path: &str,
+        overrides: &ProjectOptionLayer,
+    ) -> Result<ProjectSetup, ProjectError> {
         let tsconfig_path = if nodepath::is_absolute(tsconfig_path) {
             tsconfig_path.to_owned()
         } else {
@@ -608,20 +708,27 @@ impl Project {
         // as TypeScript's solution builder spells the config path for roblox-ts (forward slashes, in messages)
         let rbxts = setup::read_project_options(&tspath::normalize_path(&tsconfig_path))?;
         let options = ProjectOptions::from_layers(&[&rbxts.options, overrides]);
-        let reads = self.reads.as_deref();
         let mut data = setup::create_project_data_recorded(&tsconfig_path, options, reads)?;
         data.warnings.splice(0..0, rbxts.warnings);
-        self.setup_with_data_recorded(data)
+        self.setup_with_data_recorded(reads, data)
     }
 
     /// [`Project::setup`] from project data made already: by [`graph::ProjectGraph`] for a project of a build with
     /// project references, whose options and Rojo file depend on the graph.
     pub fn setup_with_data(&self, data: ProjectData) -> Result<ProjectSetup, ProjectError> {
-        read_log::recording(self.reads.as_ref(), || self.setup_with_data_recorded(data))
+        self.setup_with_data_into(self.reads.as_ref(), data)
     }
 
-    fn setup_with_data_recorded(&self, data: ProjectData) -> Result<ProjectSetup, ProjectError> {
-        let reads = self.reads.as_deref();
+    /// [`Project::setup_with_data`], recording what it reads in `reads` ([`Project::setup_into`]).
+    pub fn setup_with_data_into(
+        &self,
+        reads: Option<&Arc<ReadLog>>,
+        data: ProjectData,
+    ) -> Result<ProjectSetup, ProjectError> {
+        read_log::recording(reads, || self.setup_with_data_recorded(reads.map(|r| &**r), data))
+    }
+
+    fn setup_with_data_recorded(&self, reads: Option<&ReadLog>, data: ProjectData) -> Result<ProjectSetup, ProjectError> {
         let tsconfig_path = data.tsconfig_path.clone();
         let raw_options = self.options();
         // getParsedCommandLine: a composite project without rootDir gets the tsconfig's directory, before validation
