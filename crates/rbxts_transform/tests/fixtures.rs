@@ -30,6 +30,8 @@
 //!   default exports, and every kind of decorator.
 //! - `export_order`: export tables (functions, classes, enums, aliases, destructured and default exports, a namespace,
 //!   `export *`) in TypeScript 5's order, which binds a block's function declarations first.
+//! - `overload_this`: a function expression argument of an overloaded call, whose `this` (and so `self`) is TypeScript
+//!   5's: the first overload it is checked against in full, which may then be rejected.
 //! - `base_url`: `baseUrl` with `paths` (TypeScript 5's resolution, which TypeScript 7 dropped), a declaration build;
 //!   checked as the written output tree (`expected/` is stock `rbxtsc build`'s `out`).
 //! - `root_dirs`: `rootDirs` (`src/a`, `src/b`) without `rootDir`, a declaration build: the written output tree is
@@ -505,6 +507,14 @@ fn json() {
 #[test]
 fn export_order() {
     check("export_order");
+}
+
+/// The receiver of a function expression passed to an overloaded call: TypeScript 5 types its implicit `this` from
+/// the first overload it checks it against in full (the first whose other arguments fit), even when that overload is
+/// then rejected (stock output).
+#[test]
+fn overload_this() {
+    check("overload_this");
 }
 
 /// `baseUrl`, which TypeScript 7 removed: names resolved against it, `paths` substitutions relative to it, and the

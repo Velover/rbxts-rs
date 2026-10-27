@@ -7,8 +7,8 @@ emulate TypeScript 5 behaviour that TypeScript 7 changed.
 ## The fork
 - **Where:** a worktree of the tsrs clone at `E:\Projects\TS\Flamework\worktrees\tsrs-rbxts-fork`, on branch
   `rbxts-fork`. `Cargo.toml` points at its crates by absolute path, so every rbxts-rs worktree uses the same tsrs.
-- **What:** tsrs **v0.18.0** (`5f92808`) plus three commits that change only visibility, `pub(crate)` → `pub`. That is
-  6 lines in 4 files:
+- **What:** tsrs **v0.18.0** (`5f92808`) plus commits that change only visibility, `pub(crate)` → `pub`. That is
+  20 lines in 8 files:
 
 | Commit | Item | File | Used for |
 |---|---|---|---|
@@ -18,6 +18,20 @@ emulate TypeScript 5 behaviour that TypeScript 7 changed.
 | 63b22eb | `Checker::get_type_of_assignment_pattern` | `tsrs_checker/src/services.rs` | destructuring assignments |
 | cf8498b | `Program::get_semantic_diagnostics_with_checker` | `tsrs_compiler/src/program.rs` | checking that honours `@ts-ignore` and the other comment directives |
 | adadb25 | `Checker::get_contextual_signature` | `tsrs_checker/src/checker_05.rs` | TS5's contextual `this` in `util/is_method.rs` |
+| 67b5330 | `Checker::is_type_related_to` | `tsrs_checker/src/relater_1.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
+| 67b5330 | `Checker::get_parameter_count` | `tsrs_checker/src/relater_1.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
+| 67b5330 | `Checker::get_non_array_rest_type` | `tsrs_checker/src/relater_1.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
+| 67b5330 | `Checker::get_this_type_of_signature` | `tsrs_checker/src/relater_1.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
+| 67b5330 | `Checker::check_expression_with_contextual_type` | `tsrs_checker/src/checker_04.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
+| 67b5330 | `Checker::check_non_null_expression` | `tsrs_checker/src/checker_04.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
+| 67b5330 | `Checker::get_this_argument_of_call` | `tsrs_checker/src/checker_05.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
+| 67b5330 | `Checker::get_this_argument_type` | `tsrs_checker/src/checker_05.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
+| 67b5330 | `Checker::has_correct_arity` | `tsrs_checker/src/checker_05.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
+| 67b5330 | `Checker::reorder_candidates` | `tsrs_checker/src/checker_05.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
+| 67b5330 | `Checker::get_regular_type_of_object_literal` | `tsrs_checker/src/checker_14.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
+| 67b5330 | `Checker::get_spread_argument_type` | `tsrs_checker/src/checker_14.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
+| 67b5330 | `Checker::push_contextual_type` | `tsrs_checker/src/checker_15.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
+| 67b5330 | `Checker::pop_contextual_type` | `tsrs_checker/src/checker_15.rs` | TS5's overload choice for a function's `this` in `util/is_method.rs` |
 
 - **Rule:** the fork gets visibility flips and nothing else. Behaviour fixes and workarounds go in rbxts-rs with a
   `// rbxts-rs:` comment. If a needed function is too entangled to make public, copy a small helper into rbxts-rs
