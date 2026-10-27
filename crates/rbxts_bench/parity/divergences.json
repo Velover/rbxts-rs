@@ -29,6 +29,12 @@
           ],
           "output": "a7e9495814c292ab"
         },
+        "1eac40da2b2a2ca9": {
+          "fixes": [
+            "luau-o2-fastcall"
+          ],
+          "output": "26040db0a82aa882"
+        },
         "33d0aa5fa45431e9": {
           "fixes": [
             "luatuple-holes"
