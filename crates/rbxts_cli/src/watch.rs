@@ -102,18 +102,10 @@ fn debug() -> bool {
 /// The touched path standing for "events were lost".
 const RESCAN: &str = "<rescan>";
 
-/// The local time as TypeScript's watch status prints it, `new Date().toLocaleTimeString()`: Node's en-US form,
-/// `h:mm:ss AM` (no leading zero). rbxts-rs: Node formats in the system's ICU locale (en-AU: `7:05:09 pm`); this is
-/// always the en-US form, with a plain space before `AM`/`PM` where newer Node prints U+202F (as TypeScript's own
-/// watch tests normalise it).
+/// The local time as TypeScript's watch status prints it, `new Date().toLocaleTimeString()`: in the user's locale, as
+/// Node formats it (`locale_time`).
 fn time_now() -> String {
-    format_time(chrono::Local::now().time())
-}
-
-fn format_time(time: chrono::NaiveTime) -> String {
-    use chrono::Timelike;
-    let (pm, hour12) = time.hour12();
-    format!("{hour12}:{:02}:{:02} {}", time.minute(), time.second(), if pm { "PM" } else { "AM" })
+    crate::locale_time::now()
 }
 
 /// A watch status line, as TypeScript's pretty watch status reporter prints it.
@@ -1488,14 +1480,12 @@ mod tests {
     use notify::RecursiveMode;
     use rustc_hash::{FxHashMap, FxHashSet};
 
-    use super::{
-        Subscriptions, Watched, format_time, is_under, package_entry_counts, package_root, path_text, relevant,
-    };
+    use super::{Subscriptions, Watched, is_under, package_entry_counts, package_root, path_text, relevant};
 
     /// Node's en-US `toLocaleTimeString()`: no leading zero, 12 for noon and midnight.
     #[test]
     fn status_time() {
-        let at = |h, m, s| format_time(chrono::NaiveTime::from_hms_opt(h, m, s).unwrap());
+        let at = |h, m, s| crate::locale_time::format_time_in("en-US", h, m, s);
         assert_eq!(at(0, 5, 9), "12:05:09 AM");
         assert_eq!(at(7, 18, 41), "7:18:41 AM");
         assert_eq!(at(12, 0, 0), "12:00:00 PM");

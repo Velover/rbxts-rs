@@ -27,6 +27,7 @@
 //! `RBXTS_PLUGIN_CLAIMS=all` asks every matching plugin for each claimable node and reports double claims.
 #![warn(missing_docs)]
 
+pub mod locale_time;
 mod pretty;
 pub mod watch;
 pub mod yargs;

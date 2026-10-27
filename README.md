@@ -263,8 +263,10 @@ resolution sees packages installed or upgraded since the last build.
   `build-end` lines). A rebuild reuses the last program load (tsrs `reuse_program`, the edited files parsed again,
   the project setup kept) when everything that load read, the setup's reads included, reads the same now, and loads
   again otherwise. Each rebuild frees the program it replaced; a restart of the watcher process past
-  `RBXTS_WATCH_MEMORY_LIMIT_MB` (default 2048; 0 turns it off) stays as a safety net. A crashed rebuild is reported and the next one starts clean. The status lines carry the local time in
-  Node's en-US form (`7:05:09 PM`), where Node follows the system's ICU locale.
+  `RBXTS_WATCH_MEMORY_LIMIT_MB` (default 2048; 0 turns it off) stays as a safety net. A crashed rebuild is reported and the next one starts clean. The status lines carry the local time as
+  Node prints it in the user's locale (`7:05:09 PM` in en-US, `7:05:09 pm` in en-AU, `19:05:09` in de-DE;
+  `rbxts_cli::locale_time`, a table of Node 23's ICU formats for every locale Windows knows, from
+  `tools/gen-locale-time.cjs`).
 
 **Deviations from roblox-ts** (beside those listed in `build::outputs`): a case-only rename of a source renames its
 output too, so the Rojo instance follows; roblox-ts writes into the existing file and keeps its old name (a roblox-ts
