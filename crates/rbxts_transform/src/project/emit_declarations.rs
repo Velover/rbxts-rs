@@ -73,6 +73,7 @@ pub fn emit_declarations(
                 Some((_, shifts)) => shift_map(&text, shifts),
                 None => text,
             };
+            let text = if path.ends_with(".map") { ts5_source_root(text) } else { text };
             (path, text)
         })
         .collect();
@@ -104,6 +105,30 @@ fn line_shifts(text: &str, rewrites: &[Rewrite]) -> Vec<LineShift> {
             LineShift { line, after: end_column, delta: utf16_len(&rewrite.text) - utf16_len(old) }
         })
         .collect()
+}
+
+/// The source map `json` with TypeScript 5's empty `"sourceRoot":""` after its `file` when it has no source root.
+///
+/// rbxts-rs: TypeScript 5's `SourceMapGenerator.toJSON` always writes `sourceRoot`, `""` without the
+/// `sourceRoot` option; since tsrs 0.20 (TypeScript 7.1's typed path prep fixes, tsrs d93d7249) the generator leaves
+/// an empty one out.
+fn ts5_source_root(json: String) -> String {
+    const START: &str = "{\"version\":3,\"file\":\"";
+    let Some(rest) = json.strip_prefix(START) else { return json };
+    // the end of the `file` string: its first quote that no backslash escapes
+    let mut escaped = false;
+    let Some(end) = rest.char_indices().find_map(|(i, c)| {
+        let close = c == '"' && !escaped;
+        escaped = c == '\\' && !escaped;
+        close.then_some(i)
+    }) else {
+        return json;
+    };
+    let at = START.len() + end + 1;
+    if json[at..].starts_with(",\"sourceRoot\":") {
+        return json;
+    }
+    format!("{},\"sourceRoot\":\"\"{}", &json[..at], &json[at..])
 }
 
 /// The source map `json` with its mappings moved by `shifts`.
@@ -190,6 +215,24 @@ fn vlq(out: &mut String, value: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_root_as_typescript_5() {
+        let map = |text: &str| ts5_source_root(text.to_owned());
+        assert_eq!(
+            map(r#"{"version":3,"file":"a.d.ts","sources":["../src/a.ts"],"names":[],"mappings":"AAAA"}"#),
+            r#"{"version":3,"file":"a.d.ts","sourceRoot":"","sources":["../src/a.ts"],"names":[],"mappings":"AAAA"}"#
+        );
+        // kept: a source root of its own, and one already written
+        let own = r#"{"version":3,"file":"a.d.ts","sourceRoot":"/r/","sources":[],"names":[],"mappings":""}"#;
+        assert_eq!(map(own), own);
+        // an escaped quote in the file name does not end it
+        assert_eq!(
+            map(r#"{"version":3,"file":"a\"b.d.ts","sources":[]}"#),
+            r#"{"version":3,"file":"a\"b.d.ts","sourceRoot":"","sources":[]}"#
+        );
+        assert_eq!(map("not a map"), "not a map");
+    }
 
     #[test]
     fn mappings_round_trip() {
