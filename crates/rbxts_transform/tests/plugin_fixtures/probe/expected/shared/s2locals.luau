@@ -21,7 +21,7 @@ end
 -- a claimed literal indexed or called: parenthesized
 local lit = ("f4 m4").p
 return {
-	atTop = atTop,
 	inFunction = inFunction,
+	atTop = atTop,
 	lit = lit,
 }

@@ -111,6 +111,7 @@ local potionCard = Flamework.createGuard(t.interface({
 	Rarity = t.string,
 }))
 return {
+	describe = describe,
 	point = point,
 	literalObject = literalObject,
 	nestedObject = nestedObject,
@@ -127,6 +128,5 @@ return {
 	potions = potions,
 	buyRequirement = buyRequirement,
 	localPotion = localPotion,
-	describe = describe,
 	potionCard = potionCard,
 }

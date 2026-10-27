@@ -16,8 +16,8 @@ local function nested()
 	return { value, callsite("60370e7e-27db-5e36-865a-2697cf860efd"), at }
 end
 return {
+	nested = nested,
 	greeting = greeting,
 	here = here,
 	names = names,
-	nested = nested,
 }

@@ -32,10 +32,10 @@ local function genericObject()
 	}))
 end
 return {
+	constrained = constrained,
+	genericObject = genericObject,
 	wrapped = wrapped,
 	maybe = maybe,
 	pairOf = pairOf,
 	keyed = keyed,
-	constrained = constrained,
-	genericObject = genericObject,
 }

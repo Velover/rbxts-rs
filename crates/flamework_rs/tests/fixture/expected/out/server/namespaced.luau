@@ -65,6 +65,6 @@ local function makeProvider()
 	return Local
 end
 return {
-	Outer = Outer,
 	makeProvider = makeProvider,
+	Outer = Outer,
 }

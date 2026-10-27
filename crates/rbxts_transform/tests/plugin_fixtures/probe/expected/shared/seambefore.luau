@@ -120,10 +120,10 @@ do
 	Ordered.third = "static third"
 end
 return {
-	b1 = b1,
 	f = f,
+	loop = loop,
+	b1 = b1,
 	Fields = Fields,
 	p1 = p1,
-	loop = loop,
 	Ordered = Ordered,
 }

@@ -58,9 +58,9 @@ local function inFunction()
 	}))
 end
 return {
+	inFunction = inFunction,
 	points = points,
 	nestedPoints = nestedPoints,
 	unions = unions,
 	twice = twice,
-	inFunction = inFunction,
 }

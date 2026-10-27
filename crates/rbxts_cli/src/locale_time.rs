@@ -47,7 +47,7 @@ fn format_with(format: &Format, hour: u32, minute: u32, second: u32) -> String {
     };
     let shown = match format.cycle {
         11 => hour % 12,
-        12 if hour % 12 == 0 => 12,
+        12 if hour.is_multiple_of(12) => 12,
         12 => hour % 12,
         24 if hour == 0 => 24,
         _ => hour,
@@ -60,7 +60,7 @@ fn format_with(format: &Format, hour: u32, minute: u32, second: u32) -> String {
             Part::Minute => digits(&mut out, minute, format.minute_width),
             Part::Second => digits(&mut out, second, format.second_width),
             Part::Period => out.push_str(match format.periods {
-                [am, pm] => if hour < 12 { *am } else { *pm },
+                [am, pm] => if hour < 12 { am } else { pm },
                 periods => periods.get(hour as usize).copied().unwrap_or_default(),
             }),
         }

@@ -68,6 +68,7 @@ local keys = keysOf({
 local order = shuffled({ "a", "b", "c" })
 local name = obfuscated("playerJoined")
 return {
+	invoke = invoke,
 	tuple = tuple,
 	single = single,
 	empty = empty,
@@ -78,7 +79,6 @@ return {
 	parameterNames = parameterNames,
 	unlabelled = unlabelled,
 	atRoot = atRoot,
-	invoke = invoke,
 	keys = keys,
 	order = order,
 	name = name,

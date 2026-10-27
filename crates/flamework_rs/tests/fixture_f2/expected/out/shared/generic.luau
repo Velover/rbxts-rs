@@ -147,6 +147,8 @@ do
 	Marked = Mark("shared/generic@Economy")(Marked) or Marked
 end
 return {
+	isShop = isShop,
+	resolve = resolve,
 	Economy = Economy,
 	Bank = Bank,
 	economyId = economyId,
@@ -158,8 +160,6 @@ return {
 	inlined = inlined,
 	inlinedOwn = inlinedOwn,
 	passedThrough = passedThrough,
-	isShop = isShop,
-	resolve = resolve,
 	generated = generated,
 	explicit = explicit,
 	padded = padded,

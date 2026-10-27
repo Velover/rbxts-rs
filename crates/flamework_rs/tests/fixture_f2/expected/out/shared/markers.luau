@@ -156,7 +156,7 @@ return {
 	either = either,
 	second = second,
 	withOptions = withOptions,
+	Mark = Mark,
 	Registry = Registry,
 	Tagged = Tagged,
-	Mark = Mark,
 }

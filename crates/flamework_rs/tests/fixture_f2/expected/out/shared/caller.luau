@@ -30,8 +30,8 @@ end
 local multiline = where(18, 26, 32, "f4dcb6d8-18b4-594a-a04a-b259eb859214", "where(\n\tundefined,\n\tundefined,\n)")
 local ids = { callsite("3c0d8bd6-2f64-55dc-8737-e97c35cc583e"), callsite("77e15477-0d1d-5165-9aac-121ad3dd9075") }
 return {
-	atRoot = atRoot,
 	inFunction = inFunction,
+	atRoot = atRoot,
 	Holder = Holder,
 	multiline = multiline,
 	ids = ids,

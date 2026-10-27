@@ -19,8 +19,8 @@ local function withTemp(impl)
 	return impl_1("s", impl) + _impl
 end
 return {
-	a = a,
 	shadowed = shadowed,
 	withLocal = withLocal,
 	withTemp = withTemp,
+	a = a,
 }

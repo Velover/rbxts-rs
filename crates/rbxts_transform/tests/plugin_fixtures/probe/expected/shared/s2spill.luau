@@ -210,6 +210,7 @@ end
 _spill.constant_22 = v7
 local s6 = _spill.constant_22
 return {
+	useLater = useLater,
 	v1 = v1,
 	v2 = v2,
 	v3 = v3,
@@ -407,6 +408,5 @@ return {
 	s3 = s3,
 	s4 = s4,
 	s5 = s5,
-	useLater = useLater,
 	s6 = s6,
 }

@@ -8,6 +8,6 @@ local function f()
 	return seen
 end
 return {
-	v1 = v1,
 	f = f,
+	v1 = v1,
 }

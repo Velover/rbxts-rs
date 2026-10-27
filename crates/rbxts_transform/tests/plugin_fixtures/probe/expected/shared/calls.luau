@@ -41,8 +41,8 @@ local built = "fixture #1/1"
 local unknown = mystery()
 local plain = bump()
 return {
-	hoisted = hoisted,
 	useHoist = useHoist,
+	hoisted = hoisted,
 	prereq = prereq,
 	ordered = ordered,
 	swapped = swapped,

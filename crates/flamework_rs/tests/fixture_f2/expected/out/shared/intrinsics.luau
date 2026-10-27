@@ -55,6 +55,7 @@ local function later()
 	return fieldInfo(fieldInfo_1)
 end
 return {
+	later = later,
 	commands = commands,
 	commandGlob = commandGlob,
 	relativeGlob = relativeGlob,
@@ -69,5 +70,4 @@ return {
 	kinds = kinds,
 	members = members,
 	version = version,
-	later = later,
 }

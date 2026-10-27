@@ -14,8 +14,8 @@ local function later()
 	return { t_1, u }
 end
 return {
+	later = later,
 	i1 = i1,
 	i2 = i2,
 	i3 = i3,
-	later = later,
 }
