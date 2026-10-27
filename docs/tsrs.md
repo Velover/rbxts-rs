@@ -54,7 +54,10 @@ Pin the version and update on purpose, never automatically. tsrs is pre-1.0, so 
 Re-check these after an update; they are where tsrs's behaviour reaches our output.
 - `getTrueType()` without an argument is the *regular* true type (`regular_true_type`), not the fresh one. `??`
   lowering depends on it.
-- Module exports are sorted with `compare_symbols_exported`.
+- `get_exports_of_module` keeps the symbol table's insertion order, which is TypeScript 5's: the binder binds a
+  block's function declarations first (`bind_each_statement_functions_first`), and `export *` adds its names after the
+  module's own. rbxts-rs uses that order for export tables and namespaces (`TransformState::get_module_exports`);
+  TypeScript 7's API sorts the exports with `compare_symbols_exported`, which is not used.
 - An omitted binding element (`[, a]`) is a nameless `BindingElement`.
 - `Node::text()` panics on a `QualifiedName`.
 - Positions are UTF-8 byte offsets. `tsrs_ast::positionmap` converts them to UTF-16 where text positions reach the
@@ -76,6 +79,16 @@ Re-check these after an update; they are where tsrs's behaviour reaches our outp
   alone stops at `TS2318: Cannot find global type 'Array'`). The type roots are listed through the program's file
   system, so watch and incremental builds see a package appear, change or go. On the real project that loads 70 more declaration files, from 8
   packages nothing imports, as TypeScript 5 does.
+- **`baseUrl`.** TypeScript 7 removed it (`TS5102`, and an import that only resolves through it is `TS2307`).
+  `rbxts_project` emulates TypeScript 5 (`emulate_base_url`): the `paths` substitutions are made absolute against
+  `baseUrl`, `"*": ["<baseUrl>/*"]` takes the names no pattern matches (TypeScript 5 tries `baseUrl` only for those: a
+  matched pattern that resolves nothing is TS2307 in both), and `baseUrl` is cleared.
+- **`rootDirs` without `rootDir`.** With an output directory and no `rootDir`, TypeScript 5 lays the outputs out under
+  the common source directory of the emitted files; TypeScript 7 under the tsconfig's directory, refusing a project
+  whose files have another one (`TS5011`). `rbxts_project` gives the program TypeScript 5's common source directory
+  as its `rootDir` when it is not the tsconfig's (`ts5_root_dir`; from the root files, and the program is made again
+  in the rare case that its files reach further), and roblox-ts and plugins see the tsconfig's options
+  (`Project::options`).
 - **Threading:** the checker is not `Send`, and `get_type_checker` takes a non-reentrant guard. Checking needs a
   512 MiB stack. Set only `checkers`: `single_threaded` also makes parsing and binding serial.
 
@@ -83,9 +96,6 @@ Re-check these after an update; they are where tsrs's behaviour reaches our outp
 Known, accepted differences from stock roblox-ts on TypeScript 5, each inherent to TypeScript 7. None makes an output
 wrong; a few make a build fail where stock's passes, and the entry says how to write it for both.
 
-- **Export order.** A module's export table (`return { … }`) and a namespace's exports list their names in the order
-  TypeScript 7 gives a module's exports (tsrs sorts them with `compare_symbols_exported`), where TypeScript 5 keeps
-  declaration order. The same names reach the same values; only the field order differs.
 - **Union and mapped key order.** Where an output lists the properties of a union or a mapped type, TypeScript 7's
   type ids order them, not TypeScript 5's (`util/ts5_property_order.rs` restores TypeScript 5's order where it can be
   derived from the program). It cannot for a union whose members have the very same symbols (`PXY | PYX`: the first
@@ -93,9 +103,6 @@ wrong; a few make a build fail where stock's passes, and the entry says how to w
   `set${K}` ``: TypeScript 7's order), and guards and the plugin facade's `getFields`, which use the raw order (as
   TypeScript 5's `Record`/`Pick` key order follows its own type ids). Flamework sorts where the order reaches its
   output.
-- **`baseUrl`.** TypeScript 7 removed `baseUrl`, so an import that only resolves through it is `error TS2307: Cannot
-  find module`. Use `paths` with paths relative to the tsconfig (`"paths": { "*": ["./src/*"] }`), which both
-  resolve the same way.
 
 - **Declaration-emit symlinks.** With `declaration: true`, TypeScript 5's pre-emit diagnostics run the declaration
   emitter, and when it needs an `import("…")` specifier for a type from another module, its module-specifier code
@@ -109,14 +116,6 @@ wrong; a few make a build fail where stock's passes, and the entry says how to w
   lookups do not reach rbxts-rs's symlink map, and reproducing when the emitter asks for a specifier would mean
   tracking it for every file. To get the `node_modules` path in both, import
   the package by its name. (Probe: a relative import of a sibling `file:` dependency, with a declaration build.)
-- **`rootDirs` without `rootDir`.** With an `outDir` and no `rootDir`, TypeScript 5 lays the output out under the
-  common source directory of the inputs. TypeScript 7 refuses that when the common source directory is not the
-  tsconfig's own directory: `error TS5011: The common source directory of 'tsconfig.json' is './src'. The 'rootDir'
-  setting must be explicitly set to this or another path to adjust your output's file layout.` A tsconfig that sets
-  `rootDirs` (for example `["src/a", "src/b"]`) but not `rootDir` meets it whenever its files share a folder below the
-  tsconfig: stock roblox-ts builds it (`out/a/…`, `out/b/…`), rbxts-rs stops at TS5011. The fix is to set `rootDir`
-  as well, to that common source directory (`"rootDir": "src"`), which gives the same output in both. rbxts-rs does
-  not emulate TypeScript 5's rule: the check is tsrs's option validation.
 - **Grammar errors TypeScript 7 added.** TypeScript 7's checker reports some grammar errors TypeScript 5.9 does not,
   for example `error TS18064: Private identifiers cannot be used in destructuring patterns.` (`const { #x: v } = obj`).
   A file with one fails to build in rbxts-rs, where stock roblox-ts reports its own diagnostic for the construct when

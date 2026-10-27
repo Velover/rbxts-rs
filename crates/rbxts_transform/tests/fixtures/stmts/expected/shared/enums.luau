@@ -221,8 +221,8 @@ local function run()
 	end)
 end
 return {
-	Exported = Exported,
 	useConstNumbers = useConstNumbers,
 	useConstStrings = useConstStrings,
 	run = run,
+	Exported = Exported,
 }

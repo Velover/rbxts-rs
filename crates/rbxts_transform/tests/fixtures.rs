@@ -27,8 +27,9 @@
 //!   declares its temporary (`local _`), which stock roblox-ts leaves a global (the `stockfix` fixture).
 //! - `classes`: class declarations and expressions, constructors (parameter properties, property initializers,
 //!   `super` calls), methods with unusual names, static members and blocks, `this` in static members, hoisting,
-//!   default exports, and every kind of decorator. TypeScript 5 lists exported functions first and TypeScript 7 in
-//!   source order, so the fixture declares its exported functions first.
+//!   default exports, and every kind of decorator.
+//! - `export_order`: export tables (functions, classes, enums, aliases, destructured and default exports, a namespace,
+//!   `export *`) in TypeScript 5's order, which binds a block's function declarations first.
 //! - `base_url`: `baseUrl` with `paths` (TypeScript 5's resolution, which TypeScript 7 dropped), a declaration build;
 //!   checked as the written output tree (`expected/` is stock `rbxtsc build`'s `out`).
 //! - `root_dirs`: `rootDirs` (`src/a`, `src/b`) without `rootDir`, a declaration build: the written output tree is
@@ -72,8 +73,7 @@
 //!   linking `@rbxts/services` from `node_modules/.store`): the first link met is game's own.
 //!   `junction_workspace_core_first` imports `core` before `services`: game's link still comes first.
 //! - `literals`: object and array literals, methods in object literals, spread in objects, arrays and calls, every
-//!   iterable kind an array spread accepts. TypeScript 5 lists exported functions first and TypeScript 7 in source
-//!   order, so the fixture declares its exported functions first.
+//!   iterable kind an array spread accepts.
 //! - `loops`: numeric `for` loops under `--optimizedLoops` and the `while` fallback (copies of captured loop
 //!   variables, finalizers before `continue`), every for-of loop builder and `$range`, `while`, `do`-`while`, and
 //!   `continue` / `break` inside `try` in loops, roblox-ts's `loop.spec.ts` (destructured loop variables
@@ -88,11 +88,10 @@
 //!   `composite` with a `declarationDir`): each project's written output tree (`expected/<outDir>`, build infos
 //!   left out), imports across the reference boundary included.
 //! - `stmts`: enums (non-finite values too), namespaces, `switch`, and `try` / `throw` (roblox-ts tests' specs plus
-//!   hand-written cases). `expected/` is roblox-ts on the TypeScript 7 checker, except the infinities, which rbxts-rs
-//!   writes as `math.huge`, and the `default` before a case in `switches`, which rbxts-rs lowers so that the case
-//!   still runs (the `stockfix` fixture); `expected-ts5/` (not checked) keeps the two files where stock roblox-ts on TypeScript 5
-//!   differs, in the order of the export table. Its tsconfig turns on `allowCommentDirectives` (for
-//!   `@ts-expect-error` in enums).
+//!   hand-written cases). `expected/` is stock roblox-ts's, except the infinities, which rbxts-rs writes as
+//!   `math.huge`, and the `default` before a case in `switches`, which rbxts-rs lowers so that the case still runs (the
+//!   `stockfix` fixture). The export tables list the exported functions first, as TypeScript 5 binds them. Its
+//!   tsconfig turns on `allowCommentDirectives` (for `@ts-expect-error` in enums).
 //! - `stockfix`: the roblox-ts bugs rbxts-rs fixes (each source file names its bug). `expected/` is rbxts-rs's output,
 //!   which differs from stock roblox-ts's exactly by those fixes, and `runtime/check.luau` runs it with Lune (when
 //!   `lune` is on the PATH) against JavaScript's results for the same calls (`runtime/<file>.luau`). Its tsconfig sets
@@ -497,6 +496,13 @@ fn exprs() {
 #[test]
 fn json() {
     check_tree("json");
+}
+
+/// Export tables in TypeScript 5's order: exported functions first, then the rest in source order, then what
+/// `export *` brings; namespaces likewise.
+#[test]
+fn export_order() {
+    check("export_order");
 }
 
 /// `baseUrl`, which TypeScript 7 removed: names resolved against it, `paths` substitutions relative to it, and the

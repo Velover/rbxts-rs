@@ -281,12 +281,12 @@ impl<'a> TransformState<'a> {
             return Rc::clone(exports);
         }
         let verbatim = self.compiler_options.verbatim_module_syntax.is_true();
-        let mut all = self.checker.get_exports_of_module_exported(module_symbol);
-        // rbxts-rs: TypeScript 7's `getExportsOfModule` (the API, as Go's map iteration has no order) returns the
-        // exports sorted by `compareSymbols`, i.e. in declaration order; tsrs's in-process call returns the symbol
-        // table's insertion order, which is TypeScript 5's. Sorted here as TypeScript 7 does.
-        let checker = &mut *self.checker;
-        all.sort_by(|a, b| checker.compare_symbols_exported(Some(*a), Some(*b)));
+        // rbxts-rs: tsrs's in-process `getExportsOfModule` keeps the symbol table's insertion order, which is
+        // TypeScript 5's: the binder binds a block's function declarations first (`bindEachFunctionsFirst`), then the
+        // rest in source order, and `export *` adds the names it brings after the module's own. TypeScript 7's API sorts
+        // them by `compareSymbols` (Go's maps have no order), which puts an exported function after the variables
+        // declared before it: not used here.
+        let all = self.checker.get_exports_of_module_exported(module_symbol);
         let mut exports = Vec::with_capacity(all.len());
         for export_symbol in all {
             let type_only_declaration = self.checker.get_type_only_alias_declaration_exported(export_symbol);

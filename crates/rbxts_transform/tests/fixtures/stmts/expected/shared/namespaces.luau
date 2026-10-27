@@ -197,7 +197,7 @@ local function run()
 	end)
 end
 return {
-	Public = Public,
 	makeLocal = makeLocal,
 	run = run,
+	Public = Public,
 }
