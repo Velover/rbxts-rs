@@ -15,7 +15,9 @@
     "luatuple-holes": "Holes in an optimized LuaTuple / array assignment declare their temporaries (`local _`) instead of writing globals.",
     "optional-chain-key": "An optional element call's key prerequisites run inside the receiver's nil check.",
     "switch-continue": "`continue` inside a switch continues the loop (roblox-ts continued the switch's `repeat … until true` block, like `break`).",
-    "control-strings": "Strings with a NUL or carriage return, and decoded values (enum constants, export names), are escaped where Luau would misread them."
+    "control-strings": "Strings with a NUL or carriage return, and decoded values (enum constants, export names), are escaped where Luau would misread them.",
+    "luau-o2-fastcall": "A local passed to a Luau builtin (table.insert, string.sub, …: FASTCALL) is captured first when a later argument may reassign it: at --!optimize 2 (Studio's default) the builtin reads the local after the later arguments ran.",
+    "luau-o2-negzero": "A numeric for loop whose constant start is -0 is the while loop it would be without --optimizedLoops: --!optimize 2 folds the -0 start to 0."
   },
   "corpora": {
     "real-noplugin": {
@@ -124,9 +126,16 @@
         },
         "tests/evaluationOrder.spec.luau": {
           "fixes": [
-            "luatuple-holes"
+            "luatuple-holes",
+            "luau-o2-fastcall"
           ],
-          "output": "4b06b8743b722f36"
+          "output": "ca84faa9484eed38"
+        },
+        "tests/loop.spec.luau": {
+          "fixes": [
+            "luau-o2-negzero"
+          ],
+          "output": "d97cc0552b185d6e"
         },
         "tests/tuple.spec.luau": {
           "fixes": [

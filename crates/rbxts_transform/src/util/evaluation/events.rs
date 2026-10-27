@@ -121,8 +121,22 @@ impl<'r> Walker<'r> {
             }
             LuauNode::Expr(Expr::Call(n)) => {
                 self.expr(&n.expression, conditional);
+                // rbxts-rs: a builtin Luau compiles to FASTCALL reads a local argument's register at the call, after
+                // the later arguments ran (`--!optimize 2`, Studio's default: `table.insert(target, rebind())` inserts
+                // into the table `rebind` assigned to `target`), so the operand is captured first when a later
+                // argument may reassign it
+                let fastcall = is_fastcall_builtin(&n.expression);
                 for a in &n.args {
-                    self.expr(a, conditional);
+                    if !(fastcall && self.is_late_reference(a)) {
+                        self.expr(a, conditional);
+                    }
+                }
+                if fastcall {
+                    for a in &n.args {
+                        if self.is_late_reference(a) {
+                            self.expr(a, conditional);
+                        }
+                    }
                 }
             }
             LuauNode::Expr(Expr::MethodCall(n)) => {
@@ -197,6 +211,26 @@ impl<'r> Walker<'r> {
             operand_index: None,
             conditional: false,
         });
+    }
+}
+
+/// rbxts-rs: whether `callee` is a global Luau compiles to a FASTCALL builtin (Luau's `getBuiltinFunctionId`: the
+/// base functions, `math`, `bit32`, `string.byte`/`char`/`len`/`sub`, `table.insert`/`unpack`, `buffer` and
+/// `vector`). A name the program binds is not the global.
+fn is_fastcall_builtin(callee: &Expr) -> bool {
+    let is_global = |e: &Expr, name: &str| matches!(e, Expr::Identifier(id) if id.name == name && id.facts.binding().is_none());
+    const BASE: &[&str] = &[
+        "assert", "type", "typeof", "rawset", "rawget", "rawequal", "rawlen", "unpack", "select", "getmetatable",
+        "setmetatable", "tonumber", "tostring",
+    ];
+    match callee {
+        Expr::Identifier(id) => BASE.contains(&id.name.as_str()) && id.facts.binding().is_none(),
+        Expr::PropertyAccess(p) => {
+            ["math", "bit32", "buffer", "vector"].iter().any(|lib| is_global(&p.expression, lib))
+                || (is_global(&p.expression, "string") && ["byte", "char", "len", "sub"].contains(&p.name.as_str()))
+                || (is_global(&p.expression, "table") && ["insert", "unpack"].contains(&p.name.as_str()))
+        }
+        _ => false,
     }
 }
 
