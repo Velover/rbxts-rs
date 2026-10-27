@@ -42,11 +42,15 @@ pub(crate) struct GroupPlugins<'a, 'p> {
     pub active: &'a [ActivePlugin<'p>],
     pub shared: &'a [ErasedShared],
     pub env: &'a Arc<EnvSnapshot>,
-    /// The checker's diagnostics of each file (warnings and suggestions only: an error stops the build first).
+    /// The checker's diagnostics of each file (warnings and suggestions only: an error stops the build first, but
+    /// for a build with a MacroManager error, `partial_macros`).
     pub file_diagnostics: &'a FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>>,
     /// Each program file's [`rbxts_plugin::FileIndex`] (its place in the transform order).
     pub file_indices: &'a FxHashMap<P<SourceFile>, FileIndex>,
     pub claims_all: bool,
+    /// The MacroManager is missing symbols (`"types": []`, outdated compiler types): transform with the ones it has,
+    /// for the plugins' diagnostics (`BuildSession::run` reports that error instead of the rest).
+    pub partial_macros: bool,
 }
 
 /// What the transform of a build's files gave.
@@ -61,6 +65,8 @@ pub(crate) struct Transformed {
     pub setup_fatal: Option<Vec<String>>,
     /// The transform stopped by an internal error: its message (at most one).
     pub stopped: Vec<String>,
+    /// The index (in the files given) of the file whose internal error stopped the transform.
+    pub stopped_at: Option<usize>,
 }
 
 /// One group's results.
@@ -109,6 +115,7 @@ pub(crate) fn transform_files(
         hook_times: None,
         setup_fatal: None,
         stopped: Vec::new(),
+        stopped_at: None,
     };
     let mut first_panic: Option<usize> = None;
     for output in outputs {
@@ -144,6 +151,7 @@ pub(crate) fn transform_files(
         // for any checker count: every file before it, and nothing after it.
         transformed.files.iter_mut().skip(first + 1).for_each(|f| *f = None);
         let name = files[first].get().file_name();
+        transformed.stopped_at = Some(first);
         transformed.stopped =
             vec![format!("the transform stopped after an internal error in {name}; later files were not transformed")];
     }
@@ -162,6 +170,7 @@ fn run_group(
     let mut output = GroupOutput { files: Vec::with_capacity(files.len()), hook_times: None, setup_fatal: None };
     let macro_manager = match MacroManager::new(checker) {
         Ok(manager) => manager,
+        Err(_) if plugins.is_some_and(|p| p.partial_macros) => MacroManager::partial(checker),
         Err(error) => {
             output.setup_fatal = Some(error.messages);
             return output;

@@ -111,6 +111,37 @@ fn guess_directory_symlink(a: &str, b: &str, cwd: &str, case_sensitive: bool) ->
         .then(|| (tspath::get_path_from_path_components(&a_parts), tspath::get_path_from_path_components(&b_parts)))
 }
 
+/// The names `getAutomaticTypeDirectiveNames` gives, in TypeScript 5's order: the `types` option's, with a `"*"`
+/// replaced by every package of the type roots, the roots in order and each root's directories as TypeScript 5's
+/// `sys.getDirectories` lists them (sorted as JavaScript sorts strings, by UTF-16 code units). The resolutions are
+/// keyed by name in a hash map, so this is the only record of the order. The listings go through the program's file
+/// system, which the load read them through already.
+fn automatic_type_directive_order(program: &Program) -> Vec<String> {
+    let options = program.options();
+    let Some(types) = &options.types else { return Vec::new() };
+    let mut order: Vec<String> = Vec::new();
+    for name in types {
+        if name != "*" {
+            order.push(name.clone());
+            continue;
+        }
+        let (type_roots, _) = options.get_effective_type_roots(program.get_current_directory());
+        for root in &type_roots {
+            let fs = program.host().fs();
+            if !fs.directory_exists(root) {
+                continue;
+            }
+            let mut directories = fs.get_accessible_entries(root).directories;
+            directories.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+            order.extend(directories.into_iter().filter(|d| !d.starts_with('.')));
+        }
+    }
+    // `deduplicate`: a name keeps its first place
+    let mut seen = FxHashSet::default();
+    order.retain(|name| seen.insert(name.clone()));
+    order
+}
+
 /// The program's resolutions in TypeScript 5's processing order (`createProgram`, `findSourceFileWorker`).
 struct Walk<'p> {
     program: &'p Program,
@@ -211,14 +242,11 @@ impl<'p> Walk<'p> {
         else {
             return;
         };
-        // `getAutomaticTypeDirectiveNames`: the `types` option as written, else the type roots' packages
+        // `getAutomaticTypeDirectiveNames`: the `types` option as written, its `"*"` (which `rbxts_project` puts
+        // there for a tsconfig without `types`, TypeScript 5's rule) standing for the type roots' packages
         let mut names: Vec<(&str, P<_>)> = resolutions.iter().map(|(key, resolved)| (key.name, *resolved)).collect();
-        match &program.options().types {
-            Some(types) => names.sort_by_key(|(name, _)| types.iter().position(|t| t == name)),
-            // rbxts-rs: unreachable on tsrs, which (as TypeScript 6+) loads no automatic type directives when `types` is
-            // unset; TypeScript 5 would take the type roots in order, each in directory order
-            None => names.sort_by_key(|(name, _)| *name),
-        }
+        let order = automatic_type_directive_order(program);
+        names.sort_by_key(|(name, _)| order.iter().position(|t| t == name));
         for (_, resolved) in names {
             self.automatic_type_references.push(Resolution {
                 original_path: resolved.original_path,

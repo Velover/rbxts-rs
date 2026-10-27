@@ -994,6 +994,51 @@ fn checker_errors_are_explained_by_plugins() {
     assert!(!project.out_exists());
 }
 
+/// A plugin error raised while explaining a checker diagnostic is a plugin error as any other (stock's transformers
+/// run before the check): only the plugins' diagnostics are reported, whether the failing file is the first in
+/// transform order (nothing is transformed) or files come before it (they are transformed).
+#[test]
+fn a_plugin_error_while_explaining_reports_only_the_plugins_diagnostics() {
+    for (name, label) in [("aaloud.ts", "explain-loud-first"), ("approvedLoud.ts", "explain-loud-later")] {
+        let Some(project) = Project::new(label) else { return };
+        project.write(&format!("src/shared/{name}"), "export const z = probeLoudName();
+");
+        project.write("src/shared/zzcheck.ts", "export const bad: number = \"x\";
+");
+        let report = project.build(&["stamp", "probe"], |_| {});
+        assert!(report.fatal.is_empty(), "{name}: {:?}", report.fatal);
+        assert_eq!(errors(&report), vec![format!("error {name}: probe: an error while explaining")], "{name}");
+        assert!(!project.out_exists());
+    }
+}
+
+/// Stock roblox-ts makes its MacroManager after running its TypeScript transformers (`createTransformServices`):
+/// with `"types": []` (no compiler types: the check fails too), a transformer's error is reported alone, and without
+/// one the MacroManager's error is, alone (captured from stock with a JavaScript transformer that reports an error,
+/// then a warning, at the first statement of the `types_empty` CLI fixture: `src/index.ts:2:1 - error TS1:
+/// transformer error`, then `MacroManager could not find symbol for Promise` and nothing else).
+#[test]
+fn a_plugin_error_comes_before_the_macro_manager_error_as_stock() {
+    let Some(project) = Project::new("macro-after-plugins") else { return };
+    let tsconfig = std::fs::read_to_string(fixture_dir().join("tsconfig.json"))
+        .unwrap()
+        .replace("\"types\": [\"types\", \"compiler-types\"]", "\"types\": []")
+        .replace("\"include\": [\"src\"]", "\"include\": [\"src/shared/failures.ts\", \"src/shared/*.d.ts\"]");
+    project.write("tsconfig.json", &tsconfig);
+    let report = project.build(&["stamp", "probe-fail"], |_| {});
+    assert!(report.fatal.is_empty(), "{:?}", report.fatal);
+    assert_eq!(errors(&report), vec!["error failures.ts: probe: fail was called"]);
+    assert!(!project.out_exists());
+    let report = project.build(&["stamp", "probe"], |_| {});
+    assert_eq!(
+        report.fatal,
+        vec!["MacroManager could not find symbol for Promise
+You may need to update your @rbxts/compiler-types!"]
+    );
+    assert_eq!(diagnostics(&report), Vec::<String>::new());
+    assert!(!project.out_exists());
+}
+
 /// Stock roblox-ts runs its TypeScript transformers (the plugins here) before checking anything: when one reports an
 /// error, only their diagnostics are reported, not the checker's of a later file, nor roblox-ts's.
 #[test]

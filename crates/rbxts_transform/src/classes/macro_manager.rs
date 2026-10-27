@@ -179,6 +179,23 @@ impl MacroManager {
     /// Resolves every macro and well-known symbol. A missing one is roblox-ts's `ProjectError` (outdated
     /// compiler-types).
     pub fn new(checker: &mut Checker) -> Result<MacroManager, ProjectError> {
+        Self::build(checker, true)
+    }
+
+    /// rbxts-rs: [`MacroManager::new`] without the symbols it cannot find, for a build that has [`MacroManager::new`]'s
+    /// error to report but runs its plugins first, as roblox-ts runs its TypeScript transformers before it makes its
+    /// MacroManager (`BuildSession::run`). What uses a missing symbol panics (an internal error).
+    pub fn partial(checker: &mut Checker) -> MacroManager {
+        Self::build(checker, false).expect("a partial MacroManager skips what it cannot find")
+    }
+
+    fn build(checker: &mut Checker, strict: bool) -> Result<MacroManager, ProjectError> {
+        // a lookup's result, or (not strict) `None` for what is missing
+        let found = |result: Result<P<Symbol>, ProjectError>| match result {
+            Ok(symbol) => Ok(Some(symbol)),
+            Err(_) if !strict => Ok(None),
+            Err(error) => Err(error),
+        };
         let mut manager = MacroManager {
             symbols: FxHashMap::default(),
             macro_only_classes: FxHashSet::default(),
@@ -189,22 +206,29 @@ impl MacroManager {
         };
 
         for &(name, transform) in IDENTIFIER_MACROS {
-            let symbol = get_global_symbol_by_name_or_throw(checker, name, SymbolFlags::Variable)?;
+            let Some(symbol) = found(get_global_symbol_by_name_or_throw(checker, name, SymbolFlags::Variable))? else {
+                continue;
+            };
             manager.identifier_macros.insert(symbol, Macro { name, transform });
         }
 
         for &(name, transform) in CALL_MACROS {
-            let symbol = get_global_symbol_by_name_or_throw(checker, name, SymbolFlags::Function)?;
+            let Some(symbol) = found(get_global_symbol_by_name_or_throw(checker, name, SymbolFlags::Function))? else {
+                continue;
+            };
             manager.call_macros.insert(symbol, Macro { name, transform });
         }
 
         for &(class_name, transform) in CONSTRUCTOR_MACROS {
-            let construct_symbol = get_constructor_symbol(checker, class_name)?;
+            let Some(construct_symbol) = found(get_constructor_symbol(checker, class_name))? else { continue };
             manager.constructor_macros.insert(construct_symbol, Macro { name: class_name, transform });
         }
 
         for &(class_name, methods) in PROPERTY_CALL_MACROS {
-            let symbol = get_global_symbol_by_name_or_throw(checker, class_name, SymbolFlags::Interface)?;
+            let Some(symbol) = found(get_global_symbol_by_name_or_throw(checker, class_name, SymbolFlags::Interface))?
+            else {
+                continue;
+            };
             let mut method_map: FxHashMap<&'static str, P<Symbol>> = FxHashMap::default();
             for &declaration in symbol.declarations() {
                 if declaration.kind() != Kind::InterfaceDeclaration {
@@ -222,9 +246,12 @@ impl MacroManager {
                 }
             }
             for &(method_name, transform) in methods {
-                let method_symbol = method_map.get(method_name).copied().ok_or_else(|| {
+                let Some(method_symbol) = found(method_map.get(method_name).copied().ok_or_else(|| {
                     project_error(format!("MacroManager could not find method for {class_name}.{method_name}"))
-                })?;
+                }))?
+                else {
+                    continue;
+                };
                 // rbxts-rs: the name is kept for plugins (`Array.push`); roblox-ts only stores the function
                 let name = property_call_macro_name(class_name, method_name);
                 manager.property_call_macros.insert(method_symbol, Macro { name, transform });
@@ -232,14 +259,16 @@ impl MacroManager {
         }
 
         for &symbol_name in symbol_names::ALL {
-            let symbol = get_global_symbol_by_name_or_throw(checker, symbol_name, SymbolFlags::All)?;
+            let Some(symbol) = found(get_global_symbol_by_name_or_throw(checker, symbol_name, SymbolFlags::All))? else {
+                continue;
+            };
             manager.symbols.insert(symbol_name, symbol);
             if MACRO_ONLY_CLASSES.contains(&symbol_name) {
                 manager.macro_only_classes.insert(symbol);
             }
         }
 
-        let lua_tuple = manager.get_symbol_or_throw(symbol_names::LUA_TUPLE);
+        let Some(lua_tuple) = manager.get_symbol(symbol_names::LUA_TUPLE) else { return Ok(manager) };
         let lua_tuple_type_dec =
             lua_tuple.declarations().iter().copied().find(|d| d.kind() == Kind::TypeAliasDeclaration);
         if let Some(declaration) = lua_tuple_type_dec {

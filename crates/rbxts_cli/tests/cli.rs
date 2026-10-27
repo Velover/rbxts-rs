@@ -107,6 +107,13 @@ fn empty_types_stop_at_the_macro_manager_as_stock() {
     diagnostics_like_stock("types_empty");
 }
 
+/// `"types": []` and no source to transform (a declaration file alone): stock still makes its MacroManager, so its
+/// error is the build's.
+#[test]
+fn empty_types_without_sources_stop_at_the_macro_manager_as_stock() {
+    diagnostics_like_stock("types_empty_no_sources");
+}
+
 /// Without `types` in the tsconfig, every package of the type roots is in the program, as in TypeScript 5: a project
 /// whose sources import no package still sees `@rbxts/compiler-types` (TypeScript 7 would load none: TS2318).
 #[test]

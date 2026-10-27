@@ -23,7 +23,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::read_log::{EntryKind, ReadLog, listing_hash, text_hash};
 
 /// How close to now a modification time must not be for a stamp to rely on it: an edit within the same tick of the
-/// file system's clock would get the same time (git's "racily clean" entries).
+/// file system's clock would get the same time (git's "racily clean" entries). The one place the rule lives: the
+/// output stamps (`rbxts_transform`'s `plugins::lifecycle`) use [`settled_time`] too, so such a stamp keeps no
+/// time and the next check compares the bytes.
 const RACY: Duration = Duration::from_secs(2);
 
 /// `modified` (nanoseconds since the Unix epoch) when it is far enough in the past to tell a later edit apart, else 0

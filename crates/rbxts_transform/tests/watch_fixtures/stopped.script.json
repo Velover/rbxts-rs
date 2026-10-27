@@ -1,0 +1,7 @@
+{
+	"steps": [
+		{ "name": "a3.ts panics (early file): the later files are left out, their cached lists too", "do": [{ "append": { "file": "src/shared/a3.ts", "text": "probeBoom();\n" } }], "expect": "error" },
+		{ "name": "seamdiag2.ts edited while a3.ts still panics", "do": [{ "append": { "file": "src/shared/seamdiag2.ts", "text": "export const more = 1;\n" } }], "expect": "error" },
+		{ "name": "a3.ts fixed", "do": [{ "patch": { "file": "src/shared/a3.ts", "find": "probeBoom();\n", "replace": "" } }] }
+	]
+}

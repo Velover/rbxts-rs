@@ -831,16 +831,9 @@ pub fn modified_nanos(metadata: &std::fs::Metadata) -> u128 {
         .map_or(0, |d| d.as_nanos())
 }
 
-/// How close to now a modification time must not be for a stamp to keep it: an edit within the same tick of the file
-/// system's clock would get the same time (git's "racily clean" entries). Such a stamp keeps no time, so the next
-/// check compares the bytes.
-const RACY: Duration = Duration::from_secs(2);
-
-/// `modified` (nanoseconds since the Unix epoch) when it is far enough in the past to tell a later edit apart, else 0.
-pub fn settled_time(modified: u128) -> u128 {
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-    if modified != 0 && now >= modified + RACY.as_nanos() { modified } else { 0 }
-}
+/// `modified` (nanoseconds since the Unix epoch) when it is far enough in the past to tell a later edit apart, else 0:
+/// the load's rule (`rbxts_project::read_check::settled_time`), shared so the two never drift apart.
+pub use rbxts_project::read_check::settled_time;
 
 /// The modification time of the file at `path` when it holds exactly `bytes` (0 when unknown or too recent:
 /// [`settled_time`]), `None` otherwise (missing, or other bytes). The time is taken from the open file before its

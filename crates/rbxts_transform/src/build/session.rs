@@ -1237,15 +1237,6 @@ impl<'p> BuildSession<'p> {
         // 3. check the files to transform
         let start = Instant::now();
         let ctx = Context::background();
-        // roblox-ts's `compileFiles` makes its MacroManager before checking anything: compiler types it cannot find
-        // (`"types": []`) stop the build there, with that error alone
-        if !to_transform.is_empty() {
-            let mut checker = project.program.get_type_checker_for_file_exclusive(&ctx, to_transform[0]);
-            if let Err(error) = crate::classes::macro_manager::MacroManager::new(&mut checker) {
-                report.fatal.extend(error.messages);
-                return (report, summary, committed, Some(loaded));
-            }
-        }
         // the checker diagnostics are `checked_from..checked_to` (a plugin error drops them: `first_error_cut`)
         let checked_from = report.diagnostics.len();
         report.diagnostics.extend(project.program_diagnostics());
@@ -1350,6 +1341,30 @@ impl<'p> BuildSession<'p> {
             check_failed = report.diagnostics.iter().any(|d| d.category() == Category::Error);
             to_transform = files.clone();
         }
+        // roblox-ts's `compileFiles` makes its MacroManager (`createTransformServices`) after its TypeScript transformers
+        // ran and before it checks any file: compiler types it cannot find (`"types": []`, an outdated
+        // `@rbxts/compiler-types`) fail the build with that error alone, unless a transformer (a plugin here) reported
+        // an error, whose diagnostics are reported instead (`stop_report`). So the plugins still run: the explanations
+        // and the transform below use a MacroManager without the missing symbols, and the report is replaced after
+        // them. An empty project is asked too (stock fails it); a rebuild with nothing to transform is not (its
+        // program's global types are the last build's, which made one).
+        let macro_error: Option<Vec<String>> = if !to_transform.is_empty() || files.is_empty() {
+            let mut checker = match to_transform.first() {
+                Some(&file) => project.program.get_type_checker_for_file_exclusive(&ctx, file),
+                None => project.program.get_type_checker(&ctx),
+            };
+            crate::classes::macro_manager::MacroManager::new(&mut checker).err().map(|error| error.messages)
+        } else {
+            None
+        };
+        // no plugin can report an error: the MacroManager's is the build's only one
+        if let Some(error) = &macro_error
+            && run.is_none()
+        {
+            let checked = checked_from..report.diagnostics.len();
+            stop_report(&mut report, checked, false, Some(error));
+            return (report, summary, committed, Some(loaded));
+        }
         // roblox-ts's `compileFiles` checks and transforms file by file, in transform order, and stops transforming at
         // the first error: the files before the first one the check failed are transformed (their diagnostics are
         // reported, up to the first transform error), nothing is written (`first_error_cut`). A rebuild transforms
@@ -1361,22 +1376,34 @@ impl<'p> BuildSession<'p> {
             if let Some(run) = &run {
                 explain_failures(&mut report, project, services, &run.active, &run.shared, &run.times, &ctx, &env);
             }
-            let failing: FxHashSet<P<SourceFile>> = report
-                .diagnostics
-                .iter()
-                .filter(|d| d.category() == Category::Error)
-                .map(|d| d.file())
-                .collect::<Option<_>>()
-                .unwrap_or_default();
-            let first = files.iter().filter(|f| failing.contains(*f)).map(|f| file_indices[f].0).min();
-            let Some(first) = first.filter(|&first| files.iter().any(|f| file_indices[f].0 < first)) else {
-                return (report, summary, committed, Some(loaded));
-            };
-            if self.options.write_partial {
-                return (report, summary, committed, Some(loaded));
+            // a plugin error raised while explaining: a plugin error as any other (`first_error_cut`)
+            let explain_error = report.diagnostics[checked_to..].iter().any(|d| d.category() == Category::Error);
+            // with a MacroManager error, the build reports that error or the plugins' whatever the check found, and
+            // stock's transformers see every file before the MacroManager is made: every file is transformed, for the
+            // plugins' diagnostics (a file's internal error still stops the transform there)
+            if macro_error.is_none() {
+                let failing: FxHashSet<P<SourceFile>> = report
+                    .diagnostics
+                    .iter()
+                    .filter(|d| d.category() == Category::Error)
+                    .map(|d| d.file())
+                    .collect::<Option<_>>()
+                    .unwrap_or_default();
+                let first = files.iter().filter(|f| failing.contains(*f)).map(|f| file_indices[f].0).min();
+                let Some(first) = first.filter(|&first| files.iter().any(|f| file_indices[f].0 < first)) else {
+                    // no file comes before the first failing one, so none is transformed: the cut the transform's path
+                    // makes (`first_error_cut`), made here
+                    if !self.options.write_partial {
+                        stop_report(&mut report, checked_from..checked_to, explain_error, None);
+                    }
+                    return (report, summary, committed, Some(loaded));
+                };
+                if self.options.write_partial {
+                    return (report, summary, committed, Some(loaded));
+                }
+                to_transform.retain(|f| file_indices[f].0 < first);
+                checked_prefix = Some(first);
             }
-            to_transform.retain(|f| file_indices[f].0 < first);
-            checked_prefix = Some(first);
         }
 
         // 5. transform
@@ -1392,6 +1419,7 @@ impl<'p> BuildSession<'p> {
         // with the internal errors of plugins' misuse of the seam: the plugins' side of `first_error_cut`
         let mut plugin_side: Vec<Vec<P<Diagnostic>>> = Vec::with_capacity(to_transform.len());
         let mut cut = crate::compile::ErrorCut::None;
+        let stopped_at: Option<u32>;
         let hook_times = {
             // every file on the checker that checked it, one thread per checker (`checker_groups`)
             let file_diagnostics: FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>> = match &run {
@@ -1413,12 +1441,16 @@ impl<'p> BuildSession<'p> {
                 file_diagnostics: &file_diagnostics,
                 file_indices: &file_indices,
                 claims_all,
+                partial_macros: macro_error.is_some(),
             });
             let transformed = checker_groups::transform_files(project, services, &ctx, plugins.as_ref(), &to_transform);
             if let Some(fatal) = transformed.setup_fatal {
                 report.fatal.extend(fatal);
                 return (report, summary, committed, Some(loaded));
             }
+            // the transform order of the file whose internal error stopped the transform: the files after it are left
+            // out, the cached lists of the ones not transformed again too (below), as a clean build leaves them out
+            stopped_at = transformed.stopped_at.map(|i| file_indices[&to_transform[i]].0);
             // the files transformed, in transform order (an internal error leaves every later file out; the build then
             // fails)
             let mut done = Vec::with_capacity(to_transform.len());
@@ -1459,7 +1491,9 @@ impl<'p> BuildSession<'p> {
             }
             drop_reported_earlier(report.files.iter_mut().map(|f| &mut f.diagnostics).zip(once.iter().map(Vec::as_slice)));
             report.diagnostics.extend(crate::compile::classify_diagnostics(classify));
-            report.fatal.extend(transformed.stopped);
+            if macro_error.is_none() {
+                report.fatal.extend(transformed.stopped);
+            }
             to_transform = done;
             transformed.hook_times
         };
@@ -1473,6 +1507,7 @@ impl<'p> BuildSession<'p> {
             for &file in &files {
                 if !transformed.contains(&file)
                     && checked_prefix.is_none_or(|first| file_indices[&file].0 < first)
+                    && stopped_at.is_none_or(|stop| file_indices[&file].0 < stop)
                     && let Some(old) = c.files.get(&file.path().to_string())
                 {
                     // cut as the files transformed now (`first_error_cut`)
@@ -1509,6 +1544,19 @@ impl<'p> BuildSession<'p> {
             crate::compile::drop_plugin_duplicates(&mut owners);
         }
         report.diagnostics.extend(cached.into_iter().flat_map(|(_, diagnostics, _)| diagnostics));
+        // the transform ran on a MacroManager without the missing symbols for the plugins' sake alone: besides their
+        // error, which stock reports instead, nothing it reported is stock's (internal errors of a missing symbol
+        // included), only the MacroManager's error
+        if let Some(error) = &macro_error {
+            if cut == crate::compile::ErrorCut::Plugin {
+                for file in &mut report.files {
+                    file.internal_errors.clear();
+                }
+            } else {
+                report.files.clear();
+                stop_report(&mut report, checked_from..checked_to, false, Some(error));
+            }
+        }
 
         let any_errors = report.has_errors();
         if (any_errors && !self.options.write_partial) || checked_prefix.is_some() {
@@ -2331,6 +2379,25 @@ impl<'p> BuildSession<'p> {
 /// `plugin` mapped onto the same copies (`plugin` is a sublist of `diagnostics`, compared by identity). What a
 /// committed file keeps outlives its program, which a watch session frees once a later build replaces it: the
 /// transform's diagnostics were made while a checker was held, in that checker's region.
+/// The report of a build that stops without a usable transform, as roblox-ts's `compileFiles` (its TypeScript
+/// transformers, then its MacroManager, then the check): when a plugin reported an error, its diagnostics alone (the
+/// checker diagnostics, `checked_from..` until the plugins' explanations, go; so do the explanations that replaced
+/// some of them, `explain_failures`); else, after a MacroManager error, that error alone. `plugin_error` is a plugin
+/// error among the diagnostics after the checker's (the explanations' own).
+fn stop_report(
+    report: &mut CompileReport,
+    checked: std::ops::Range<usize>,
+    plugin_error: bool,
+    macro_error: Option<&Vec<String>>,
+) {
+    if plugin_error {
+        report.diagnostics.drain(checked);
+    } else if let Some(error) = macro_error {
+        report.diagnostics.truncate(checked.start);
+        report.fatal.extend(error.iter().cloned());
+    }
+}
+
 fn detach(diagnostics: Vec<P<Diagnostic>>, plugin: Vec<P<Diagnostic>>) -> (Vec<P<Diagnostic>>, Vec<P<Diagnostic>>) {
     use tsrs_ast::DiagnosticExt;
     let mut copies: FxHashMap<P<Diagnostic>, P<Diagnostic>> = FxHashMap::default();

@@ -70,7 +70,8 @@
 //! itself (an internal error).
 //! **By kind**: `void probeVoid` becomes `"void claimed"` (other `void`s are declined); `debugger` becomes
 //! `print("probe: debugger")`.
-//! **explain_checker_diagnostic**: a checker message naming `probeBroken` is replaced.
+//! **explain_checker_diagnostic**: a checker message naming `probeBroken` is replaced; one naming `probeLoud` is not, but
+//! explaining it reports an error (`probe: an error while explaining`, at the file).
 //! **Finish**: an artifact `probe-report.json` with the claims per file; in [`Mode::Unresolved`] one late key is left
 //! unresolved, in [`Mode::ArtifactOutside`] an artifact goes outside the project.
 //! **[`Mode::Refuse`]** calls refused primitives in each phase: `prereq` in `begin_file`, `late_string` in
@@ -997,6 +998,11 @@ impl PluginInstance for ProbeInstance {
 
     fn explain_checker_diagnostic(&self, cx: &mut Cx<'_>, diagnostic: P<Diagnostic>) -> Option<PluginDiagnostic> {
         let text = diagnostic.localize();
+        if text.contains("probeLoud") {
+            let file = cx.file().source.as_node();
+            let _ = cx.error(file, "probe: an error while explaining");
+            return None;
+        }
         text.contains("probeBroken").then(|| {
             PluginDiagnostic::error(cx.file().source.as_node(), format!("probe explained: {text}"))
                 .with_hint("Declare probeBroken first.")

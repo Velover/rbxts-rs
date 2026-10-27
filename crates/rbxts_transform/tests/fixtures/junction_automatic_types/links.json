@@ -1,0 +1,13 @@
+{
+	"layouts": {
+		"automatic-types": [
+			["node_modules/@rbxts/types", "@shared/types"],
+			["node_modules/@rbxts/compiler-types", "@shared/compiler-types"],
+			["node_modules/@rbxts/zeta", "packages/greeter"],
+			["node_modules/@rbxts/mid", "packages/greeter"],
+			["node_modules/@rbxts/beta", "packages/greeter"],
+			["node_modules/@rbxts/omega", "packages/greeter"],
+			["node_modules/@rbxts/alpha", "packages/greeter"]
+		]
+	}
+}

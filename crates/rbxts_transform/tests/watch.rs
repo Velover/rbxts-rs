@@ -252,6 +252,15 @@ fn first_error_cuts_rebuild_as_clean_builds() {
     run_script("plugindiag", "firsterror-s2", "firsterror-s2-plain-inc", &[], true);
 }
 
+/// An internal error stops the transform at its file (`stopped.script.json`: a plugin panic in an early file): the
+/// files after it are left out, the ones a rebuild does not transform again too (their cached lists are not replayed),
+/// as a clean build with the same panic leaves them out.
+#[test]
+fn an_internal_error_stop_rebuilds_as_clean_builds() {
+    run_script("plugindiag", "stopped", "stopped", &["stamp", "probe-panic"], false);
+    run_script("plugindiag", "stopped", "stopped-inc", &["stamp", "probe-panic"], true);
+}
+
 /// A tsconfig without `types` (`autotypes.script.json`): every package of the type roots is in the program, as in
 /// TypeScript 5, and a package appearing, changing, turning `"typings": null` or going is a change the watcher and the
 /// incremental state see.

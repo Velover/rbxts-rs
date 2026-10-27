@@ -119,7 +119,15 @@ reported, transformed in transform order, so the transform diagnostics of the fi
 are not reported (their plugins' diagnostics are). Watch and incremental rebuilds cut the cached lists of the files
 they do not transform again the same way. One deviation: when the check fails, rbxts-rs transforms only the files
 before the first failing one, so plugins see only those files, where stock's transformers see every file (a plugin
-error in a later file is not reported; stock would report it alone).
+error in a later file is not reported; stock would report it alone). A plugin error raised while a plugin explains a
+checker diagnostic (`explain_checker_diagnostic`) is a plugin error like any other: the checker diagnostics go, and
+with them the explanations that replaced some of them, whether or not files come before the first failing one.
+**The MacroManager** comes after the plugins, as stock makes it (`createTransformServices`) after running its
+transformers: when compiler types are missing (`"types": []`, an outdated `@rbxts/compiler-types`), the build reports
+the MacroManager's error alone, unless a plugin reports an error, whose diagnostics are reported instead. For that,
+the plugins run as usual and every file is transformed, whatever the check found, on a MacroManager without the
+missing symbols, and the rest of the report is dropped. A project with no source to transform is asked too, as stock
+asks it.
 
 **Project references** (`build::references`, `rbxts_project::graph`): a tsconfig with `references` builds as
 roblox-ts master's `ProjectGraph` and `ProjectBuild` do. The graph walks the references in build order (a cycle is

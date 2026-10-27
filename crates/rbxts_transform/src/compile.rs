@@ -629,7 +629,9 @@ pub(crate) fn explain_failures(
         .collect();
     for (owner, files) in by_owner {
         let mut checker = program.get_type_checker_for_file_exclusive(ctx, files[0].1);
-        let Ok(macro_manager) = MacroManager::new(&mut checker) else { continue };
+        // the explanations come before roblox-ts's MacroManager (`BuildSession::run`): one missing symbols still
+        // serves them
+        let macro_manager = MacroManager::new(&mut checker).unwrap_or_else(|_| MacroManager::partial(&mut checker));
         let mut multi = MultiTransformState::new();
         let mut host = PluginHost::new(
             program,

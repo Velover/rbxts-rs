@@ -52,6 +52,9 @@
 //!   in the shared `node_modules`, and `@rbxts/greeter` (the fixture's `packages/greeter`) outside any
 //!   `node_modules`, with either the packages or the whole `node_modules` linked. Imports keep their `node_modules`
 //!   paths, as with stock roblox-ts (`guessVirtualPath`).
+//! - `junction_automatic_types`: a package imported by relative path and linked into the type root several times, the
+//!   tsconfig without `types`: every type root package is an automatic type directive, and TypeScript 5 meets their
+//!   links in the type root's directory order, so the import goes through the first (`alpha`).
 //! - `junction_augmentation`: a module augmentation of a linked package, first in root order: its resolution counts
 //!   like an import's, so another file's import through a second link to the package goes through the augmented one.
 //! - `junction_interleaved_imports`, `junction_interleaved_type_refs`: a file's resolutions (imports, or
@@ -444,6 +447,11 @@ fn junction_interleaved_type_refs() {
 #[test]
 fn junction_workspace_core_first() {
     check("junction_workspace_core_first");
+}
+
+#[test]
+fn junction_automatic_types() {
+    check("junction_automatic_types");
 }
 
 #[test]
