@@ -22,9 +22,49 @@ end
 withArrow(function(x) end, function() end)
 -- a method call: the overloads of a method
 holder:take(function() end)
+-- an arrow argument before the function passes the overload's first pass but not its full check: the function is
+-- checked against the second overload in full
+local function arrowFirst(a, cb)
+end
+arrowFirst(function(x)
+	return x
+end, function(self) end)
+-- generic overloads
+local function gen(v, cb)
+end
+gen(1, function() end)
+-- a spread argument
+local function spr(cb, ...)
+	local rest = { ... }
+end
+local nums = { 1, 2 }
+spr(function() end, unpack(nums))
+-- explicit type arguments
+local function targ(cb, v)
+end
+targ(function() end)
+-- an optional chain
+local _result = maybe
+if _result ~= nil then
+	_result:take(function() end)
+end
+-- an object literal method in another argument
+local function objArg(o, cb)
+end
+objArg({
+	m = function(self) end,
+}, function() end)
+-- `new` with construct overloads
+local made = Ctor.new(function() end)
 return {
 	over = over,
 	first = first,
 	byArg = byArg,
 	withArrow = withArrow,
+	arrowFirst = arrowFirst,
+	gen = gen,
+	spr = spr,
+	targ = targ,
+	objArg = objArg,
+	made = made,
 }

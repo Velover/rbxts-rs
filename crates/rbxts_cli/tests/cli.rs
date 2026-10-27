@@ -49,8 +49,8 @@ fn builds_with_registered_plugins_and_returns_roblox_ts_exit_codes() {
 }
 
 /// `rbxtsc build` in a copy of `tests/fixtures/<name>`: stdout as stock prints it, exit code 1.
-fn diagnostics_like_stock(name: &str) {
-    let Some(node_modules) = node_modules_or_skip(&format!("cli::{name}")) else { return };
+fn diagnostics_like_stock(name: &str) -> Option<TempDir> {
+    let node_modules = node_modules_or_skip(&format!("cli::{name}"))?;
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);
     let mut root = TempDir::new(&format!("cli-{name}"));
     for name in ["src", "tsconfig.json", "package.json", "typings"] {
@@ -73,6 +73,7 @@ fn diagnostics_like_stock(name: &str) {
     assert_eq!(output.status.code(), Some(1));
     let expected = std::fs::read_to_string(fixture.join("expected-stdout.txt")).unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+    Some(root)
 }
 
 #[test]
@@ -83,6 +84,27 @@ fn diagnostics_print_as_stock_with_related_information() {
 #[test]
 fn diagnostics_print_as_stock_with_an_empty_span() {
     diagnostics_like_stock("diagnostics_pretty_syntax");
+}
+
+/// An overloaded call no overload takes, a function expression argument deciding it (TypeScript 5 fixes its `this` from
+/// the first overload, which rejects it on the return type; the second then refuses that `this`): TS2769 at stock's
+/// place, exit 1 and nothing written. Its elaboration is TypeScript 7's, which reports only the last overload's
+/// error where TypeScript 5 lists each of two or three (`stock-stdout.txt` is stock's; docs/tsrs.md).
+#[test]
+fn an_overload_error_reports_ts2769_as_stock() {
+    let Some(root) = diagnostics_like_stock("overload_error") else { return };
+    assert!(!root.path().join("out").exists(), "nothing is written");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/overload_error");
+    let ours = std::fs::read_to_string(fixture.join("expected-stdout.txt")).unwrap();
+    let stock = std::fs::read_to_string(fixture.join("stock-stdout.txt")).unwrap();
+    let (ours, stock): (Vec<&str>, Vec<&str>) = (ours.lines().collect(), stock.lines().collect());
+    assert_eq!(ours[0], stock[0], "the error line (place, TS2769, message) is stock's");
+    // from the code frame on, stock's but for TypeScript 7's "The last overload is declared here" (4 lines)
+    let frame = |lines: &[&str]| lines.iter().position(|l| l.starts_with("[7m11")).unwrap();
+    let mut ours_tail = ours[frame(&ours)..].to_vec();
+    let last = ours_tail.iter().position(|l| l.contains("The last overload is declared here")).unwrap();
+    ours_tail.drain(last - 3..=last);
+    assert_eq!(ours_tail, stock[frame(&stock)..].to_vec());
 }
 
 /// roblox-ts's `compileFiles` adds every file's checker diagnostics but transforms file by file, in transform order,

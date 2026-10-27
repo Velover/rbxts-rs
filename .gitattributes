@@ -5,3 +5,4 @@
 crates/rbxts_transform/tests/fixtures/json/**/crlf.json -text
 # Stock rbxtsc stdout, CRLF line ends and colour codes included: compared byte for byte.
 crates/rbxts_cli/tests/fixtures/*/expected-stdout.txt -text
+crates/rbxts_cli/tests/fixtures/*/stock-stdout.txt -text

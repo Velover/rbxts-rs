@@ -1,0 +1,22 @@
+[96msrc/shared/bad.ts[0m:[93m11[0m:[93m5[0m - [91merror[0m[90m TS2769: [0mNo overload matches this call.
+  The last overload gave the following error.
+    Argument of type '(this: Foo) => void' is not assignable to parameter of type '(this: Bar) => void'.
+      The 'this' types of each signature are incompatible.
+        Property 'n' is missing in type 'Bar' but required in type 'Foo'.
+
+[7m11[0m bad(function () {});
+[7m  [0m [91m    ~~~~~~~~[0m
+
+  [96msrc/shared/bad.ts[0m:[93m2[0m:[93m2[0m
+    [7m2[0m  n: number;
+    [7m [0m [96m ~[0m
+    'n' is declared here.
+  [96msrc/shared/bad.ts[0m:[93m9[0m:[93m17[0m
+    [7m9[0m export function bad(cb: (this: Bar) => void): void;
+    [7m [0m [96m                ~~~[0m
+    The last overload is declared here.
+  [96msrc/shared/bad.ts[0m:[93m10[0m:[93m17[0m
+    [7m10[0m export function bad(cb: Callback) {}
+    [7m  [0m [96m                ~~~[0m
+    The call would have succeeded against this implementation, but implementation signatures of overloads are not externally visible.
+

@@ -31,7 +31,9 @@
 //! - `export_order`: export tables (functions, classes, enums, aliases, destructured and default exports, a namespace,
 //!   `export *`) in TypeScript 5's order, which binds a block's function declarations first.
 //! - `overload_this`: a function expression argument of an overloaded call, whose `this` (and so `self`) is TypeScript
-//!   5's: the first overload it is checked against in full, which may then be rejected.
+//!   5's: the first overload it is checked against in full, which may then be rejected. Also with an arrow argument
+//!   before it, generic overloads, a spread argument, type arguments, an optional chain, an object literal method in
+//!   another argument and `new` with construct overloads (`expected/` is stock's).
 //! - `base_url`: `baseUrl` with `paths` (TypeScript 5's resolution, which TypeScript 7 dropped), a declaration build;
 //!   checked as the written output tree (`expected/` is stock `rbxtsc build`'s `out`).
 //! - `root_dirs`: `rootDirs` (`src/a`, `src/b`) without `rootDir`, a declaration build: the written output tree is

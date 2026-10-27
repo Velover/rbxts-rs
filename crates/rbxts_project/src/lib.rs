@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use tsrs_ast::{Diagnostic, SourceFile, is_json_source_file};
+use tsrs_ast::{Diagnostic, Kind, Node, NodeFlags, SourceFile, is_json_source_file};
 use tsrs_compiler::{
     Context, Program, ProgramOptions, new_cached_fs_compiler_host, new_program, sort_and_deduplicate_diagnostics,
 };
@@ -277,6 +277,37 @@ fn recording_fs(log: Option<&Arc<ReadLog>>) -> Arc<dyn FS> {
     }
 }
 
+/// rbxts-rs: TypeScript 5's context sensitivity for the function expressions and object literal methods of `file`.
+/// TypeScript 5 calls such a function context sensitive unless it has type parameters or an explicit `this`
+/// parameter (`hasContextSensitiveParameters`): its implicit `this` is contextually typed. TypeScript 7 asks whether
+/// it uses `this`, and so a `function () {}` with annotated parameters (or none) is not context sensitive there: the
+/// overload resolution of a call it is passed to checks it in full before the other context sensitive arguments
+/// (TypeScript 5 leaves it out as `anyFunctionType`, then fixes its `this` from the first overload it checks it
+/// against, which may then be rejected, even to TS2769), and it gets no contextual `this` (its `self`).
+///
+/// TypeScript 7's test reads the binder's `ContainsThis` flag on the function, and nothing else reads that flag on a
+/// function (it is the interface flag's bit, and an identifier's escape flag's, on those nodes). So the flag is set
+/// on every such function, after binding (the binder sets it afresh) and before any checker: the checker then judges
+/// as TypeScript 5 does, everywhere.
+fn mark_ts5_context_sensitive_functions(file: P<SourceFile>) {
+    fn visit(node: P<Node>) {
+        if (node.kind() == Kind::FunctionExpression || tsrs_ast::is_object_literal_method(node))
+            && node.type_parameter_list().is_none()
+            && node.parameters().first().is_none_or(|&p| !tsrs_ast::is_this_parameter(p))
+        {
+            node.set_flags(node.flags() | NodeFlags::ContainsThis);
+        }
+        node.for_each_child(&mut |child| {
+            visit(child);
+            false
+        });
+    }
+    if file.is_declaration_file() {
+        return;
+    }
+    visit(file.as_node());
+}
+
 /// Parses the tsconfig as a load does: TypeScript 7's parse, with TypeScript 5's automatic type directives
 /// ([`add_automatic_type_directives`], whether it added them) and `baseUrl` ([`emulate_base_url`]). On the compiler's
 /// worker pool, as tsrs's CLI does: the include glob's parallel listing runs on it.
@@ -352,9 +383,11 @@ pub fn load_cached(
             root_dir = wanted;
         }
     }
-    if opts.regions {
-        program.bind_source_files();
-    }
+    // bound here in any case: TypeScript 5's context sensitivity is marked on the bound files, before any checker
+    program.bind_source_files();
+    let files = program.source_files();
+    // each file's nodes are its own
+    read_check::parallel(files.len(), |i| mark_ts5_context_sensitive_functions(files[i]));
     let program_time = start.elapsed();
 
     Ok(Project {
@@ -525,8 +558,14 @@ impl Project {
             }
             program = reused?;
         }
-        // the edited files are bound before any checker exists (`LoadOptions::regions`)
+        // the edited files are bound before any checker exists (`LoadOptions::regions`), and marked as TypeScript 5
+        // judges their functions' context sensitivity
         program.bind_source_files();
+        for file_name in &names {
+            if let Some(file) = program.get_source_file_by_path(&tspath::to_path(file_name, &self.cwd, case_sensitive)) {
+                mark_ts5_context_sensitive_functions(file);
+            }
+        }
         Some(Project {
             config: self.config,
             program,

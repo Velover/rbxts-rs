@@ -114,7 +114,7 @@ fn list(dir: &str, case_sensitive: bool) -> View {
 }
 
 /// Runs `job` on every index below `count` on up to 16 threads, in no particular order.
-fn parallel<T: Send>(count: usize, job: impl Fn(usize) -> T + Sync) -> Vec<T> {
+pub(crate) fn parallel<T: Send>(count: usize, job: impl Fn(usize) -> T + Sync) -> Vec<T> {
     let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get).clamp(1, 16).min(count.max(1));
     if threads <= 1 {
         return (0..count).map(&job).collect();

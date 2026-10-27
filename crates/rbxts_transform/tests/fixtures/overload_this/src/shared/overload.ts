@@ -42,3 +42,50 @@ interface Holder {
 }
 declare const holder: Holder;
 holder.take(function () {});
+
+// an arrow argument before the function passes the overload's first pass but not its full check: the function is
+// checked against the second overload in full
+export function arrowFirst(a: (x: number) => string, cb: (this: void) => void): void;
+export function arrowFirst(a: (x: number) => number, cb: (this: Foo) => void): void;
+export function arrowFirst(a: Callback, cb: Callback) {}
+arrowFirst((x) => x, function () {});
+
+// generic overloads
+export function gen<T>(v: T, cb: (this: void) => number): void;
+export function gen<T>(v: T, cb: (this: Foo) => void): void;
+export function gen(v: unknown, cb: Callback) {}
+gen(1, function () {});
+
+// a spread argument
+export function spr(cb: (this: void) => number, ...rest: number[]): void;
+export function spr(cb: (this: Foo) => void, ...rest: number[]): void;
+export function spr(cb: Callback, ...rest: number[]) {}
+const nums = [1, 2];
+spr(function () {}, ...nums);
+
+// explicit type arguments
+export function targ<T>(cb: (this: void) => number, v?: T): void;
+export function targ<T>(cb: (this: Foo) => void, v?: T): void;
+export function targ(cb: Callback, v?: unknown) {}
+targ<number>(function () {});
+
+// an optional chain
+interface MaybeHolder {
+	take(cb: (this: void) => number): void;
+	take(cb: (this: Foo) => void): void;
+}
+declare const maybe: MaybeHolder | undefined;
+maybe?.take(function () {});
+
+// an object literal method in another argument
+export function objArg(o: { m(): void }, cb: (this: void) => number): void;
+export function objArg(o: { m(): void }, cb: (this: Foo) => void): void;
+export function objArg(o: unknown, cb: Callback) {}
+objArg({ m() {} }, function () {});
+
+// `new` with construct overloads
+declare const Ctor: {
+	new (cb: (this: void) => number): object;
+	new (cb: (this: Foo) => void): object;
+};
+export const made = new Ctor(function () {});
