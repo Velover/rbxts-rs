@@ -125,10 +125,12 @@ pub(crate) fn parallel<T: Send>(count: usize, job: impl Fn(usize) -> T + Sync) -
 }
 
 /// [`parallel`] for system calls: each waits on the file system and its filters (the virus scanner) more than it
-/// computes, so more threads than processors finish sooner (32: on the real project's check, about 2 ms less than one
-/// per processor on 12).
+/// computes, so more threads than processors finish sooner. Measured on the real project's check (12 processors):
+/// 12 threads 19 ms, 24 18, 32 17, 48 18; so about three per processor, at least 8 and at most 32 (each a short-lived
+/// thread that mostly waits).
 pub(crate) fn parallel_io<T: Send>(count: usize, job: impl Fn(usize) -> T + Sync) -> Vec<T> {
-    parallel_on(32, count, job)
+    let processors = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    parallel_on((processors * 3).clamp(8, 32), count, job)
 }
 
 fn parallel_on<T: Send>(threads: usize, count: usize, job: impl Fn(usize) -> T + Sync) -> Vec<T> {
@@ -204,8 +206,7 @@ impl Prepared {
             listings.push((dir, view, hash, dir_key));
         }
         let mut texts = Vec::new();
-        for (path, hash) in log.contents() {
-            let stamp = log.content_stamp(&path);
+        for (path, hash, stamp) in log.contents_stamped() {
             let own_key = key(&path, case_sensitive);
             let keys = split_keys(&path).map(|(dir, dir_key, name_key)| {
                 want(&dir, &dir_key, &mut dirs);
