@@ -11,7 +11,9 @@
 //! relations, as `resolve_call` asks it), and the error is made again as TypeScript 5 makes it from the candidates
 //! that failed on an argument. Calls, `new` expressions, tagged templates, decorators (under their head message,
 //! TS1238 and the like) and JSX elements, each with the signatures its `resolve_*` gives `resolve_call`; a call this
-//! cannot ask again (one that resolves now, which it never should) keeps TypeScript 7's text.
+//! cannot ask again (one that resolves now, which it never should) keeps TypeScript 7's text. So does a TS2769 that
+//! TypeScript 7 reports at a JSX child of an overloaded component: the child is not inside the opening element's
+//! range, so no call is found for it (documented in `docs/tsrs.md`, "Diagnostic message text").
 
 use tsrs_ast::{Diagnostic, DiagnosticExt, Kind, Node, SourceFile, new_diagnostic, new_diagnostic_chain};
 use tsrs_checker::{CallState, CheckMode, Checker, SignatureFlags, SignatureKind, TypeFormatFlags};

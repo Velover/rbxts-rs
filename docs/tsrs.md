@@ -167,6 +167,22 @@ last section lists Luau behaviour that stock's output, and so rbxts-rs's, can me
   A file with one fails to build in rbxts-rs, where stock roblox-ts reports its own diagnostic for the construct when
   it reaches the file (or nothing, when an earlier file's error stops it). Both refuse the code; only the message
   differs.
+- **Diagnostic message text.** Every diagnostic matches stock in its code, file, position, exit code and the rule
+  that a failing build writes nothing. Its message text follows TypeScript 7 where the text is the checker's own
+  wording or type printing. Ported back to TypeScript 5's text: TS2769 for calls, `new`, tagged templates,
+  decorators and JSX opening elements (`rbxts_project/src/overload_errors.rs`), and the TS2683/TS7011 spans.
+  Known remaining cases, each present before the stockgaps round and accepted by the user (2026-10-27):
+  - **Printed type order.** Literal unions print in TypeScript 7's order (`"a" | "b" | "c"`, where TypeScript 5
+    gives `"a" | "c" | "b"`), and so do the keys of a mapped or `Record` type and the properties of a JSX attributes
+    type (`{ a: number; children: string; }`, where TypeScript 5 gives `{ children: string; a: number; }`).
+  - **Index-signature related information.** TypeScript 7 adds "The expected type comes from this index signature."
+    where TypeScript 5 prints none.
+  - **JSX children of overloaded components.** When the last overload fails on a child, TypeScript 7 reports a
+    TS2769 at each failing child with "The last overload gave the following error.", while TypeScript 5 reports one
+    "Overload N of M" TS2769 at the element. For a child-count error (TS2745/TS2746), TypeScript 5 also prints the
+    TS2745/TS2746 on its own, and its chain has no "Overload N of M" line.
+
+  TypeScript 7.1 is expected to shift some of this text again. Code, place and exit stay the contract.
 - **Declaration maps.** TypeScript 7 maps some declarations (constructors, a specifier `transformPaths` rewrites)
   differently from TypeScript 5: `.d.ts.map` files are not byte-equal to stock roblox-ts's. The `.d.ts` files are.
 - **A context-sensitive `yield`.** TypeScript 7 takes a generator function for context sensitive when a `yield` in it
