@@ -82,9 +82,10 @@
 //!   variables, finalizers before `continue`), every for-of loop builder and `$range`, `while`, `do`-`while`, and
 //!   `continue` / `break` inside `try` in loops, roblox-ts's `loop.spec.ts` (destructured loop variables
 //!   included), and parenthesized `for` initializers and incrementors (value-less ones, which crash stock roblox-ts,
-//!   are dropped). Its two loops whose constant start is `-0` are `while` loops, where stock roblox-ts writes numeric
-//!   `for` loops that Luau's `--!optimize 2` folds to a `0` start (`luau-o2-negzero`, the `stockfix` fixture's
-//!   `luauOptimize`).
+//!   are dropped).
+//! - `luau_o2`: shapes of stock's output that Luau's `--!optimize 2` runs otherwise than JavaScript (engine bugs:
+//!   a builtin call's local argument a later argument reassigns through a closure, a numeric `for` from a `-0`
+//!   start; docs/tsrs.md, "Luau bugs"). rbxts-rs emits them as stock does: `expected/` is stock's output.
 //! - `macros`: every call, identifier, constructor and property-call macro, as values and statements, on optional
 //!   chains and with evaluation-order cases.
 //! - `midsolution`: project references through a solution config in the middle of the graph (`projects/group`, only
@@ -561,6 +562,11 @@ fn literals() {
 #[test]
 fn loops() {
     check("loops");
+}
+
+#[test]
+fn luau_o2() {
+    check("luau_o2");
 }
 
 #[test]

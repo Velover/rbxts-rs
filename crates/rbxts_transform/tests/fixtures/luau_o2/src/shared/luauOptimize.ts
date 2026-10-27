@@ -1,8 +1,8 @@
-// Luau's `--!optimize 2` (Studio's default for scripts) miscompiles two shapes of stock roblox-ts's output
-// (`luau-o2-fastcall`, `luau-o2-negzero`); `runtime/check.luau` compiles every module at that level.
+// Shapes of stock roblox-ts's output that Luau's `--!optimize 2` (Studio's default for scripts) runs otherwise than
+// JavaScript, through Luau engine bugs (docs/tsrs.md, "Luau bugs"). rbxts-rs emits them as stock does: `expected/` is
+// stock's output.
 
-// a builtin call (FASTCALL) reads a local argument's register after the later arguments ran: the receiver is
-// captured first when one of them may reassign it
+// a builtin call (FASTCALL) whose local argument a later argument reassigns through a closure
 export function pushRebinds() {
 	let target = [1, 2, 3];
 	const original = target;
@@ -23,7 +23,7 @@ export function subRebinds() {
 	return text.sub(rebind());
 }
 
-// a builtin called directly: the local argument is captured when a later argument may reassign it
+// a builtin called directly
 export function mathMaxRebinds() {
 	let a = 1;
 	function rebind() {
@@ -51,7 +51,7 @@ export function tonumberRebinds() {
 	return tonumber(text, rebind());
 }
 
-// an element access with a name is written as the member: the same call
+// an element access with a name, written as the member
 export function mathElementRebinds() {
 	let a = 1;
 	function rebind() {
@@ -61,7 +61,7 @@ export function mathElementRebinds() {
 	return math["max"](a, rebind());
 }
 
-// four arguments are no FASTCALL: stock's call
+// four arguments are no FASTCALL
 export function mathMaxFour() {
 	let a = 1;
 	function rebind() {
@@ -71,21 +71,21 @@ export function mathMaxFour() {
 	return math.max(a, 0, 0, rebind());
 }
 
-// no closure assigns the argument: stock's call
+// no closure assigns the argument
 export function mathMaxPlain() {
 	let a = 1;
 	a = 3;
 	return math.max(a, math.min(a, 2));
 }
 
-// nothing reassigns the receiver: stock's call
+// nothing reassigns the receiver
 export function pushPlain() {
 	const target = [1];
 	target.push(2);
 	return target.size();
 }
 
-// a constant -0 loop start is folded to 0: such a loop is the while loop
+// a numeric for from a -0 start: constant, from a constant, and from a runtime value
 export function negativeZeroLoop() {
 	for (let i = -0; i <= 0; i++) {
 		return 1 / i;
@@ -96,6 +96,21 @@ export function negativeZeroLoop() {
 const START = -0;
 export function negativeZeroConstantLoop() {
 	for (let i = START; i <= 0; i++) {
+		return 1 / i;
+	}
+	return 0;
+}
+
+const box = { start: -0 };
+export function negativeZeroRuntimeRange() {
+	for (const i of $range(box.start, 0)) {
+		return 1 / i;
+	}
+	return 0;
+}
+
+export function negativeZeroRange() {
+	for (const i of $range(-0, 0)) {
 		return 1 / i;
 	}
 	return 0;

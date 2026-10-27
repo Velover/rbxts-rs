@@ -388,13 +388,7 @@ fn transform_for_statement_optimized(state: &mut TransformState<'_>, node: P<Nod
 
     let id_symbol = symbol_of(state, dec_name);
 
-    let start_value = get_constant_integer(state, dec_init, false)?;
-    // rbxts-rs: Luau's `--!optimize 2` (Studio's default for scripts) folds a constant `-0` loop start to `0`:
-    // `for i = -0, 0 do return 1 / i end` gives `inf`, where JavaScript (and O0 and O1) give `-inf`. Such a loop is
-    // the while loop it would be without `--optimizedLoops` (only a constant start takes this path)
-    if start_value == 0.0 && start_value.is_sign_negative() {
-        return None;
-    }
+    get_constant_integer(state, dec_init, false)?;
 
     // require a nonzero constant step that updates the declared loop variable
 

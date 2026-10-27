@@ -1,7 +1,6 @@
 -- Runs the stockfix fixture's expected outputs (`expected/shared/<module>.luau`) with Lune and checks each call
 -- against the value JavaScript gives for the TypeScript source (`runtime/<module>.luau`: the module's ambient
--- functions and its calls), each compiled at `--!optimize 2` as Studio compiles scripts. Also checks that no module
--- writes a global. Run from the fixture directory:
+-- functions and its calls). Also checks that no module writes a global. Run from the fixture directory:
 --     lune run runtime/check.luau
 -- Prints `ok <calls>` and exits 0, or prints every failure and exits 1.
 local fs = require("@lune/fs")
@@ -95,8 +94,7 @@ local function loadModule(name: string)
 	for key, value in ambients[name] or {} do
 		environment[key] = value
 	end
-	-- at --!optimize 2, Studio's default for scripts (`luauOptimize`)
-	local chunk = luau.load(luau.compile(source, { optimizationLevel = 2 }), { debugName = name, environment = environment })
+	local chunk = luau.load(source, { debugName = name, environment = environment })
 	environments[name] = { environment = getfenv(chunk), known = table.clone(getfenv(chunk)) }
 	modules[name] = chunk()
 	return modules[name]

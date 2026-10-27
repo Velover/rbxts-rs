@@ -1,8 +1,8 @@
 -- Compiled with roblox-ts v3.0.0
--- Luau's `--!optimize 2` (Studio's default for scripts) miscompiles two shapes of stock roblox-ts's output
--- (`luau-o2-fastcall`, `luau-o2-negzero`); `runtime/check.luau` compiles every module at that level.
--- a builtin call (FASTCALL) reads a local argument's register after the later arguments ran: the receiver is
--- captured first when one of them may reassign it
+-- Shapes of stock roblox-ts's output that Luau's `--!optimize 2` (Studio's default for scripts) runs otherwise than
+-- JavaScript, through Luau engine bugs (docs/tsrs.md, "Luau bugs"). rbxts-rs emits them as stock does: `expected/` is
+-- stock's output.
+-- a builtin call (FASTCALL) whose local argument a later argument reassigns through a closure
 local function pushRebinds()
 	local target = { 1, 2, 3 }
 	local original = target
@@ -10,8 +10,7 @@ local function pushRebinds()
 		target = { 9 }
 		return 99
 	end
-	local _exp = target
-	table.insert(_exp, rebind())
+	table.insert(target, rebind())
 	return { #original, #target }
 end
 local function subRebinds()
@@ -20,18 +19,16 @@ local function subRebinds()
 		text = "xyz"
 		return 2
 	end
-	local _exp = text
-	return string.sub(_exp, rebind())
+	return string.sub(text, rebind())
 end
--- a builtin called directly: the local argument is captured when a later argument may reassign it
+-- a builtin called directly
 local function mathMaxRebinds()
 	local a = 1
 	local function rebind()
 		a = 100
 		return 2
 	end
-	local _a = a
-	return math.max(_a, rebind())
+	return math.max(a, rebind())
 end
 local function bitOrRebinds()
 	local a = 1
@@ -39,8 +36,7 @@ local function bitOrRebinds()
 		a = 8
 		return 2
 	end
-	local _a = a
-	return bit32.bor(_a, rebind())
+	return bit32.bor(a, rebind())
 end
 local function tonumberRebinds()
 	local text = "10"
@@ -48,20 +44,18 @@ local function tonumberRebinds()
 		text = "11"
 		return 2
 	end
-	local _text = text
-	return tonumber(_text, rebind())
+	return tonumber(text, rebind())
 end
--- an element access with a name is written as the member: the same call
+-- an element access with a name, written as the member
 local function mathElementRebinds()
 	local a = 1
 	local function rebind()
 		a = 100
 		return 2
 	end
-	local _a = a
-	return math.max(_a, rebind())
+	return math.max(a, rebind())
 end
--- four arguments are no FASTCALL: stock's call
+-- four arguments are no FASTCALL
 local function mathMaxFour()
 	local a = 1
 	local function rebind()
@@ -70,53 +64,44 @@ local function mathMaxFour()
 	end
 	return math.max(a, 0, 0, rebind())
 end
--- no closure assigns the argument: stock's call
+-- no closure assigns the argument
 local function mathMaxPlain()
 	local a = 1
 	a = 3
 	return math.max(a, math.min(a, 2))
 end
--- nothing reassigns the receiver: stock's call
+-- nothing reassigns the receiver
 local function pushPlain()
 	local target = { 1 }
 	table.insert(target, 2)
 	return #target
 end
--- a constant -0 loop start is folded to 0: such a loop is the while loop
+-- a numeric for from a -0 start: constant, from a constant, and from a runtime value
 local function negativeZeroLoop()
-	do
-		local i = -0
-		local _shouldIncrement = false
-		while true do
-			if _shouldIncrement then
-				i += 1
-			else
-				_shouldIncrement = true
-			end
-			if not (i <= 0) then
-				break
-			end
-			return 1 / i
-		end
+	for i = -0, 0 do
+		return 1 / i
 	end
 	return 0
 end
 local START = -0
 local function negativeZeroConstantLoop()
-	do
-		local i = START
-		local _shouldIncrement = false
-		while true do
-			if _shouldIncrement then
-				i += 1
-			else
-				_shouldIncrement = true
-			end
-			if not (i <= 0) then
-				break
-			end
-			return 1 / i
-		end
+	for i = START, 0 do
+		return 1 / i
+	end
+	return 0
+end
+local box = {
+	start = -0,
+}
+local function negativeZeroRuntimeRange()
+	for i = box.start, 0 do
+		return 1 / i
+	end
+	return 0
+end
+local function negativeZeroRange()
+	for i = -0, 0 do
+		return 1 / i
 	end
 	return 0
 end
@@ -132,4 +117,6 @@ return {
 	pushPlain = pushPlain,
 	negativeZeroLoop = negativeZeroLoop,
 	negativeZeroConstantLoop = negativeZeroConstantLoop,
+	negativeZeroRuntimeRange = negativeZeroRuntimeRange,
+	negativeZeroRange = negativeZeroRange,
 }

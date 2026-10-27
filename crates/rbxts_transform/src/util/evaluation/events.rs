@@ -121,22 +121,8 @@ impl<'r> Walker<'r> {
             }
             LuauNode::Expr(Expr::Call(n)) => {
                 self.expr(&n.expression, conditional);
-                // rbxts-rs: a builtin Luau compiles to FASTCALL reads a local argument's register at the call, after
-                // the later arguments ran (`--!optimize 2`, Studio's default: `table.insert(target, rebind())` inserts
-                // into the table `rebind` assigned to `target`), so the operand is captured first when a later
-                // argument may reassign it
-                let fastcall = n.args.len() <= FASTCALL_MAX_ARGS && is_fastcall_builtin(&n.expression);
                 for a in &n.args {
-                    if !(fastcall && self.is_late_reference(a)) {
-                        self.expr(a, conditional);
-                    }
-                }
-                if fastcall {
-                    for a in &n.args {
-                        if self.is_late_reference(a) {
-                            self.expr(a, conditional);
-                        }
-                    }
+                    self.expr(a, conditional);
                 }
             }
             LuauNode::Expr(Expr::MethodCall(n)) => {
@@ -211,40 +197,6 @@ impl<'r> Walker<'r> {
             operand_index: None,
             conditional: false,
         });
-    }
-}
-
-/// The base functions Luau compiles to FASTCALL builtins (`getBuiltinFunctionId`), but `select`, a FASTCALL only as
-/// `select(n, ...)`, whose varargs are no local.
-pub(crate) const FASTCALL_BASE: &[&str] = &[
-    "assert", "type", "typeof", "rawset", "rawget", "rawequal", "rawlen", "unpack", "getmetatable", "setmetatable",
-    "tonumber", "tostring",
-];
-
-/// The most arguments a FASTCALL takes (`FASTCALL1` to `FASTCALL3`); a builtin called with more is an ordinary call.
-pub(crate) const FASTCALL_MAX_ARGS: usize = 3;
-
-/// Whether `library.name` is a FASTCALL builtin (Luau's `getBuiltinFunctionId`): `math`, `bit32`, `buffer` and
-/// `vector`, `string.byte`/`char`/`len`/`sub`, `table.insert`/`unpack`.
-pub(crate) fn is_fastcall_member(library: &str, name: &str) -> bool {
-    ["math", "bit32", "buffer", "vector"].contains(&library)
-        || (library == "string" && ["byte", "char", "len", "sub"].contains(&name))
-        || (library == "table" && ["insert", "unpack"].contains(&name))
-}
-
-/// rbxts-rs: whether `callee` is a global Luau compiles to a FASTCALL builtin. A name the program binds is not the
-/// global.
-fn is_fastcall_builtin(callee: &Expr) -> bool {
-    fn global(e: &Expr) -> Option<&str> {
-        match e {
-            Expr::Identifier(id) if id.facts.binding().is_none() => Some(id.name.as_str()),
-            _ => None,
-        }
-    }
-    match callee {
-        Expr::Identifier(_) => global(callee).is_some_and(|name| FASTCALL_BASE.contains(&name)),
-        Expr::PropertyAccess(p) => global(&p.expression).is_some_and(|library| is_fastcall_member(library, &p.name)),
-        _ => false,
     }
 }
 

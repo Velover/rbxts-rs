@@ -1,7 +1,7 @@
 //! `nodes/expressions/transformCallExpression.ts`
 
 use rbxts_luau::{Expr, create, globals};
-use tsrs_ast::{Kind, Node, NodeFlags};
+use tsrs_ast::{Kind, Node};
 use tsrs_checker::Type;
 use tsrs_core::P;
 
@@ -17,9 +17,8 @@ use crate::util::convert_to_indexable_expression::convert_to_indexable_expressio
 use crate::util::ensure_transform_order::ensure_transform_order;
 use crate::util::evaluation::builtins::{is_stable_builtin_member, try_mark_builtin_member, try_mark_pure_constructor};
 use crate::util::evaluation::effects::{
-    effects_commute, get_effects, get_effects_of_statements, is_late_read, join_effects, may_write,
+    effects_commute, get_effects, get_effects_of_statements, is_late_read, join_effects,
 };
-use crate::util::evaluation::facts::get_binding;
 use crate::util::is_method::{is_method, is_method_from_type};
 use crate::util::types::{get_first_defined_symbol, is_possibly_type, is_possibly_undefined, is_roblox_type};
 use crate::util::validate_not_any::validate_not_any_type;
@@ -79,9 +78,6 @@ pub fn transform_call_expression_inner(
     let mut args_prereqs = Prereqs::new();
     let mut args = ensure_transform_order(state, &mut args_prereqs, node_arguments);
     fix_void_arguments_for_roblox_functions(state, exp_type, &mut args, node_arguments);
-    if is_fastcall_callee(state, callee) {
-        capture_fastcall_operands(&mut args_prereqs, &mut args);
-    }
 
     if !effects_commute(&get_effects(&expression), &get_effects_of_statements(&args_prereqs.statements)) {
         expression = prereqs.push_to_var(expression, "fn");
@@ -95,66 +91,6 @@ pub fn transform_call_expression_inner(
 
     let exp = create::call(convert_to_indexable_expression(expression), args);
     wrap_return_if_lua_tuple(state, node, exp)
-}
-
-/// rbxts-rs: whether the callee is a Luau builtin that Luau compiles to FASTCALL, as the source names it: a base
-/// function (`tostring`, `rawget`, …) or a library member (`math.max`, `bit32.bor`, `string.sub`, …, also as
-/// `math["max"]`, which is written `math.max`) of a global the program only declares (it emits the global's name; a
-/// local or an import of the same name is not one). Luau decides by the emitted name alone, so the declarations' file
-/// does not matter (a linked `node_modules` included).
-fn is_fastcall_callee(state: &mut TransformState<'_>, callee: P<Node>) -> bool {
-    let global = |state: &mut TransformState<'_>, node: P<Node>| {
-        node.kind() == Kind::Identifier
-            && state.checker.get_symbol_at_location_exported(node).is_some_and(|symbol| {
-                let declarations = symbol.declarations();
-                !declarations.is_empty() && declarations.iter().all(|d| d.flags().contains(NodeFlags::Ambient))
-            })
-    };
-    match callee.kind() {
-        Kind::Identifier => {
-            crate::util::evaluation::events::FASTCALL_BASE.contains(&callee.text()) && global(state, callee)
-        }
-        Kind::PropertyAccessExpression | Kind::ElementAccessExpression => {
-            let library = callee.expression().expect("an access has a receiver");
-            // `math["max"]`, which is written `math.max`
-            let name = match callee.kind() {
-                Kind::PropertyAccessExpression => callee.name(),
-                _ => Some(callee.as_element_access_expression().argument_expression)
-                    .filter(|&a| matches!(a.kind(), Kind::StringLiteral | Kind::NoSubstitutionTemplateLiteral)),
-            };
-            library.kind() == Kind::Identifier
-                && name.is_some_and(|n| crate::util::evaluation::events::is_fastcall_member(library.text(), n.text()))
-                && global(state, library)
-        }
-        _ => false,
-    }
-}
-
-/// rbxts-rs: Luau compiles a builtin call to FASTCALL, and at `--!optimize 2` (Studio's default for scripts) passes a
-/// local argument by its register, read after the later arguments ran: `math.max(a, rebind())` where `rebind`
-/// assigns `a` uses the new value, where JavaScript (and O0 and O1) use the one `a` held first (`luau-o2-fastcall`).
-/// Such an argument is captured first. Only a local a closure assigns can change while the arguments run (an
-/// assignment in an argument is a prerequisite, before the call), only when a later argument may call such a closure,
-/// and only in a call of at most three arguments (more make an ordinary call); any other call is stock's. The capture
-/// goes after the arguments' prerequisites, which `ensure_transform_order` already ordered around the local.
-fn capture_fastcall_operands(prereqs: &mut Prereqs, args: &mut [Expr]) {
-    if args.len() > crate::util::evaluation::events::FASTCALL_MAX_ARGS {
-        return;
-    }
-    for i in 0..args.len() {
-        let Some(binding @ rbxts_luau::Binding::Key(key)) = get_binding(&args[i]) else { continue };
-        if !key.written_by_closure {
-            continue;
-        }
-        if args[i + 1..].iter().any(|later| may_write(&get_effects(later), &binding)) {
-            let name = match &args[i] {
-                Expr::Identifier(id) => id.name.clone(),
-                _ => String::new(),
-            };
-            let operand = std::mem::replace(&mut args[i], Expr::Nil);
-            args[i] = prereqs.push_to_var(operand, &name);
-        }
-    }
 }
 
 /// The key of an ordered property call: a name, or a computed index.
@@ -281,9 +217,6 @@ pub fn transform_property_call_expression_inner(
     let mut args_prereqs = Prereqs::new();
     let mut args = ensure_transform_order(state, &mut args_prereqs, node_arguments);
     fix_void_arguments_for_roblox_functions(state, exp_type, &mut args, node_arguments);
-    if is_fastcall_callee(state, expression) {
-        capture_fastcall_operands(&mut args_prereqs, &mut args);
-    }
 
     let method = is_method(state, expression);
     // rbxts-rs: a plugin's `property_key` (DESIGN §11.5)
@@ -389,9 +322,6 @@ pub fn transform_element_call_expression_inner(
     let mut args_prereqs = Prereqs::new();
     let mut args = ensure_transform_order(state, &mut args_prereqs, node_arguments);
     fix_void_arguments_for_roblox_functions(state, exp_type, &mut args, node_arguments);
-    if rewritten.is_none() && is_fastcall_callee(state, expression) {
-        capture_fastcall_operands(&mut args_prereqs, &mut args);
-    }
     let key = match rewritten {
         Some(key) => property_key_of(&key),
         None => {

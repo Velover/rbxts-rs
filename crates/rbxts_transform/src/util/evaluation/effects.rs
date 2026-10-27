@@ -107,11 +107,6 @@ fn has_writes(effects: &Effects) -> bool {
     effects.writes_heap || effects.writes.iter().any(|k| !matches!(k, Binding::Temp(_)))
 }
 
-/// rbxts-rs: whether `effects` may assign `binding` (named, or as a local a closure assigns, through an unknown call).
-pub fn may_write(effects: &Effects, binding: &Binding) -> bool {
-    intersects(&HashSet::from([binding.clone()]), &effects.writes)
-}
-
 /// `effectsCommute`, including errors: a failed operand must not allow a later mutation to happen.
 pub fn effects_commute(a: &Effects, b: &Effects) -> bool {
     !(intersects(&a.reads, &b.writes)

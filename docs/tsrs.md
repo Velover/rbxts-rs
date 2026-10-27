@@ -108,7 +108,7 @@ Re-check these after an update; they are where tsrs's behaviour reaches our outp
 ## TypeScript 5 behaviour rbxts-rs does not reproduce
 Known, accepted differences from stock roblox-ts on TypeScript 5, each inherent to TypeScript 7. A few make a build
 fail where stock's passes, and the entry says how to write it for both; one changes only a diagnostic's text. The
-last section is a Luau bug that makes stock's output and rbxts-rs's wrong alike.
+last section lists Luau engine bugs that stock's output, and so rbxts-rs's, triggers.
 
 - **Union and mapped key order.** Where an output lists the properties of a union or a mapped type, TypeScript 7's
   type ids order them, not TypeScript 5's (`util/ts5_property_order.rs` restores TypeScript 5's order where it can be
@@ -147,22 +147,33 @@ last section is a Luau bug that makes stock's output and rbxts-rs's wrong alike.
   change tsrs's checker, which the fork does not do.
 
 ## Luau bugs
+Luau engine bugs that stock roblox-ts's output triggers. rbxts-rs emits that output unchanged, as stock does (a 1:1
+transpile; the bugs are Roblox's to fix): the `luau_o2` fixture pins it as stock's. Lune 0.10.5's Luau and Studio's
+differ in places, as noted.
+
 - **A builtin call's local argument at `--!optimize 2`.** Luau compiles a call of a builtin (`math.max`,
-  `bit32.bor`, `string.sub`, `table.insert`, `tonumber`, … with at most three arguments) to FASTCALL, which at O2
-  reads a local argument's register after the later arguments ran: in `math.max(a, rebind())` where `rebind`
-  assigns `a`, O2 uses the new value, O0 and O1 (and JavaScript) the old one. rbxts-rs captures such an argument
-  first (`local _a = a`), in its macros' output and in calls written in the source, only when the argument is a local
-  some closure assigns and a later argument may call one (`luau-o2-fastcall`); every other call is stock's.
-- **A numeric `for` from a constant `-0` at `--!optimize 2`.** Luau's compiler (Lune 0.10.5; Studio compiles
-  scripts at O2) runs `for i = -0, 0 do` with `i` = `0`, not `-0`; O0 and O1 give `-0`, and a start that is `-0` only
-  at runtime is not affected:
+  `table.insert`, `bit32.bor`, `string.sub`, `tonumber`, `buffer.writestring`, …) with at most three arguments to
+  FASTCALL, which at O2 reads a local argument's register after the later arguments ran. When a later argument
+  reassigns that local through a closure, the builtin sees the new value; O0 and O1 (and JavaScript) see the old one.
+  Studio (O2 by default for scripts; seen there with `table.insert`) and Lune agree:
 
   ```lua
-  for i = -0, 0 do print(1 / i) end -- O0/O1: -inf; O2: inf
-  local box = { start = -0 }
-  for i = box.start, 0 do print(1 / i) end -- -inf at every level
+  local a = 1
+  local function rebind() a = 100; return 2 end
+  print(math.max(a, rebind())) -- O0/O1: 2; O2: 100
   ```
 
-  rbxts-rs lowers a `for` statement whose start it folds to `-0` (`for (let i = -0; …)`, `0 * -1`, a `const` of
-  `-0`) to the while loop instead (`luau-o2-negzero`), but writes `$range(-0, …)` as stock does, a numeric `for`,
-  which O2 runs from `0`.
+  With four or more arguments the call is no FASTCALL, and `select` is one only as `select(n, ...)` (Lune 0.10.5):
+  neither shows the bug.
+- **A numeric `for` from a `-0` start.** In Studio, at O2 and so by default, `i` starts at `0`, not `-0`, both for a
+  constant start and for one that is `-0` only at runtime; O0 and O1 give `-0`. Lune 0.10.5 shows it only for a
+  constant start (the engine versions differ):
+
+  ```lua
+  for i = -0, 0 do print(1 / i) end -- O0/O1: -inf; O2: inf (Studio and Lune)
+  local box = { start = -0 }
+  for i = box.start, 0 do print(1 / i) end -- O0/O1: -inf; O2: inf in Studio, -inf in Lune 0.10.5
+  ```
+
+  Stock's output has such loops from `--optimizedLoops` (`for (let i = -0; …)`, a `const` of `-0`, `0 * -1`) and
+  from `$range`.
