@@ -174,3 +174,44 @@ file nothing imports; the hub is imported by 76 files, and its closure (the reve
   about 4 MiB per leaf edit and 55 MiB per hub edit). `rbxtsc -w` still restarts its process past
   `RBXTS_WATCH_MEMORY_LIMIT_MB` (default 2048), as a safety net that this run never comes near.
 - Stock roblox-ts takes about 29 s (quiet machine) for any build of this project.
+
+## tsrs 0.20 (TypeScript 7.1 beta) against tsrs 0.18 (2026-10-28)
+
+main (aea93f9, tsrs 0.18) and c/ts71 (tsrs 0.20), `measure` profile, the real project, 4 checkers unless noted, run
+back to back and interleaved on a machine with other work open (Studio, browsers; 51-80% idle). Medians, with ranges.
+
+Clean builds (`rbxtsc build`, out and include removed before each; 12 rounds per side, Flamework off with
+`tsconfig.noplugin.json`, on with `rbxtsc-fw` and `tsconfig.json`):
+
+| build | wall main | wall 0.20 | CPU main | CPU 0.20 | peak WS main | peak WS 0.20 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Flamework off | 1198 ms (1082-1611) | 1189 ms (1113-1915), -1% | 2906 ms (2672-3609) | 3234 ms (3016-4313), +11% | 239.4 MiB | 252.0 MiB, +5% |
+| Flamework on | 1821 ms (1686-2407) | 2082 ms (1767-3261), +14% | 4266 ms (4047-5219) | 4445 ms (4172-5375), +4% | 253.5 MiB | 268.6 MiB, +6% |
+| Flamework off, 0.20 with `TSRS_FAST=1` (6 rounds) | 1176 ms | 1250 ms, +6% | 3078 ms | 2961 ms, -4% | 239.9 MiB | 237.1 MiB, -1% |
+| Flamework on, 0.20 with `TSRS_FAST=1` (6 rounds) | 1843 ms | 1778 ms, -4% | 4188 ms | 4172 ms, 0% | 253.5 MiB | 251.7 MiB, -1% |
+
+The Flamework-on wall times have two slow outliers on 0.20 (2.9 s and 3.3 s at normal CPU time); CPU time is the
+steadier measure on this machine.
+
+`rbxts-bench load -p tsconfig.noplugin.json` (load and type-check, project files; 5 rounds per side):
+
+| checkers | total main | total 0.20 | check main | check 0.20 | peak WS main | peak WS 0.20 | peak commit main | peak commit 0.20 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 4 | 380 ms (358-386) | 425 ms (407-432), +12% | 283 ms | 331 ms, +17% | 193.4 MiB | 206.3 MiB, +7% | 416 MiB | 468 MiB, +12% |
+| 1 | 679 ms (661-688) | 808 ms (778-822), +19% | 581 ms | 708 ms, +22% | 137.4 MiB | 145.8 MiB, +6% | 276 MiB | 279 MiB, +1% |
+
+With `TSRS_FAST=1` (3 rounds, interleaved with the above): 4 checkers 385 ms (373-412), 1 checker 710 ms (668-769),
+peak WS 192.3 / 136.9 MiB, as main.
+
+Watch rebuilds (`rbxts-bench watch-parity`, s2w `mem.script.json`, 41 leaf and 11 hub edits, no clean builds; three
+runs per side, main ts71 ts71 main main ts71):
+
+| build | main | 0.20 |
+| --- | --- | --- |
+| leaf edit, median per run | 64.9 / 65.2 / 63.2 ms | 61.9 / 63.5 / 64.1 ms |
+| hub edit, median per run | 418.4 / 425.9 / 421.6 ms | 379.2 / 382.9 / 386.7 ms (-9%) |
+| working set, peak over the run | 351 / 337 / 365 MiB | 383 / 359 / 406 MiB (+8%) |
+
+- The slower type check and the extra memory come from tsrs 0.19's new defaults (docs/tsrs.md, "Checker defaults,
+  and the cost"): on 0.18, lazy members, the canonical history and locality scheduling were on by default; on 0.20
+  they are part of the fast preset. With it the numbers are 0.18's.

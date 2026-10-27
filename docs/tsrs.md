@@ -5,33 +5,51 @@ no IPC and no patched tsrs code. Everything roblox-ts-specific lives in rbxts-rs
 emulate TypeScript 5 behaviour that TypeScript 7 changed.
 
 ## The fork
-- **Where:** a worktree of the tsrs clone at `E:\Projects\TS\Flamework\worktrees\tsrs-rbxts-fork`, on branch
-  `rbxts-fork`. `Cargo.toml` points at its crates by absolute path, so every rbxts-rs worktree uses the same tsrs.
-- **What:** tsrs **v0.18.0** (`5f92808`) plus commits that change only visibility, `pub(crate)` → `pub`. That is
-  19 lines in 13 files:
+- **Where:** a worktree of the tsrs clone at `E:\Projects\TS\Flamework\worktrees\tsrs-rbxts-fork-020`, on branch
+  `rbxts-fork-0.20`. `Cargo.toml` points at its crates by absolute path, so every rbxts-rs worktree uses the same tsrs.
+  The previous branch, `rbxts-fork` (tsrs v0.18.0, worktree `worktrees\tsrs-rbxts-fork`), is kept for rolling back.
+- **What:** tsrs **v0.20.0** (`d197eeea`, TypeScript 7.1 beta) plus commits that change only visibility, private or
+  `pub(crate)` → `pub`. That is 49 lines in 15 files. The first six commits are `rbxts-fork`'s, cherry-picked (its
+  commit in brackets); the last two are new, for items tsrs 0.20 narrowed that have no public equivalent:
 
 | Commit | Item | File | Used for |
 |---|---|---|---|
-| 63b22eb | `Checker::create_array_type` | `tsrs_checker/src/checker_12.rs` | the transform's type queries |
-| 63b22eb | `Checker::get_string_literal_type` | `tsrs_checker/src/checker_12.rs` | the transform's type queries |
-| 63b22eb | `Checker::get_number_literal_type` | `tsrs_checker/src/checker_12.rs` | the transform's type queries |
-| 63b22eb | `Checker::get_type_of_assignment_pattern` | `tsrs_checker/src/services.rs` | destructuring assignments |
-| cf8498b | `Program::get_semantic_diagnostics_with_checker` | `tsrs_compiler/src/program.rs` | checking that honours `@ts-ignore` and the other comment directives |
-| adadb25 | `Checker::get_contextual_signature` | `tsrs_checker/src/checker_05.rs` | nothing since TypeScript 5's context sensitivity is marked on the tree (below); kept, as the fork is shared |
-| 87958da | `Checker::is_readonly_array_type` | `tsrs_checker/src/checker_11.rs` | Flamework's macro types (`flamework_rs`) |
-| 87958da | `Checker::get_literal_type_from_property` | `tsrs_checker/src/checker_13.rs` | Flamework's macros (`flamework_rs`) |
-| 87958da | `is_declaration_readonly` | `tsrs_checker/src/utilities.rs`, `tsrs_checker/src/lib.rs` | Flamework's macro types (`flamework_rs`) |
-| 0f5217e | `Checker::choose_overload` | `tsrs_checker/src/checker_05.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
-| 0f5217e | `Checker::reorder_candidates` | `tsrs_checker/src/checker_05.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
-| 0f5217e | `Checker::is_signature_applicable` | `tsrs_checker/src/checker_05.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
-| 0f5217e | `Checker::add_implementation_success_elaboration` | `tsrs_checker/src/checker_05.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
-| 0f5217e | `Checker::get_effective_call_arguments` | `tsrs_checker/src/checker_15.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
-| 0f5217e | `Checker::signature_to_string` | `tsrs_checker/src/printer.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
-| 0f5217e | `Checker::check_expression` | `tsrs_checker/src/checker_04.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
-| 0f5217e | `Checker::get_optional_expression_type` | `tsrs_checker/src/checker_14.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
-| aa35a73 | `Checker::get_uninstantiated_jsx_signatures_of_type` | `tsrs_checker/src/jsx.rs` | TS5's TS2769 text for JSX elements (`rbxts_project/src/overload_errors.rs`) |
+| a4117469 (63b22eb) | `Checker::create_array_type` | `tsrs_checker/src/checker_12.rs` | the transform's type queries |
+| a4117469 (63b22eb) | `Checker::get_string_literal_type` | `tsrs_checker/src/checker_12.rs` | the transform's type queries |
+| a4117469 (63b22eb) | `Checker::get_number_literal_type` | `tsrs_checker/src/checker_12.rs` | the transform's type queries |
+| a4117469 (63b22eb) | `Checker::get_type_of_assignment_pattern` | `tsrs_checker/src/services.rs` | destructuring assignments |
+| e57c3d6e (cf8498b) | `Program::get_semantic_diagnostics_with_checker` | `tsrs_compiler/src/program.rs` | checking that honours `@ts-ignore` and the other comment directives |
+| 46b35c99 (adadb25) | `Checker::get_contextual_signature` | `tsrs_checker/src/checker_05.rs` | nothing since TypeScript 5's context sensitivity is marked on the tree (below); kept, as the fork is shared |
+| 31e644fb (87958da) | `Checker::is_readonly_array_type` | `tsrs_checker/src/checker_11.rs` | Flamework's macro types (`flamework_rs`) |
+| 31e644fb (87958da) | `Checker::get_literal_type_from_property` | `tsrs_checker/src/checker_13.rs` | Flamework's macros (`flamework_rs`) |
+| 0d271600 (0f5217e) | `Checker::choose_overload` | `tsrs_checker/src/checker_05.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
+| 0d271600 (0f5217e) | `Checker::reorder_candidates` | `tsrs_checker/src/checker_05.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
+| 0d271600 (0f5217e) | `Checker::is_signature_applicable` | `tsrs_checker/src/checker_05.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
+| 0d271600 (0f5217e) | `Checker::add_implementation_success_elaboration` | `tsrs_checker/src/checker_05.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
+| 0d271600 (0f5217e) | `Checker::get_effective_call_arguments` | `tsrs_checker/src/checker_15.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
+| 0d271600 (0f5217e) | `Checker::signature_to_string` | `tsrs_checker/src/printer.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
+| 0d271600 (0f5217e) | `Checker::check_expression` | `tsrs_checker/src/checker_04.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
+| 0d271600 (0f5217e) | `Checker::get_optional_expression_type` | `tsrs_checker/src/checker_14.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
+| a368b659 (aa35a73) | `Checker::get_uninstantiated_jsx_signatures_of_type` | `tsrs_checker/src/jsx.rs` | TS5's TS2769 text for JSX elements (`rbxts_project/src/overload_errors.rs`) |
+| 107aad07 (new) | `CallState`'s 11 fields; `Checker::{call_resolution_stack, subtype_relation, assignable_relation}` | `tsrs_checker/src/checker.rs` | TS5's TS2769 text (`overload_errors.rs` runs `resolve_call`'s steps again) |
+| 107aad07 (new) | `Checker::{regular_true_type, regular_false_type}` | `tsrs_checker/src/checker.rs` | the transform's type queries (`isBooleanLiteralType`, a generator's `done: true`), Flamework's guards |
+| 107aad07 (new) | `Checker::mapped_symbol_links`, `LinkStore::try_get`, `MappedSymbolLinks::synthetic_origin`, `MappedType::{declaration, modifiers_type}` | `tsrs_checker/src/checker.rs`, `links.rs`, `types.rs` | TS5's property order of mapped types (`util/ts5_property_order.rs`) |
+| 107aad07 (new) | `ConditionalType::root`, `ConditionalRoot::{node, check_type}` | `tsrs_checker/src/types.rs` | roblox-ts's `isMethod` (`util/is_method.rs`) |
+| 107aad07 (new) | `TupleType::{min_length, combined_flags}`, `CountCell::get` | `tsrs_checker/src/types.rs` | for-of over tuples, Flamework's tuple guards and macros |
+| 107aad07 (new) | `Checker::get_emit_resolver` | `tsrs_checker/src/checker_15.rs` | the transform state's emit resolver |
+| 92248ec5 (new) | `diagnostic_file`, `diagnostic_pos`, `diagnostic_len`, `FileLike::file_name` | `tsrs_compiler/src/diagnosticwriter.rs` | rbxtsc's TypeScript 5 pretty printer (`rbxts_cli/src/pretty.rs`) |
 
-  The branch also carries 67b5330 (overload internals made public) and its revert c796de98, which cancel out.
+  Dropped as upstream: `is_declaration_readonly` (87958da) is public in tsrs 0.20, as
+  `tsrs_checker::utilities::is_declaration_readonly`. Not carried over: 67b5330 (overload internals made public) and
+  its revert c796de98, which cancel out.
+
+  tsrs 0.20's visibility lints (tsrs #749, #761) narrowed many items rbxts-rs used while they were `pub`. Where a
+  public equivalent exists, rbxts-rs uses it instead of a flip: the checker's `*_exported` wrappers (plain
+  delegations: `get_apparent_type`, `get_property_of_type`, `get_type_of_property_of_type`, `get_index_infos_of_type`,
+  `get_type_arguments`, `is_array_type`, `is_array_like_type`, `get_union_type`, `get_base_constraint_of_type`,
+  `is_context_sensitive`), `Checker::get_name_type_of_symbol`, and the type getters (`LiteralType::value`,
+  `TemplateLiteralType::texts`, `ConditionalType::extends_type`, `TypeAlias::symbol`,
+  `TupleElementInfo::{labeled_declaration, tuple_element_flags}`, `Type::types`, `Type::target`).
 
 - **Rule:** the fork gets visibility flips and nothing else. Behaviour fixes and workarounds go in rbxts-rs with a
   `// rbxts-rs:` comment. If a needed function is too entangled to make public, copy a small helper into rbxts-rs
@@ -42,13 +60,19 @@ emulate TypeScript 5 behaviour that TypeScript 7 changed.
 ## Updating tsrs
 Pin the version and update on purpose, never automatically. tsrs is pre-1.0, so a release can change its API.
 
-1. **Rebase the flips.** Fetch the new release in the tsrs clone. Make a new branch from the release tag and
-   cherry-pick the three commits above. If upstream has made an item public already, drop that flip.
-   - Keep the old `rbxts-fork` branch until the update is merged, so you can roll back.
+1. **Rebase the flips.** Fetch the new release in the tsrs clone. Make a new branch from the release tag, in a
+   worktree of its own, and cherry-pick the fork's commits (`git log <old tag>..<old branch>`, without a commit and
+   its revert). A conflict is a line upstream changed: keep upstream's line and only flip its visibility. If upstream
+   has made an item public already, drop that flip.
+   - Keep the old branch and its worktree until the update is merged, so you can roll back.
 2. **Update `Cargo.lock`.** It started as a copy of tsrs's lock file, so the transitive versions match what tsrs tests
-   with. Re-sync the shared dependencies with the new tsrs lock file.
+   with. Re-sync the shared dependencies with the new tsrs lock file: `cargo update -p <name>@<ours> --precise
+   <tsrs's>` for each registry package both lock files have at different versions. Packages only rbxts-rs uses keep
+   their versions.
 3. **Fix API breaks.** Build the workspace and fix every compile error: renamed or reshaped checker methods, AST
-   accessors, flags and symbol lookups. This is mechanical, and the compiler finds all of it.
+   accessors, flags and symbol lookups. This is mechanical, and the compiler finds all of it. An item upstream made
+   private again is reached through a public equivalent where one exists (an `*_exported` wrapper, a getter); only
+   what has none gets a new flip, in a commit of its own.
 4. **Catch behaviour changes.** These are the subtle part, because they compile cleanly but change the output. Run
    parity on both corpora and compare with the baselines:
    - the roblox-ts tests project, 72 files;
@@ -137,6 +161,36 @@ Re-check these after an update; they are where tsrs's behaviour reaches our outp
 - **Threading:** the checker is not `Send`, and `get_type_checker` takes a non-reentrant guard. Checking needs a
   512 MiB stack. Set only `checkers`: `single_threaded` also makes parsing and binding serial.
 
+### What changed with tsrs 0.20 (TypeScript 7.1 beta)
+The move from tsrs 0.18 to 0.20 (rbxts-rs branch `c/ts71`, fork branch `rbxts-fork-0.20`) changed no output: both
+parity corpora, the 169 `src/diagnostics` files built one at a time, and Flamework's output on the real project are
+the same as on 0.18. Two tsrs changes needed rbxts-rs adaptations, both marked `// rbxts-rs:`:
+- **Ad hoc messages live in the arena.** `tsrs_ast::new_ad_hoc_message` (moved from `tsrs_diagnostics`) allocates
+  the message where the current allocation goes, since tsrs #779; before, it leaked it. During a watch build's
+  transform that is the checker's region, which `free_program` gives back, while rbxts-rs caches a factory's
+  message across builds, a detached diagnostic keeps its message pointer (`copy_deep`), and plugin and replayed
+  diagnostics are told apart by their message's address. rbxts-rs leaks its own
+  (`rbxts_transform::shared::diagnostics::new_ad_hoc_message`), as tsrs did.
+- **A declaration map's empty `sourceRoot`.** TypeScript 5 writes `"sourceRoot":""` without the `sourceRoot`
+  option; tsrs 0.20 leaves an empty one out (tsrs d93d7249, TypeScript's typed path prep fixes).
+  `project/emit_declarations.rs` (`ts5_source_root`) puts it back.
+
+Re-checked and unchanged: `ContainsThis` is still read only by `has_context_sensitive_parameters` and
+`is_thisless_interface`; the binder still binds functions first; `regular_true_type`; the automatic type
+directives. tsrs 0.20 also refuses network paths ("Projects on a network path", below). The API breaks were
+renames: diagnostic messages, compiler option kinds and `INTERNAL_SYMBOL_NAME_MISSING` are `SCREAMING_SNAKE_CASE`,
+`compilerOptions.paths` is an `Arc`, and `DefaultResolver` borrows its host.
+
+**Checker defaults, and the cost.** tsrs 0.19 changed its defaults to TypeScript's own: Go's file assignment and
+checker history, eager type members. On 0.18, lazy members, the canonical history and locality scheduling with work
+stealing were the defaults; on 0.20 they are, with three extra checker caches, the opt-in fast preset (`--fast`,
+`TSRS_FAST=1`, `tsrs_core::fast::set_enabled`). rbxts-rs sets its checker count itself and sets
+nothing else, so it now checks with TypeScript's defaults: type checking (`rbxts-bench load`) takes about 17-22% more
+time and a clean build about 5-10% more CPU time, with about 5-7% more peak memory (`bench/RESULTS.md`). With
+`TSRS_FAST=1` the numbers are 0.18's again and both parity corpora are unchanged; whether rbxts-rs turns the preset on
+is open (it changes the checker's scheduling and history, which tsrs documents can change diagnostics in rare
+history-dependent cases). Output does not depend on the file assignment (determinism check).
+
 ## TypeScript 5 behaviour rbxts-rs does not reproduce
 Known, accepted differences from stock roblox-ts on TypeScript 5, each inherent to TypeScript 7. A few make a build
 fail where stock's passes, and the entry says how to write it for both; one can change a diagnostic's text. The
@@ -150,6 +204,11 @@ last section lists Luau behaviour that stock's output, and so rbxts-rs's, can me
   TypeScript 5's `Record`/`Pick` key order follows its own type ids). Flamework sorts where the order reaches its
   output.
 
+- **Projects on a network path.** Stock roblox-ts builds a project in a UNC folder (`\\server\share\…`). tsrs 0.20
+  refuses network paths (UNC and `\\?\` / `\\.\` device roots) before any file access, as TypeScript 7.1 does
+  (TypeScript ce30dd50a5, "Ban network paths wholesale": a network path can authenticate to an arbitrary host), so
+  rbxtsc reports `TS5083: Cannot read file` for the tsconfig. On tsrs 0.18 such a build failed too, later
+  (`MacroManager could not find symbol for Promise`). Build from a local path or a mapped drive letter.
 - **Declaration-emit symlinks.** With `declaration: true`, TypeScript 5's pre-emit diagnostics run the declaration
   emitter, and when it needs an `import("…")` specifier for a type from another module, its module-specifier code
   (`getAllModulePathsWorker`) resolves every runtime dependency (`dependencies`, `peerDependencies`,
@@ -182,9 +241,13 @@ last section lists Luau behaviour that stock's output, and so rbxts-rs's, can me
     "Overload N of M" TS2769 at the element. For a child-count error (TS2745/TS2746), TypeScript 5 also prints the
     TS2745/TS2746 on its own, and its chain has no "Overload N of M" line.
 
-  TypeScript 7.1 is expected to shift some of this text again. Code, place and exit stay the contract.
+  TypeScript 7.1 (tsrs 0.20) changed none of it here: each of the 169 `src/diagnostics` files of roblox-ts's tests
+  corpus, built alone, prints the same on tsrs 0.18 and 0.20 (164 byte-identical to stock; the other five are the four
+  comment-directive spans below and `noPrivateIdentifier.1`'s TS18064, above), and the fixtures' stock stdouts
+  still match. Code, place and exit stay the contract.
 - **Declaration maps.** TypeScript 7 maps some declarations (constructors, a specifier `transformPaths` rewrites)
   differently from TypeScript 5: `.d.ts.map` files are not byte-equal to stock roblox-ts's. The `.d.ts` files are.
+  The maps' other fields are TypeScript 5's, the empty `sourceRoot` included (see "What changed with tsrs 0.20").
 - **A context-sensitive `yield`.** TypeScript 7 takes a generator function for context sensitive when a `yield` in it
   yields a context-sensitive expression (`has_context_sensitive_yield_expression`); TypeScript 5 looks only at
   parameters and returns. After `mark_ts5_context_sensitive_functions` (every function expression without a `this`
