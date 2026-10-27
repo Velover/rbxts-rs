@@ -1,1 +1,3 @@
 /target
+# every other build folder: target-*, per-worktree target dirs
+/target*/
