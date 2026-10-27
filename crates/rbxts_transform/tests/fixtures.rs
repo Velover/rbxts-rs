@@ -78,7 +78,9 @@
 //!   variables, finalizers before `continue`), every for-of loop builder and `$range`, `while`, `do`-`while`, and
 //!   `continue` / `break` inside `try` in loops, roblox-ts's `loop.spec.ts` (destructured loop variables
 //!   included), and parenthesized `for` initializers and incrementors (value-less ones, which crash stock roblox-ts,
-//!   are dropped).
+//!   are dropped). Its two loops whose constant start is `-0` are `while` loops, where stock roblox-ts writes numeric
+//!   `for` loops that Luau's `--!optimize 2` folds to a `0` start (`luau-o2-negzero`, the `stockfix` fixture's
+//!   `luauOptimize`).
 //! - `macros`: every call, identifier, constructor and property-call macro, as values and statements, on optional
 //!   chains and with evaluation-order cases.
 //! - `midsolution`: project references through a solution config in the middle of the graph (`projects/group`, only

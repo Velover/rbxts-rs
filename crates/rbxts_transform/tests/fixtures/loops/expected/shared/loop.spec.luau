@@ -607,8 +607,20 @@ return function()
 		local start = -0
 		local limit = 0
 		local step = 1
-		for i = start, limit, step do
-			expect(1 / i).to.equal(-math.huge)
+		do
+			local i = start
+			local _shouldIncrement = false
+			while true do
+				if _shouldIncrement then
+					i += step
+				else
+					_shouldIncrement = true
+				end
+				if not (i <= limit) then
+					break
+				end
+				expect(1 / i).to.equal(-math.huge)
+			end
 		end
 	end)
 	it("should retain effectful arithmetic conditions and step calls", function()
@@ -853,8 +865,20 @@ return function()
 		expect(table.concat(descending, ",")).to.equal("30,20,10")
 	end)
 	it("should preserve negative zero in a loop initializer", function()
-		for i = -0, 0 do
-			expect(1 / i).to.equal(-math.huge)
+		do
+			local i = -0
+			local _shouldIncrement = false
+			while true do
+				if _shouldIncrement then
+					i += 1
+				else
+					_shouldIncrement = true
+				end
+				if not (i <= 0) then
+					break
+				end
+				expect(1 / i).to.equal(-math.huge)
+			end
 		end
 	end)
 	it("should support breaking from a loop with a zero step", function()
