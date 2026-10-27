@@ -51,7 +51,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rbxts_luau::{LateStrings, Stmt};
 use rbxts_plugin::erased::{ErasedPart, ErasedShared, ErasedState};
 use rbxts_plugin::{BuildKind, ChangeSet, FileIndex, RebuildPlan, StateOrigin};
-use rbxts_project::read_check::{Recheck, Settled};
+use rbxts_project::read_check::{ProgramStamp, Recheck, Settled};
 use rbxts_project::{LoadOptions, Project, ProjectDiagnostic, ProjectServices, SourceFileCache, nodepath};
 use tsrs_ast::{Diagnostic, SourceFile};
 use tsrs_compiler::{Context, Program};
@@ -802,10 +802,10 @@ impl<'p> BuildSession<'p> {
     /// included), so a load with every answer the same, and the same files but the edited ones, is this one. Not in a
     /// build with project references (a project's setup there depends on the graph), and not outside watch mode (one
     /// build per session).
-    fn reuse(&mut self, report: &mut CompileReport, mut last: Loaded) -> Result<(Loaded, Project), Loaded> {
+    fn reuse(&mut self, report: &mut CompileReport, mut last: Box<Loaded>) -> Result<(Loaded, Project), Box<Loaded>> {
         let Some(reads) = self.reads.clone().filter(|_| self.watch && self.graph.is_none()) else { return Err(last) };
         let start = Instant::now();
-        let program: Vec<(String, Option<(Option<std::time::SystemTime>, i64)>)> = last
+        let program: Vec<ProgramStamp> = last
             .project
             .program
             .source_files()
@@ -829,7 +829,7 @@ impl<'p> BuildSession<'p> {
         report.timings.program = project.program_time;
         report.timings.setup = std::time::Duration::ZERO;
         let Loaded { project: replaced, mut services, setup_diagnostics, setup_fatal, config_paths, base_salt, versions, settled } =
-            last;
+            *last;
         // a fresh package.json cache: the transform's lookups read the disk again, as a new load's do
         services.packages = Default::default();
         let loaded = Loaded {
@@ -898,13 +898,13 @@ impl<'p> BuildSession<'p> {
 
         // 1. load the program, over the source cache
         // a watch rebuild reuses the last load when everything it read reads the same (`reuse`)
-        let last = match last.map(|last| self.reuse(&mut report, last)) {
+        let last = match last.map(|last| self.reuse(&mut report, Box::new(last))) {
             Some(Ok((loaded, project))) => {
                 replaced.push(project);
                 summary.reused_load = true;
                 Ok(loaded)
             }
-            Some(Err(last)) => Err(Some(last)),
+            Some(Err(last)) => Err(Some(*last)),
             None => Err(None),
         };
         let loaded = match last {

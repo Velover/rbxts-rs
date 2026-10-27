@@ -72,8 +72,11 @@ struct Entry {
 /// One directory's listing: `None` when it could not be listed (missing, or not a directory).
 type View = Option<HashMap<String, Entry>>;
 
-/// The program file stamps the source cache has: (file name, modification time and size when parsed).
-pub type ProgramStamps<'a> = &'a [(String, Option<(Option<SystemTime>, i64)>)];
+/// A program file's stamp in the source cache: its file name, and its modification time and size when parsed.
+pub type ProgramStamp = (String, Option<(Option<SystemTime>, i64)>);
+
+/// The program file stamps the source cache has.
+pub type ProgramStamps<'a> = &'a [ProgramStamp];
 
 /// A path's directory and name, separators either way (a root has no name: `None`).
 fn split(path: &str) -> Option<(&str, &str)> {
@@ -159,8 +162,8 @@ impl ReadLog {
         let mut dir_index: HashMap<String, usize> = HashMap::new();
         let mut want = |dir: &str| {
             let k = key(dir, case_sensitive);
-            if !dir_index.contains_key(&k) {
-                dir_index.insert(k, dirs.len());
+            if let std::collections::hash_map::Entry::Vacant(entry) = dir_index.entry(k) {
+                entry.insert(dirs.len());
                 dirs.push(dir.to_owned());
             }
         };

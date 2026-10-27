@@ -139,7 +139,7 @@ mod tests {
         let cwd = dir.path().to_string_lossy().replace('\\', "/");
         let options =
             rbxts_project::LoadOptions { tsconfig: "tsconfig.json".into(), cwd: cwd.clone(), checkers: 1, lazy_dts: false, regions: false };
-        let project = rbxts_project::load(&options).ok().expect("the project loads");
+        let Ok(project) = rbxts_project::load(&options) else { panic!("the project loads") };
         let program = project.program;
         let a = program.get_source_file(&format!("{cwd}/a.ts")).expect("a.ts");
         let kept = |related_file: &str| DiskDiagnostic {
