@@ -1,0 +1,34 @@
+[96msrc/shared/a.tsx[0m:[93m21[0m:[93m24[0m - [91merror[0m[90m TS2769: [0mNo overload matches this call.
+  Overload 1 of 2, '(props: { a: number; }): RenderedElement', gave the following error.
+    Type 'string' is not assignable to type 'number'.
+  Overload 2 of 2, '(props: { b: string; }): RenderedElement', gave the following error.
+    Type '{ a: string; }' is not assignable to type '{ b: string; }'.
+      Property 'a' does not exist on type '{ b: string; }'.
+
+[7m21[0m export const e = <Comp a="x" />;
+[7m  [0m [91m                       ~[0m
+
+  [96msrc/shared/a.tsx[0m:[93m16[0m:[93m24[0m
+    [7m16[0m function Comp(props: { a: number }): RenderedElement;
+    [7m  [0m [96m                       ~[0m
+    The expected type comes from property 'a' which is declared here on type '{ a: number; }'
+  [96msrc/shared/a.tsx[0m:[93m18[0m:[93m10[0m
+    [7m18[0m function Comp(props: object): RenderedElement {
+    [7m  [0m [96m         ~~~~[0m
+    The call would have succeeded against this implementation, but implementation signatures of overloads are not externally visible.
+
+[96msrc/shared/a.tsx[0m:[93m27[0m:[93m24[0m - [91merror[0m[90m TS2769: [0mNo overload matches this call.
+  Overload 1 of 2, '(props: { n: number; }): RenderedElement', gave the following error.
+    Type 'string' is not assignable to type 'number'.
+  Overload 2 of 2, '(props: { s: string; }): RenderedElement', gave the following error.
+    Type '{ n: string; }' is not assignable to type '{ s: string; }'.
+      Property 'n' does not exist on type '{ s: string; }'.
+
+[7m27[0m export const f = <Both n="x" />;
+[7m  [0m [91m                       ~[0m
+
+  [96msrc/shared/a.tsx[0m:[93m23[0m:[93m12[0m
+    [7m23[0m  (props: { n: number }): RenderedElement;
+    [7m  [0m [96m           ~[0m
+    The expected type comes from property 'n' which is declared here on type '{ n: number; }'
+

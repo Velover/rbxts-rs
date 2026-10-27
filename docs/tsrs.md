@@ -8,7 +8,7 @@ emulate TypeScript 5 behaviour that TypeScript 7 changed.
 - **Where:** a worktree of the tsrs clone at `E:\Projects\TS\Flamework\worktrees\tsrs-rbxts-fork`, on branch
   `rbxts-fork`. `Cargo.toml` points at its crates by absolute path, so every rbxts-rs worktree uses the same tsrs.
 - **What:** tsrs **v0.18.0** (`5f92808`) plus commits that change only visibility, `pub(crate)` → `pub`. That is
-  18 lines in 12 files:
+  19 lines in 13 files:
 
 | Commit | Item | File | Used for |
 |---|---|---|---|
@@ -29,6 +29,7 @@ emulate TypeScript 5 behaviour that TypeScript 7 changed.
 | 0f5217e | `Checker::signature_to_string` | `tsrs_checker/src/printer.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
 | 0f5217e | `Checker::check_expression` | `tsrs_checker/src/checker_04.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
 | 0f5217e | `Checker::get_optional_expression_type` | `tsrs_checker/src/checker_14.rs` | TS5's TS2769 text (`rbxts_project/src/overload_errors.rs`) |
+| aa35a73 | `Checker::get_uninstantiated_jsx_signatures_of_type` | `tsrs_checker/src/jsx.rs` | TS5's TS2769 text for JSX elements (`rbxts_project/src/overload_errors.rs`) |
 
   The branch also carries 67b5330 (overload internals made public) and its revert c796de98, which cancel out.
 
@@ -94,8 +95,11 @@ Re-check these after an update; they are where tsrs's behaviour reaches our outp
   from four on. `rbxts_project/src/overload_errors.rs` makes such a TS2769 again as TypeScript 5 does: it asks the
   call's resolution again of the checker that checked the file (`reorder_candidates`, then `choose_overload` over
   the subtype and assignable relations, as `resolve_call` does) for the candidates that failed on an argument, and
-  reports each one's error (`is_signature_applicable`), instantiated as inference made it. Calls and `new`
-  expressions (optional chains included); a JSX element, tagged template or decorator keeps TypeScript 7's text.
+  reports each one's error (`is_signature_applicable`), instantiated as inference made it, its signature written as a
+  call (`WriteCallStyleSignature`: a construct signature without `new`, as TypeScript 5's `signatureToString`), the
+  error on `getErrorNodeForCallNode`'s node when the overloads' errors are in different places. Every call
+  `resolve_call` resolves: calls (optional chains included), `new` expressions, tagged templates, decorators (under
+  their head message, TS1238 to TS1241) and JSX elements (an intrinsic element has one signature).
   `rbxts_cli`'s pretty printer adds the line end TypeScript 5's `formatDiagnosticsWithColorAndContext` prints for its
   (always present, maybe empty) related information array. Tests: `rbxts_cli/tests/fixtures/overload_error*`, stock's
   stdout byte for byte.

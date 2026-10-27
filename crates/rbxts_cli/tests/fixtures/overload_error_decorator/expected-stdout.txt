@@ -1,0 +1,26 @@
+[96msrc/shared/a.ts[0m:[93m5[0m:[93m2[0m - [91merror[0m[90m TS1238: [0mUnable to resolve signature of class decorator when called as an expression.
+  No overload matches this call.
+    Overload 1 of 2, '(x: number): void', gave the following error.
+      Argument of type 'typeof K' is not assignable to parameter of type 'number'.
+    Overload 2 of 2, '(x: string): void', gave the following error.
+      Argument of type 'typeof K' is not assignable to parameter of type 'string'.
+
+[7m5[0m @dec
+[7m [0m [91m ~~~[0m
+
+  [96msrc/shared/a.ts[0m:[93m4[0m:[93m10[0m
+    [7m4[0m function dec(x: unknown) {}
+    [7m [0m [96m         ~~~[0m
+    The call would have succeeded against this implementation, but implementation signatures of overloads are not externally visible.
+
+[96msrc/shared/a.ts[0m:[93m10[0m:[93m3[0m - [91merror[0m[90m TS1241: [0mUnable to resolve signature of method decorator when called as an expression.
+  No overload matches this call.
+    Overload 1 of 2, '(a: number, b: string, c: TypedPropertyDescriptor<() => void>): void', gave the following error.
+      Argument of type 'M' is not assignable to parameter of type 'number'.
+    Overload 2 of 2, '(a: string, b: string, c: TypedPropertyDescriptor<() => void>): void', gave the following error.
+      Argument of type 'M' is not assignable to parameter of type 'string'.
+
+[7m10[0m  @method
+[7m  [0m [91m  ~~~~~~[0m
+
+

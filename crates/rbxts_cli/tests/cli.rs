@@ -108,6 +108,31 @@ fn a_three_overload_error_reports_ts2769_as_stock() {
     diagnostics_like_stock("overload_error_three");
 }
 
+/// TS2769 on `new`: a class's constructor overloads and an interface's `new` members, each written as a call
+/// signature (no `new`), the error on the callee (`C`, a property access's name) where the overloads' errors differ.
+#[test]
+fn a_new_expression_overload_error_reports_ts2769_as_stock() {
+    diagnostics_like_stock("overload_error_new");
+}
+
+/// TS2769 on a tagged template, the error on its tag.
+#[test]
+fn a_tagged_template_overload_error_reports_ts2769_as_stock() {
+    diagnostics_like_stock("overload_error_tagged");
+}
+
+/// A class and a method decorator no overload takes: TS1238 / TS1241 over TS2769, each overload's error listed.
+#[test]
+fn a_decorator_overload_error_reports_as_stock() {
+    diagnostics_like_stock("overload_error_decorator");
+}
+
+/// TS2769 on JSX elements: an overloaded function component and a component type with two call signatures.
+#[test]
+fn a_jsx_overload_error_reports_ts2769_as_stock() {
+    diagnostics_like_stock("overload_error_jsx");
+}
+
 /// TS2683's related information on an anonymous function expression spans the function's first token (`function`,
 /// `async`), as TypeScript 5 spans it, not the name it is assigned to (TypeScript 7).
 #[test]

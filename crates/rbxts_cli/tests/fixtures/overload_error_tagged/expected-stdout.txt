@@ -1,0 +1,10 @@
+[96msrc/shared/a.ts[0m:[93m3[0m:[93m8[0m - [91merror[0m[90m TS2769: [0mNo overload matches this call.
+  Overload 1 of 2, '(s: TemplateStringsArray, a: number): string', gave the following error.
+    Argument of type 'boolean' is not assignable to parameter of type 'number'.
+  Overload 2 of 2, '(s: TemplateStringsArray, a: string): string', gave the following error.
+    Argument of type 'boolean' is not assignable to parameter of type 'string'.
+
+[7m3[0m tag`x${true}y`;
+[7m [0m [91m       ~~~~[0m
+
+

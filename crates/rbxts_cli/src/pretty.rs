@@ -186,8 +186,11 @@ fn related_length(info: P<Diagnostic>) -> u32 {
 /// whatever it holds; `rbxts_project`'s `overload_errors` makes it). A tsrs diagnostic has no absent related
 /// information apart from an empty one.
 fn has_empty_related_information(diagnostic: P<Diagnostic>) -> bool {
-    diagnostic.code() == NO_OVERLOAD_MATCHES
-        && diagnostic.message_chain().first().is_some_and(|c| c.code() == OVERLOAD_GAVE_ERROR)
+    let lists_overloads = |d: P<Diagnostic>| {
+        d.code() == NO_OVERLOAD_MATCHES && d.message_chain().first().is_some_and(|c| c.code() == OVERLOAD_GAVE_ERROR)
+    };
+    // a decorator's under its head message (TS1238 and the like)
+    lists_overloads(diagnostic) || diagnostic.message_chain().first().is_some_and(|&c| lists_overloads(c))
 }
 
 /// One diagnostic as `formatDiagnosticsWithColorAndContext([diagnostic], host)` formats it, ending with a line end.

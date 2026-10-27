@@ -1,0 +1,72 @@
+[96msrc/shared/a.ts[0m:[93m7[0m:[93m5[0m - [91merror[0m[90m TS2769: [0mNo overload matches this call.
+  Overload 1 of 2, '(a: number, b: string): C', gave the following error.
+    Argument of type 'number' is not assignable to parameter of type 'string'.
+  Overload 2 of 2, '(a: string, b: number): C', gave the following error.
+    Argument of type 'number' is not assignable to parameter of type 'string'.
+
+[7m7[0m new C(1, 1);
+[7m [0m [91m    ~[0m
+
+  [96msrc/shared/a.ts[0m:[93m4[0m:[93m2[0m
+    [7m4[0m  constructor(a: unknown, b: unknown) {}
+    [7m [0m [96m ~~~~~~~~~~~[0m
+    The call would have succeeded against this implementation, but implementation signatures of overloads are not externally visible.
+
+[96msrc/shared/a.ts[0m:[93m9[0m:[93m8[0m - [91merror[0m[90m TS2769: [0mNo overload matches this call.
+  Overload 1 of 2, '(a: number, b: string): C', gave the following error.
+    Argument of type 'number' is not assignable to parameter of type 'string'.
+  Overload 2 of 2, '(a: string, b: number): C', gave the following error.
+    Argument of type 'number' is not assignable to parameter of type 'string'.
+
+[7m9[0m new ns.D(1, 1);
+[7m [0m [91m       ~[0m
+
+  [96msrc/shared/a.ts[0m:[93m4[0m:[93m2[0m
+    [7m4[0m  constructor(a: unknown, b: unknown) {}
+    [7m [0m [96m ~~~~~~~~~~~[0m
+    The call would have succeeded against this implementation, but implementation signatures of overloads are not externally visible.
+
+[96msrc/shared/a.ts[0m:[93m12[0m:[93m1[0m - [91merror[0m[90m TS2769: [0mNo overload matches this call.
+  Overload 1 of 2, '(a: number, b: string): void', gave the following error.
+    Argument of type 'number' is not assignable to parameter of type 'string'.
+  Overload 2 of 2, '(a: string, b: number): void', gave the following error.
+    Argument of type 'number' is not assignable to parameter of type 'string'.
+
+[7m12[0m f(1, 1);
+[7m  [0m [91m~[0m
+
+
+[96msrc/shared/a.ts[0m:[93m13[0m:[93m1[0m - [91merror[0m[90m TS2769: [0mNo overload matches this call.
+  Overload 1 of 2, '(a: number, b: string): void', gave the following error.
+    Argument of type 'number' is not assignable to parameter of type 'string'.
+  Overload 2 of 2, '(a: string, b: number): void', gave the following error.
+    Argument of type 'number' is not assignable to parameter of type 'string'.
+
+[7m13[0m (f)(1, 1);
+[7m  [0m [91m~~~[0m
+
+
+[96msrc/shared/b.ts[0m:[93m7[0m:[93m7[0m - [91merror[0m[90m TS2769: [0mNo overload matches this call.
+  Overload 1 of 2, '(a: number): C', gave the following error.
+    Argument of type 'boolean' is not assignable to parameter of type 'number'.
+  Overload 2 of 2, '(a: string): C', gave the following error.
+    Argument of type 'boolean' is not assignable to parameter of type 'string'.
+
+[7m7[0m new C(true);
+[7m [0m [91m      ~~~~[0m
+
+  [96msrc/shared/b.ts[0m:[93m4[0m:[93m2[0m
+    [7m4[0m  constructor(a: unknown) {}
+    [7m [0m [96m ~~~~~~~~~~~[0m
+    The call would have succeeded against this implementation, but implementation signatures of overloads are not externally visible.
+
+[96msrc/shared/b.ts[0m:[93m13[0m:[93m10[0m - [91merror[0m[90m TS2769: [0mNo overload matches this call.
+  Overload 1 of 2, '(a: number): object', gave the following error.
+    Argument of type 'boolean' is not assignable to parameter of type 'number'.
+  Overload 2 of 2, '(a: string): object', gave the following error.
+    Argument of type 'boolean' is not assignable to parameter of type 'string'.
+
+[7m13[0m new Made(true);
+[7m  [0m [91m         ~~~~[0m
+
+
