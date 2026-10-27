@@ -209,6 +209,65 @@ local function throwingHex()
 	table.move(log, 1, #log, _length + 1, _array)
 	return _array
 end
+-- `Rect.new` with one argument (its types allow it) throws "Invalid number of arguments: 1", and `Ray.new` with an
+-- explicit `nil` throws (an argument whose type includes `undefined` compiles to exactly that): both before the
+-- children run, as in JavaScript
+local function throwingRect(min)
+	table.clear(log)
+	TS.try(function()
+		local _attributes = {
+			Rect = Rect.new(min),
+		}
+		local _result = maybeSide
+		if _result ~= nil then
+			_result = _result.run()
+		end
+		React.createElement("frame", _attributes, _result)
+		table.insert(log, "built")
+	end, function(e)
+		table.insert(log, "threw")
+	end)
+	local _array = {}
+	local _length = #_array
+	table.move(log, 1, #log, _length + 1, _array)
+	return _array
+end
+local noDirection = nil
+local function throwingRay(origin)
+	table.clear(log)
+	TS.try(function()
+		local _attributes = {
+			Ray = Ray.new(origin, noDirection),
+		}
+		local _result = maybeSide
+		if _result ~= nil then
+			_result = _result.run()
+		end
+		React.createElement("frame", _attributes, _result)
+		table.insert(log, "built")
+	end, function(e)
+		table.insert(log, "threw")
+	end)
+	local _array = {}
+	local _length = #_array
+	table.move(log, 1, #log, _length + 1, _array)
+	return _array
+end
+-- two defined arguments never throw: the attribute commutes with the children, as before
+local function pureRect(min, max)
+	table.clear(log)
+	local _result = maybeSide
+	if _result ~= nil then
+		_result = _result.run()
+	end
+	React.createElement("frame", {
+		Rect = Rect.new(min, max),
+	}, _result)
+	local _array = {}
+	local _length = #_array
+	table.move(log, 1, #log, _length + 1, _array)
+	return _array
+end
 return {
 	pureChild = pureChild,
 	userCallChild = userCallChild,
@@ -222,4 +281,7 @@ return {
 	inheritedConstructor = inheritedConstructor,
 	throwingRange = throwingRange,
 	throwingHex = throwingHex,
+	throwingRect = throwingRect,
+	throwingRay = throwingRay,
+	pureRect = pureRect,
 }

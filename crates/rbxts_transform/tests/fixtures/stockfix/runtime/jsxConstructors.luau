@@ -41,6 +41,25 @@ return {
 				return { x, 0, y, 0 }
 			end,
 		},
+		-- the engine's argument checks (a Studio matrix): Rect.new takes 0, 2 or 4 arguments, neither takes a nil
+		Rect = {
+			new = function(...)
+				local count = select("#", ...)
+				assert(count == 0 or count == 2 or count == 4, "Invalid number of arguments: " .. count)
+				for i = 1, count do
+					assert(select(i, ...) ~= nil, "invalid argument #" .. i .. " to 'new' (Vector2 expected, got nil)")
+				end
+				return { ... }
+			end,
+		},
+		Ray = {
+			new = function(...)
+				for i = 1, select("#", ...) do
+					assert(select(i, ...) ~= nil, "invalid argument #" .. i .. " to 'new' (Vector3 expected, got nil)")
+				end
+				return { ... }
+			end,
+		},
 		Instance = {
 			new = function(className)
 				return { ClassName = className }
@@ -92,6 +111,9 @@ return {
 		},
 		{ call = "throwingRange", expect = { "threw" } },
 		{ call = "throwingHex", expect = { "threw" } },
+		{ call = "throwingRect", args = { { X = 1, Y = 2 } }, expect = { "threw" } },
+		{ call = "throwingRay", args = { { X = 1, Y = 2, Z = 3 } }, expect = { "threw" } },
+		{ call = "pureRect", args = { { X = 0, Y = 0 }, { X = 1, Y = 1 } }, expect = { "side effect" } },
 		{
 			call = "aliasedEnum",
 			expect = function(element)

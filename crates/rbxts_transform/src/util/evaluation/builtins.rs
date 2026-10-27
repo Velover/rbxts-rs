@@ -9,7 +9,9 @@ use tsrs_core::P;
 use super::facts::{mark_constant_reference, mark_stable_lookup, set_call_effects};
 use crate::classes::transform_state::TransformState;
 use crate::util::traversal::get_ancestor;
-use crate::util::types::{is_array_type, is_definitely_type, is_in_rbxts_types, is_possibly_type, is_roblox_type};
+use crate::util::types::{
+    is_array_type, is_definitely_type, is_in_rbxts_types, is_possibly_type, is_possibly_undefined, is_roblox_type,
+};
 
 const LIBRARIES: &[&str] = &["math", "string", "table", "bit32", "utf8", "coroutine", "task", "os", "debug", "buffer"];
 const PURE_MATH: &[&str] = &[
@@ -112,7 +114,9 @@ const PURE_DATATYPES: &[&str] = &[
 ];
 
 /// rbxts-rs: the constructors of [`PURE_DATATYPES`] that never throw for arguments of their declared types (`new` is
-/// `new X(…)`): component-wise values with no validation. The others can reject a value of the right type
+/// `new X(…)`): component-wise values with no validation, given an argument count [`allowed_arity`] accepts and no
+/// argument that can be `undefined` (an explicit `nil`, which `Rect.new`, `Ray.new`, `CFrame.fromEulerAngles`,
+/// `CFrame.lookAt` and `CFrame.lookAlong` reject where an omitted argument is fine: a Studio matrix of 1240 forms). The others can reject a value of the right type
 /// (`new NumberRange(5, 1)`, `Color3.fromHex("zz")`, unsorted sequence keypoints, an unknown font or brick colour
 /// name, out-of-range keypoint times, tween and material values), or their validation is not documented closely
 /// enough to rule it out, so they count as possibly throwing.
@@ -139,6 +143,12 @@ const NEVER_THROWING_CONSTRUCTORS: &[(&str, &[&str])] = &[
     ("Rect", &["new"]),
     ("Ray", &["new"]),
 ];
+
+/// rbxts-rs: whether the engine takes `count` arguments for `datatype.member` without "Invalid number of arguments":
+/// `Rect.new` takes 0, 2 or 4 (its types allow 1 and 3); the others take every count their types allow.
+fn allowed_arity(datatype: &str, member: &str, count: usize) -> bool {
+    !(datatype == "Rect" && member == "new") || matches!(count, 0 | 2 | 4)
+}
 
 /// rbxts-rs: every declaration of `node`'s symbol is in `@rbxts/types` (the globals, not a user's shadow of them).
 fn is_declared_in_rbxts_types(state: &mut TransformState<'_>, node: P<Node>) -> bool {
@@ -191,6 +201,7 @@ pub fn try_mark_pure_constructor(
     if !signature.declaration().is_some_and(|d| is_declared_by_constructor_type(state, d, datatype)) {
         return;
     }
+    let mut maybe_undefined = false;
     for &argument in arguments {
         if argument.kind() == Kind::SpreadElement {
             return;
@@ -199,11 +210,12 @@ pub fn try_mark_pure_constructor(
         if is_possibly_type(state, t, &[&is_array_type]) {
             return;
         }
+        maybe_undefined = maybe_undefined || is_possibly_undefined(state, t);
     }
     let name = member.map_or("new", |member| member.text());
-    let may_throw = !NEVER_THROWING_CONSTRUCTORS
-        .iter()
-        .any(|&(d, members)| d == datatype && members.contains(&name));
+    let may_throw = maybe_undefined
+        || !allowed_arity(datatype, name, arguments.len())
+        || !NEVER_THROWING_CONSTRUCTORS.iter().any(|&(d, members)| d == datatype && members.contains(&name));
     if let Some(facts) = call.facts_mut() {
         facts.set_pure_constructor(may_throw);
     }

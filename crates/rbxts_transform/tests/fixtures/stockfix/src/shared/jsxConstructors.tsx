@@ -145,3 +145,36 @@ export function throwingHex() {
 	}
 	return [...log];
 }
+
+// `Rect.new` with one argument (its types allow it) throws "Invalid number of arguments: 1", and `Ray.new` with an
+// explicit `nil` throws (an argument whose type includes `undefined` compiles to exactly that): both before the
+// children run, as in JavaScript
+export function throwingRect(min: Vector2) {
+	log.clear();
+	try {
+		<frame Rect={new Rect(min)}>{maybeSide?.run()}</frame>;
+		log.push("built");
+	} catch (e) {
+		log.push("threw");
+	}
+	return [...log];
+}
+
+const noDirection: Vector3 | undefined = undefined;
+export function throwingRay(origin: Vector3) {
+	log.clear();
+	try {
+		<frame Ray={new Ray(origin, noDirection)}>{maybeSide?.run()}</frame>;
+		log.push("built");
+	} catch (e) {
+		log.push("threw");
+	}
+	return [...log];
+}
+
+// two defined arguments never throw: the attribute commutes with the children, as before
+export function pureRect(min: Vector2, max: Vector2) {
+	log.clear();
+	<frame Rect={new Rect(min, max)}>{maybeSide?.run()}</frame>;
+	return [...log];
+}
