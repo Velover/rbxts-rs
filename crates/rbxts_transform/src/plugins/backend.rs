@@ -17,7 +17,8 @@ use tsrs_ast::{Diagnostic, DiagnosticExt, Kind, Node, SourceFile, Symbol, new_di
 use tsrs_checker::Checker;
 use tsrs_compiler::Program;
 use tsrs_core::{CompilerOptions, P};
-use tsrs_diagnostics::{Category, new_ad_hoc_message};
+use crate::shared::diagnostics::new_ad_hoc_message;
+use tsrs_diagnostics::Category;
 
 use super::HookKind;
 use super::dispatch;

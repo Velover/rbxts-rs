@@ -325,9 +325,9 @@ impl ProjectGraph {
                 }
                 let options = &target.options;
                 let message = if !options.composite.is_true() {
-                    Some(&tsrs_diagnostics::Referenced_project_0_must_have_setting_composite_Colon_true)
+                    Some(&tsrs_diagnostics::REFERENCED_PROJECT_0_MUST_HAVE_SETTING_COMPOSITE_COLON_TRUE)
                 } else if options.no_emit.is_true() || options.declaration.is_false() {
-                    Some(&tsrs_diagnostics::Referenced_project_0_may_not_disable_emit)
+                    Some(&tsrs_diagnostics::REFERENCED_PROJECT_0_MAY_NOT_DISABLE_EMIT)
                 } else {
                     None
                 };
@@ -601,7 +601,7 @@ impl Walk<'_> {
             if !in_circular_context {
                 let cycle = self.stack.join("\r\n");
                 self.circular.push(tsrs_ast::new_compiler_diagnostic(
-                    &tsrs_diagnostics::Project_references_may_not_form_a_circular_graph_Cycle_detected_Colon_0,
+                    &tsrs_diagnostics::PROJECT_REFERENCES_MAY_NOT_FORM_A_CIRCULAR_GRAPH_CYCLE_DETECTED_COLON_0,
                     &[&cycle],
                 ));
             }

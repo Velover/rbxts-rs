@@ -162,7 +162,7 @@ impl NodeMetadata {
             let name = tsrs_ast::get_property_name_for_property_name_node(name);
             if let Some(owner) = node.parent()
                 && tsrs_ast::is_class_like(owner)
-                && name != tsrs_ast::InternalSymbolNameMissing
+                && name != tsrs_ast::INTERNAL_SYMBOL_NAME_MISSING
             {
                 for implement in implements_names(owner) {
                     let Some(symbol) = get_symbol(cx, implement) else { continue };

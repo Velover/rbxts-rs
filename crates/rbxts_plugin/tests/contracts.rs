@@ -103,7 +103,7 @@ fn explain_checker_diagnostic_rewrites_a_checker_message() {
     let instance = plugin.instance(&shared, CheckerInfo { index: 0, count: 1 });
     let mut backend = MockCx::new(program, index, file);
     backend.phase = Phase::Explain;
-    let message = tsrs_diagnostics::new_ad_hoc_message(
+    let message = tsrs_ast::new_ad_hoc_message(
         "Namespace 'Networking' has no exported member 'removed'.",
     );
     let checker_diagnostic =
@@ -111,7 +111,7 @@ fn explain_checker_diagnostic_rewrites_a_checker_message() {
     let other = tsrs_ast::new_diagnostic(
         Some(file),
         None::<tsrs_core::TextRange>,
-        tsrs_diagnostics::new_ad_hoc_message("unrelated"),
+        tsrs_ast::new_ad_hoc_message("unrelated"),
         &[],
     );
 

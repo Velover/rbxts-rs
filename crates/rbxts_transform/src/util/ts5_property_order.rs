@@ -106,7 +106,7 @@ fn ts5_names(checker: &mut Checker, t: P<Type>, stack: &mut Vec<P<Type>>) -> Vec
     if object_flags.intersects(ObjectFlags::Anonymous) {
         return anonymous_names(checker, t, stack).unwrap_or_else(|| ts7(checker));
     }
-    let target = if object_flags.intersects(ObjectFlags::Reference) { t.object_target().unwrap_or(t) } else { t };
+    let target = if object_flags.intersects(ObjectFlags::Reference) { t.target().unwrap_or(t) } else { t };
     if !target.object_flags().intersects(ObjectFlags::ClassOrInterface) {
         return ts7(checker);
     }
@@ -165,7 +165,7 @@ fn own_names(checker: &mut Checker, t: P<Type>, symbol: P<Symbol>) -> Vec<&'stat
 /// (`resolveAnonymousTypeMembers` takes `getMembersOfSymbol`), an object literal by its spreads. `None`: TypeScript
 /// 7's order.
 fn anonymous_names(checker: &mut Checker, t: P<Type>, stack: &mut Vec<P<Type>>) -> Option<Vec<&'static str>> {
-    if let Some(target) = t.object_target() {
+    if let Some(target) = t.target() {
         stack.push(t);
         let names = ts5_names(checker, target, stack);
         stack.pop();

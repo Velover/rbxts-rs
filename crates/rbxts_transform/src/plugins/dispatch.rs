@@ -69,7 +69,7 @@ pub fn import_override(state: &TransformState<'_>, alias_declaration: P<Node>) -
 /// `get_property_of_type(get_apparent_type(non_nullable(t)), marker)` is `Some`.
 fn has_marker(state: &mut TransformState<'_>, t: tsrs_core::P<tsrs_checker::Type>, marker: &str) -> bool {
     let t = state.checker.get_non_nullable_type(t);
-    let t = state.checker.get_apparent_type(t);
+    let t = state.checker.get_apparent_type_exported(t);
     state.checker.get_property_of_type_exported(t, marker).is_some()
 }
 
@@ -834,7 +834,7 @@ const MARKER_SCAN_LIMIT: usize = 16;
 fn access_candidates(state: &mut TransformState<'_>, host: &PluginHost, receiver: P<Node>) -> Vec<(usize, Tag)> {
     let t = state.get_type(receiver);
     let t = state.checker.get_non_nullable_type(t);
-    let apparent = state.checker.get_apparent_type(t);
+    let apparent = state.checker.get_apparent_type_exported(t);
     let mut matched: Vec<usize> = if host.access_markers.len() <= MARKER_SCAN_LIMIT {
         (0..host.access_markers.len())
             .filter(|&i| state.checker.get_property_of_type_exported(apparent, host.access_markers[i].1).is_some())

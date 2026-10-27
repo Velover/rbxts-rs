@@ -238,7 +238,7 @@ fn emulate_base_url(parsed: &mut ParsedCommandLine) -> bool {
     // absolute already (the parse resolves it against the tsconfig that sets it)
     let base_url = std::mem::take(&mut options.base_url);
     let under_base = |path: &str| tspath::normalize_path(&tspath::combine_paths(&base_url, &[path]));
-    let mut paths = options.paths.take().unwrap_or_default();
+    let mut paths = options.paths.take().map(Arc::unwrap_or_clone).unwrap_or_default();
     for substitutions in paths.values_mut() {
         let Some(substitutions) = substitutions else { continue };
         for substitution in substitutions.iter_mut() {
@@ -248,7 +248,7 @@ fn emulate_base_url(parsed: &mut ParsedCommandLine) -> bool {
     if !paths.contains_key("*") {
         paths.insert("*".to_owned(), Some(vec![under_base("*")]));
     }
-    options.paths = Some(paths);
+    options.paths = Some(Arc::new(paths));
     parsed.parsed_config.compiler_options = Some(P::new(options));
     true
 }

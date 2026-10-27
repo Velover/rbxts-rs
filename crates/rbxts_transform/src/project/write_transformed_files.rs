@@ -17,7 +17,7 @@ use tsrs_core::{NewLineKind, P, ScriptTarget};
 /// `ts.createPrinter().printFile(file)`: LF line ends, comments kept.
 pub fn print_source_file(file: P<SourceFile>) -> String {
     let mut printer = tsrs_printer::new_printer(
-        tsrs_printer::PrinterOptions { new_line: NewLineKind::LF, target: ScriptTarget::ESNext, ..Default::default() },
+        tsrs_printer::PrinterOptions { new_line: NewLineKind::LF, target: ScriptTarget::ES_NEXT, ..Default::default() },
         tsrs_printer::PrintHandlers::default(),
         None,
     );

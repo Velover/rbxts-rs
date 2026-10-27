@@ -53,7 +53,7 @@ fn get_iterable_element_type(state: &mut TransformState<'_>, t: P<Type>, node: P
             values.push(value);
         }
     }
-    state.checker.get_union_type(&values)
+    state.checker.get_union_type_exported(&values)
 }
 
 /// The array literal around a `SpreadElement` pattern parent, and the spread's index in it.
@@ -109,12 +109,12 @@ fn get_rest_element_type(state: &mut TransformState<'_>, pattern: P<Node>, index
             values.push(get_iterable_element_type(state, part, pattern));
         }
     }
-    state.checker.get_union_type(&values)
+    state.checker.get_union_type_exported(&values)
 }
 
 /// `Number(key.value)` of a string or number literal type.
 fn literal_number(t: P<Type>) -> Option<f64> {
-    match t.as_literal_type().value.get() {
+    match t.as_literal_type().value() {
         Some(LiteralValue::Number(n)) => Some(n.0),
         Some(LiteralValue::String(s)) => Some(rbxts_luau::js_string_to_number(s)),
         _ => None,
@@ -123,7 +123,7 @@ fn literal_number(t: P<Type>) -> Option<f64> {
 
 /// `String(key.value)` of a string or number literal type.
 fn literal_string(t: P<Type>) -> String {
-    match t.as_literal_type().value.get() {
+    match t.as_literal_type().value() {
         Some(LiteralValue::Number(n)) => js_number_to_string(n.0),
         Some(LiteralValue::String(s)) => s.to_owned(),
         _ => unreachable!("a string or number literal type"),
@@ -170,7 +170,7 @@ fn get_property_type(state: &mut TransformState<'_>, pattern: P<Node>, name: P<N
         };
         values.push(value);
     }
-    state.checker.get_union_type(&values)
+    state.checker.get_union_type_exported(&values)
 }
 
 /// `hasRestAssignmentAncestor`
@@ -216,7 +216,7 @@ pub fn get_assignment_pattern_type(state: &mut TransformState<'_>, pattern: P<No
     if element.kind() == Kind::BinaryExpression {
         let non_nullable = state.checker.get_non_nullable_type(source);
         let default = state.get_type(element.as_binary_expression().right());
-        state.checker.get_union_type(&[non_nullable, default])
+        state.checker.get_union_type_exported(&[non_nullable, default])
     } else {
         source
     }

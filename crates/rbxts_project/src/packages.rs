@@ -104,7 +104,7 @@ pub struct ResolvedModuleInfo {
 
 /// A TypeScript module resolver with the program's options, for specifiers the program itself did not resolve.
 pub struct ModuleResolver {
-    resolver: DefaultResolver,
+    resolver: DefaultResolver<'static>,
 }
 
 impl ModuleResolver {

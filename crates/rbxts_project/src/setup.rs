@@ -580,8 +580,8 @@ pub fn validate_compiler_options(opts: &CompilerOptions, project_path: &str) -> 
     if opts.strict != Tristate::True {
         errors.push("\"strict\" must be true".into());
     }
-    let module_ok = (opts.module == ModuleKind::CommonJS && opts.module_resolution == ModuleResolutionKind::Node10)
-        || (opts.module == ModuleKind::Preserve && opts.module_resolution == ModuleResolutionKind::Bundler);
+    let module_ok = (opts.module == ModuleKind::COMMON_JS && opts.module_resolution == ModuleResolutionKind::NODE10)
+        || (opts.module == ModuleKind::PRESERVE && opts.module_resolution == ModuleResolutionKind::BUNDLER);
     if !module_ok {
         errors.push(
             "\"module\" and \"moduleResolution\" must be commonjs and \"Node\", or preserve and \"bundler\"".into(),

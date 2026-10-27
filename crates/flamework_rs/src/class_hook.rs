@@ -74,7 +74,7 @@ pub(crate) fn class_metadata(fw: &FwInstance, cx: &mut Cx<'_>, class: &ClassSite
     for &member in node.members() {
         let Some(member_name) = member.name() else { continue };
         let property = tsrs_ast::get_property_name_for_property_name_node(member_name);
-        if property == tsrs_ast::InternalSymbolNameMissing {
+        if property == tsrs_ast::INTERNAL_SYMBOL_NAME_MISSING {
             continue;
         }
         let member_metadata = fw.metadata(cx, member);

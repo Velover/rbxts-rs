@@ -129,8 +129,8 @@ fn validate_object_literal_element(state: &mut TransformState<'_>, node: P<Node>
 /// `validateHeritageClause`: a class member against the same member of a base class or implemented interface.
 fn validate_heritage_clause(state: &mut TransformState<'_>, node: P<Node>, type_node: P<Node>) {
     let name = tsrs_ast::get_property_name_for_property_name_node(node.name().expect("the element has a name"));
-    // rbxts-rs: TypeScript 7 gives `InternalSymbolNameMissing` where TypeScript 5 gives `undefined`
-    if name == tsrs_ast::InternalSymbolNameMissing {
+    // rbxts-rs: TypeScript 7 gives `INTERNAL_SYMBOL_NAME_MISSING` where TypeScript 5 gives `undefined`
+    if name == tsrs_ast::INTERNAL_SYMBOL_NAME_MISSING {
         return;
     }
 

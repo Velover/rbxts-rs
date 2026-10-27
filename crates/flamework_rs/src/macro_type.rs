@@ -224,9 +224,9 @@ impl<'c, 'a> MacroCx<'c, 'a> {
     pub fn constituents(&mut self, t: P<Type>) -> Option<Constituents> {
         let flags = t.flags();
         if flags.intersects(TypeFlags::Union) {
-            Some(Constituents::Union(t.as_union_or_intersection_type().types().to_vec()))
+            Some(Constituents::Union(t.types().to_vec()))
         } else if flags.intersects(TypeFlags::Intersection) {
-            Some(Constituents::Intersection(t.as_union_or_intersection_type().types().to_vec()))
+            Some(Constituents::Intersection(t.types().to_vec()))
         } else {
             None
         }
@@ -251,7 +251,7 @@ impl<'c, 'a> MacroCx<'c, 'a> {
                 name: name.to_owned(),
                 ty,
                 optional: property.flags().intersects(SymbolFlags::Optional),
-                readonly: property.declarations().iter().any(|&d| tsrs_checker::is_declaration_readonly(d)),
+                readonly: property.declarations().iter().any(|&d| tsrs_checker::utilities::is_declaration_readonly(d)),
             });
         }
         Some(fields)
@@ -291,7 +291,7 @@ impl<'c, 'a> MacroCx<'c, 'a> {
 
     /// `isArray`: an array or a tuple.
     pub fn is_array(&mut self, t: P<Type>) -> bool {
-        self.checker().is_array_type(t) || tsrs_checker::is_tuple_type_exported(t)
+        self.checker().is_array_type_exported(t) || tsrs_checker::is_tuple_type_exported(t)
     }
 
     /// `isTuple`.
@@ -302,11 +302,15 @@ impl<'c, 'a> MacroCx<'c, 'a> {
     /// `getElementType`: an array's element type, or the union of a tuple's (`never` for `[]`); `None` otherwise.
     pub fn array_element(&mut self, t: P<Type>) -> Option<P<Type>> {
         if tsrs_checker::is_tuple_type_exported(t) {
-            let elements = self.checker().get_type_arguments(t).to_vec();
+            let elements = self.checker().get_type_arguments_exported(t).to_vec();
             let checker = self.checker();
-            return Some(if elements.is_empty() { checker.get_never_type() } else { checker.get_union_type(&elements) });
+            return Some(if elements.is_empty() {
+                checker.get_never_type()
+            } else {
+                checker.get_union_type_exported(&elements)
+            });
         }
-        if !self.checker().is_array_type(t) {
+        if !self.checker().is_array_type_exported(t) {
             return None;
         }
         let checker = self.checker();
@@ -325,7 +329,7 @@ impl<'c, 'a> MacroCx<'c, 'a> {
             return None;
         }
         let infos = t.target().map(|target| target.as_tuple_type().element_infos()).unwrap_or_default();
-        let arguments = self.checker().get_type_arguments(t);
+        let arguments = self.checker().get_type_arguments_exported(t);
         Some(
             arguments
                 .iter()
@@ -333,11 +337,11 @@ impl<'c, 'a> MacroCx<'c, 'a> {
                 .map(|(index, &ty)| {
                     let info = infos.get(index);
                     let name = info
-                        .and_then(|i| i.labeled_declaration)
+                        .and_then(|i| i.labeled_declaration())
                         .and_then(|d| d.name())
                         .filter(|n| n.kind() == tsrs_ast::Kind::Identifier)
                         .map(|n| n.text().to_owned());
-                    let flags = info.map(|i| i.flags).unwrap_or(ElementFlags::Required);
+                    let flags = info.map(|i| i.tuple_element_flags()).unwrap_or(ElementFlags::Required);
                     TupleElement {
                         name,
                         ty,
@@ -367,7 +371,7 @@ impl<'c, 'a> MacroCx<'c, 'a> {
     /// `isOptional`: a union with `undefined` or `null` in it.
     pub fn is_optional(&self, t: P<Type>) -> bool {
         t.flags().intersects(TypeFlags::Union)
-            && t.as_union_or_intersection_type()
+            && t
                 .types()
                 .iter()
                 .any(|m| m.flags().intersects(TypeFlags::Undefined | TypeFlags::Null))
@@ -376,7 +380,7 @@ impl<'c, 'a> MacroCx<'c, 'a> {
     /// `getName`: the alias's name, else the symbol's.
     pub fn type_name(&self, t: P<Type>) -> Option<String> {
         if let Some(alias) = t.alias()
-            && let Some(symbol) = alias.symbol.get()
+            && let Some(symbol) = alias.symbol()
         {
             return Some(symbol.name().to_owned());
         }

@@ -49,7 +49,7 @@ pub(crate) fn alias_symbol(ty: P<Type>) -> Option<P<Symbol>> {
 
 /// `isInstanceType`: the type has the `_nominal_Instance` brand Roblox's instance types carry.
 pub fn is_instance_type(cx: &mut Cx<'_>, ty: P<Type>) -> bool {
-    cx.checker().get_property_of_type(ty, "_nominal_Instance").is_some()
+    cx.checker().get_property_of_type_exported(ty, "_nominal_Instance").is_some()
 }
 
 /// `isObjectType`
@@ -255,7 +255,7 @@ pub(crate) fn instance_type_of(cx: &mut Cx<'_>, ty: P<Type>) -> Result<P<Type>, 
         }
     }
     for property in &nominal {
-        if cx.checker().get_property_of_type(specific, property.name()).is_none() {
+        if cx.checker().get_property_of_type_exported(specific, property.name()).is_none() {
             return Err(declaration_of_type(ty));
         }
     }

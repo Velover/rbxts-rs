@@ -44,7 +44,7 @@ impl TransformPaths {
         // getImplicitExtensions
         let mut implicit_extensions = vec![".ts", ".d.ts"];
         let allow_js = options.allow_js.is_true();
-        let allow_jsx = options.jsx != JsxEmit::None;
+        let allow_jsx = options.jsx != JsxEmit::NONE;
         if allow_js {
             implicit_extensions.push(".js");
         }
@@ -95,7 +95,7 @@ impl TransformPaths {
     fn update(&self, resolver: &ModuleResolver, module_name: &str, file_name: &str, file_dir: &str) -> Option<String> {
         // rbxts-rs: an unresolved specifier whose first failed lookup is a URL is rewritten to that URL in
         // roblox-ts; a lookup location is a file path, never a URL with a host, so it is always kept here
-        let resolved = resolver.resolve(module_name, file_name, ResolutionMode::None)?;
+        let resolved = resolver.resolve(module_name, file_name, ResolutionMode::NONE)?;
         if resolved.is_external_library_import {
             return None;
         }

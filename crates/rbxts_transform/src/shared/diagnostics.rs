@@ -1,8 +1,8 @@
 //! roblox-ts's errors and warnings (`Shared/diagnostics.ts`), as tsrs diagnostics.
 //!
 //! Each `DiagnosticFactory` becomes a function from the node to a `P<Diagnostic>`, with the same text. The message is
-//! a `tsrs_diagnostics::new_ad_hoc_message` (code -1), made once per factory; context-dependent ones make one per
-//! call. The location is the node's `getStart()` to its end, as `createDiagnosticWithLocation` reports it.
+//! a leaked ad hoc message ([`new_ad_hoc_message`], code -1), made once per factory; context-dependent ones make one
+//! per call. The location is the node's `getStart()` to its end, as `createDiagnosticWithLocation` reports it.
 //!
 //! rbxts-rs: `kleur` colours in suggestions and issue links are left out (plain text); the code is tsrs's ad hoc `-1`
 //! instead of roblox-ts's `" roblox-ts"`.
@@ -11,9 +11,21 @@ use std::sync::OnceLock;
 
 use tsrs_ast::{Diagnostic, Node, SourceFile, new_diagnostic};
 use tsrs_core::{P, TextRange};
-use tsrs_diagnostics::{Category, Message, new_ad_hoc_message};
+use tsrs_diagnostics::{Category, Message};
 
 const REPO_URL: &str = "https://github.com/roblox-ts/roblox-ts";
+
+/// An ad hoc message (code -1) with run-time text, on the heap and never freed.
+///
+/// rbxts-rs: tsrs 0.20's `tsrs_ast::new_ad_hoc_message` allocates the message in the current arena target, which
+/// during a watch build's transform is the checker's region, given back when the program is freed. rbxts-rs's
+/// messages must outlive every program: the factories below cache theirs across builds, a detached diagnostic keeps
+/// its message pointer (`copy_deep`), and plugin and replayed diagnostics are told apart by their message's address
+/// (`plugins::diagnostic_source`, `build::replay::source`), which must never be reused. So rbxts-rs leaks them, as
+/// tsrs did before 0.20.
+pub fn new_ad_hoc_message(text: &str) -> &'static Message {
+    Box::leak(Box::new(Message::ad_hoc(Box::leak(text.into()))))
+}
 
 fn suggestion(text: &str) -> String {
     format!("Suggestion: {text}")

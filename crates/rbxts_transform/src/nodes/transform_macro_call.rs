@@ -62,7 +62,7 @@ pub fn transform_macro_call(
         let spread_expression = argument.expression().expect("a spread has an expression");
         let t = state.get_type(spread_expression);
         assert!(t.is_tuple_type(), "a spread macro argument is a tuple");
-        let count = t.target_tuple_type().element_infos().len();
+        let count = t.target().expect("a tuple reference has a target").as_tuple_type().element_infos().len();
         let ids: Vec<_> = (0..count).map(|i| temp_id(format!("spread{i}"))).collect();
         if ids.is_empty() {
             // an empty spread may still have effects

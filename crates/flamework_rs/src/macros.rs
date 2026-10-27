@@ -447,7 +447,7 @@ impl Analysis<'_> {
             return self.of_type(cx, target);
         }
         let mut found: Option<UserMacro> = None;
-        for &constituent in target.as_union_or_intersection_type().types() {
+        for &constituent in target.types() {
             let Some(next) = self.of_type(cx, constituent)? else { continue };
             match &found {
                 None => found = Some(next),
@@ -492,17 +492,17 @@ impl Analysis<'_> {
         }
 
         if tsrs_checker::is_tuple_type_exported(target) {
-            let members = cx.checker().get_type_arguments(target).to_vec();
+            let members = cx.checker().get_type_arguments_exported(target).to_vec();
             let mut macros = Vec::with_capacity(members.len());
             for member in members {
                 macros.push(self.of_many(cx, member)?);
             }
             return Ok(UserMacro::Many(macros));
         }
-        if cx.checker().is_array_type(target) {
-            let element = cx.checker().get_type_arguments(target).first().copied();
+        if cx.checker().is_array_type_exported(target) {
+            let element = cx.checker().get_type_arguments_exported(target).first().copied();
             let constituents = match element {
-                Some(e) if e.flags().intersects(TypeFlags::Union) => e.as_union_or_intersection_type().types().to_vec(),
+                Some(e) if e.flags().intersects(TypeFlags::Union) => e.types().to_vec(),
                 Some(e) => vec![e],
                 None => Vec::new(),
             };
@@ -610,7 +610,7 @@ impl Analysis<'_> {
         if !tsrs_checker::is_tuple_type_exported(intrinsic) {
             return Ok(None);
         }
-        let arguments = cx.checker().get_type_arguments(intrinsic).to_vec();
+        let arguments = cx.checker().get_type_arguments_exported(intrinsic).to_vec();
         let Some((&id, inputs)) = arguments.split_first() else { return Ok(None) };
         let Some(id) = string_literal(id) else { return Ok(None) };
         Ok(Some(UserMacro::Intrinsic(self.intrinsic(cx, id, inputs)?)))
@@ -657,7 +657,7 @@ impl Analysis<'_> {
         if !tsrs_checker::is_tuple_type_exported(reflect) {
             return Ok(None);
         }
-        let members = cx.checker().get_type_arguments(reflect).to_vec();
+        let members = cx.checker().get_type_arguments_exported(reflect).to_vec();
         let mut macros = Vec::with_capacity(members.len());
         for member in members {
             macros.push(self.of_many(cx, member)?);
@@ -669,7 +669,7 @@ impl Analysis<'_> {
 /// `isObjectType`: an object type, or an intersection of them.
 fn is_object_type(ty: P<Type>) -> bool {
     if ty.flags().intersects(TypeFlags::Intersection) {
-        return ty.as_union_or_intersection_type().types().iter().all(|&t| is_object_type(t));
+        return ty.types().iter().all(|&t| is_object_type(t));
     }
     ty.flags().intersects(TypeFlags::Object)
 }
@@ -684,7 +684,7 @@ fn labels_of(ty: P<Type>) -> UserMacro {
         .as_tuple_type()
         .element_infos()
         .iter()
-        .map(|info| match info.labeled_declaration {
+        .map(|info| match info.labeled_declaration() {
             Some(declaration) => match declaration.name() {
                 Some(name) if name.kind() == Kind::Identifier => UserMacro::Literal(LiteralMacro::Str(name.text().into())),
                 _ => UserMacro::Literal(LiteralMacro::Undefined),
@@ -709,7 +709,7 @@ fn property_key(cx: &mut Cx<'_>, property: P<Symbol>) -> TableKey {
     // property) keeps its declarations: read the first, as TS does, unless the symbol carries a key type (which the
     // checker read: TS returns the name then).
     let has_name_type = property.flags().intersects(SymbolFlags::Transient)
-        && cx.checker().value_symbol_links.try_get(property).is_some_and(|links| links.name_type().is_some());
+        && cx.checker().get_name_type_of_symbol(property).is_some();
     if property.value_declaration().is_some() || has_name_type {
         return TableKey::Str(property.name().to_owned());
     }

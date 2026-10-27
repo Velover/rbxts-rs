@@ -40,9 +40,9 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
 name = "cc"
-version = "1.5.1"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f360145194ee8e21db5ee7f3fcd4fe52210864c75c985dae33218202c8bbe040"
+checksum = "877bf67ac8e52449eb2f9e98a344ea163beb70dd1f9eebe3cc5357dcfeaee4df"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -115,7 +115,7 @@ checksum = "c6232dd377dcc64799954cbd3a9bb882e9cdc1308ccd87b1c098f1fb2eaf82a8"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -126,15 +126,15 @@ checksum = "fd8e701084c37e7ef62d3f9e453b618130cbc0ef3573847785952a3ac3f746bf"
 
 [[package]]
 name = "either"
-version = "1.18.0"
+version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
+checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 
 [[package]]
 name = "equivalent"
-version = "1.0.2"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "errno"
@@ -148,9 +148,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.14"
+version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
+checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
 name = "flamework_rs"
@@ -256,9 +256,9 @@ dependencies = [
 
 [[package]]
 name = "icu_locale_core"
-version = "2.3.0"
+version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d56e28588da92eee5c3201a6eff33fabdd49b62269c8938d4ff050ce4d900deb"
+checksum = "25d29b57c17c6528d0dc4c2141cfa2d08200465acb537a3909c8b9b8a4a984c0"
 dependencies = [
  "displaydoc",
  "litemap",
@@ -310,9 +310,9 @@ checksum = "e590f038c1464a96894fd6d10127e90a8be4509f56ff7ecef851b15cee0b7caa"
 
 [[package]]
 name = "icu_provider"
-version = "2.3.1"
+version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d27bbb9d3abbefac45d55f647c9de1d44aafcd1186eb91879afef17c396c3e73"
+checksum = "413099315636c588ee8f011190b329b971a09a8fae9d157e01dcae8379468514"
 dependencies = [
  "displaydoc",
  "icu_locale_core",
@@ -408,9 +408,9 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libmimalloc-sys2"
-version = "0.1.63"
+version = "0.1.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2812ea58f6620a137d0e7c7b9ba63f515248c5575bd669f739a9ea4b56ba8259"
+checksum = "07d0f8a90720962736f8a5965b28ba9b9f7a790073bc637b6e965cc14111dfd7"
 dependencies = [
  "cc",
  "cmake",
@@ -462,9 +462,9 @@ dependencies = [
 
 [[package]]
 name = "mimalloc-safe"
-version = "0.1.67"
+version = "0.1.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f9fd5a18b7a9c72d89d0e906a9d5b93c330c159e9d5072c858e4631f0bd0ada"
+checksum = "4193bb3155866f6c4bd60586ae65e6ae807d0bfe2f811ce8a469f1aa774fb121"
 dependencies = [
  "libmimalloc-sys2",
 ]
@@ -519,9 +519,9 @@ dependencies = [
 
 [[package]]
 name = "num-integer"
-version = "0.1.46"
+version = "0.1.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
+checksum = "7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b"
 dependencies = [
  "num-traits",
 ]
@@ -834,7 +834,7 @@ checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -895,9 +895,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.6"
+version = "3.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee"
+checksum = "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -912,14 +912,14 @@ checksum = "901704edd0dfe137f1987838ee4f259e4e063c31371bdb423f7ae38ec6f77f02"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
 name = "tinystr"
-version = "0.8.4"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1e27c91459209c2986af3dcf603a5a74a4368754ce37414f59acc971167f643"
+checksum = "abc840c238154d58f9e86b2792261edfde565a17696e1cda1a449de27979801a"
 dependencies = [
  "displaydoc",
  "zerovec",
@@ -927,7 +927,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_ast"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "bitflags",
  "hashbrown",
@@ -940,7 +940,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_astnav"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "tsrs_ast",
  "tsrs_core",
@@ -949,7 +949,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_binder"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "bitflags",
  "rustc-hash",
@@ -961,11 +961,12 @@ dependencies = [
 
 [[package]]
 name = "tsrs_checker"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "bitflags",
  "hashbrown",
  "rustc-hash",
+ "smallvec",
  "tsrs_ast",
  "tsrs_astnav",
  "tsrs_binder",
@@ -983,7 +984,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_compiler"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "rayon",
  "rustc-hash",
@@ -1008,7 +1009,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_contentmapper"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "rustc-hash",
  "tsrs_ast",
@@ -1023,7 +1024,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_core"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "dragonbox_ecma",
  "hashbrown",
@@ -1040,7 +1041,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_declarations"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "rustc-hash",
  "tsrs_ast",
@@ -1056,14 +1057,14 @@ dependencies = [
 
 [[package]]
 name = "tsrs_diagnostics"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "rustc-hash",
 ]
 
 [[package]]
 name = "tsrs_ipc"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "rustc-hash",
  "tsrs_core",
@@ -1071,9 +1072,10 @@ dependencies = [
 
 [[package]]
 name = "tsrs_module"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "bitflags",
+ "hashbrown",
  "rustc-hash",
  "tsrs_ast",
  "tsrs_core",
@@ -1083,7 +1085,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_modulespecifiers"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "regex",
  "rustc-hash",
@@ -1095,7 +1097,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_parser"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "bitflags",
  "rustc-hash",
@@ -1107,7 +1109,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_printer"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "bitflags",
  "rustc-hash",
@@ -1119,7 +1121,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_pseudochecker"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "tsrs_ast",
  "tsrs_core",
@@ -1127,7 +1129,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_scanner"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "bitflags",
  "memchr",
@@ -1139,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_sourcemap"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "rustc-hash",
  "tsrs_ast",
@@ -1149,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_spanmap"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "bitflags",
  "tsrs_core",
@@ -1157,7 +1159,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_transformers"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "bitflags",
  "rustc-hash",
@@ -1172,7 +1174,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_tsoptions"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "rustc-hash",
  "tsrs_ast",
@@ -1187,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "tsrs_vfs"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "bitflags",
  "rayon",
@@ -1204,9 +1206,9 @@ checksum = "b8f73150333cb58412db36f2aca8f2875b013049705cc77b94ded70a1ab1f5da"
 
 [[package]]
 name = "unicode-ident"
-version = "1.0.26"
+version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
+checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 
 [[package]]
 name = "utf8_iter"
@@ -1262,7 +1264,7 @@ dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
  "wasm-bindgen-shared",
 ]
 
@@ -1513,9 +1515,9 @@ checksum = "550a2b930b62486a393c52d5c3b84bff264b28aa437ed64694d31e93b1757af7"
 
 [[package]]
 name = "yoke"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "709fe23a0424b6a435d82152b1bd3fdfb0833487d5fa90d05d42762a9891fef5"
+checksum = "417ef3fcf6c300b7dbd25c85531a746931c02ad536f3cf4786ed1e88223340b3"
 dependencies = [
  "stable_deref_trait",
  "yoke-derive",
@@ -1530,7 +1532,7 @@ checksum = "ec8ebde2db3681e8c9980cc27822030e68752690ddfa9473e739aeb4dbde6d71"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
  "synstructure",
 ]
 
@@ -1551,7 +1553,7 @@ checksum = "f75b4683f6c7f45248d4d64056a24298c6281e0993356d7d1b4a1a962ef10d4a"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
  "synstructure",
 ]
 
@@ -1568,9 +1570,9 @@ dependencies = [
 
 [[package]]
 name = "zerovec"
-version = "0.11.8"
+version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb0464e17806c1d976d5cba29399c7f08e516e279e2ba493f63123b5fca67dd8"
+checksum = "f58a2799cfe9a1670c7ea8edbd52ef8edb93cb37a7f83bf31ba9e35d9dae6a40"
 dependencies = [
  "yoke",
  "zerofrom",
@@ -1579,13 +1581,13 @@ dependencies = [
 
 [[package]]
 name = "zerovec-derive"
-version = "0.11.6"
+version = "0.11.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34df6fc39dbd26ddc9c10e6a2984476e13acce22e64e4487636ef494369225da"
+checksum = "c3743ddbf47738d929cd1ae2e199d40d0162979dfe31aef8ae646d2bf00bf97a"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]

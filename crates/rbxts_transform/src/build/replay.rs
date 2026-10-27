@@ -10,7 +10,8 @@ use rustc_hash::FxHashMap;
 use tsrs_ast::{Diagnostic, DiagnosticExt, SourceFile, new_diagnostic};
 use tsrs_compiler::Program;
 use tsrs_core::{P, TextRange};
-use tsrs_diagnostics::{Category, new_ad_hoc_message};
+use crate::shared::diagnostics::new_ad_hoc_message;
+use tsrs_diagnostics::Category;
 
 use super::state::DiskDiagnostic;
 

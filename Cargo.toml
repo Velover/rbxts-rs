@@ -8,29 +8,29 @@ edition = "2024"
 rust-version = "1.99"
 publish = false
 
-# tsrs, pinned: a worktree of the tsrs clone on branch `rbxts-fork` (v0.18.0 plus visibility flips). Absolute paths,
+# tsrs, pinned: a worktree of the tsrs clone on branch `rbxts-fork-0.20` (v0.20.0 plus visibility flips). Absolute paths,
 # so that worktrees of this repo (under E:/Projects/TS/Flamework/worktrees) resolve them too.
 # Cargo.lock started as a copy of tsrs's lock file so the transitive versions match what tsrs tests with.
 [workspace.dependencies]
-tsrs_core = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_core" }
-tsrs_ast = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_ast" }
-tsrs_vfs = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_vfs" }
-tsrs_tsoptions = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_tsoptions" }
-tsrs_compiler = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_compiler" }
-tsrs_diagnostics = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_diagnostics" }
-tsrs_checker = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_checker" }
-tsrs_scanner = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_scanner" }
-tsrs_parser = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_parser" }
-tsrs_printer = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_printer" }
-tsrs_sourcemap = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_sourcemap" }
+tsrs_core = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork-020/crates/tsrs_core" }
+tsrs_ast = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork-020/crates/tsrs_ast" }
+tsrs_vfs = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork-020/crates/tsrs_vfs" }
+tsrs_tsoptions = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork-020/crates/tsrs_tsoptions" }
+tsrs_compiler = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork-020/crates/tsrs_compiler" }
+tsrs_diagnostics = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork-020/crates/tsrs_diagnostics" }
+tsrs_checker = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork-020/crates/tsrs_checker" }
+tsrs_scanner = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork-020/crates/tsrs_scanner" }
+tsrs_parser = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork-020/crates/tsrs_parser" }
+tsrs_printer = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork-020/crates/tsrs_printer" }
+tsrs_sourcemap = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork-020/crates/tsrs_sourcemap" }
 mimalloc-safe = { version = "0.1.67", features = ["v3", "no_thp"] }
 rbxts_project = { path = "crates/rbxts_project" }
 rbxts_luau = { path = "crates/rbxts_luau" }
 rbxts_luau_check = { path = "crates/rbxts_luau_check" }
 # preserve_order: Rojo trees iterate children in file order, as JavaScript objects do.
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
-tsrs_module = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_module" }
-tsrs_contentmapper = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork/crates/tsrs_contentmapper" }
+tsrs_module = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork-020/crates/tsrs_module" }
+tsrs_contentmapper = { path = "E:/Projects/TS/Flamework/worktrees/tsrs-rbxts-fork-020/crates/tsrs_contentmapper" }
 rbxts_transform = { path = "crates/rbxts_transform" }
 rbxts_plugin = { path = "crates/rbxts_plugin" }
 rbxts_cli = { path = "crates/rbxts_cli" }

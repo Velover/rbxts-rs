@@ -130,7 +130,7 @@ fn number_literal_value(t: P<Type>) -> Option<f64> {
     if !t.flags().intersects(TypeFlags::NumberLiteral) {
         return None;
     }
-    match t.as_literal_type().value.get() {
+    match t.as_literal_type().value() {
         Some(LiteralValue::Number(n)) => Some(n.0),
         _ => None,
     }
@@ -141,7 +141,7 @@ pub fn string_literal_value(t: P<Type>) -> Option<&'static str> {
     if !t.flags().intersects(TypeFlags::StringLiteral) {
         return None;
     }
-    match t.as_literal_type().value.get() {
+    match t.as_literal_type().value() {
         Some(LiteralValue::String(s)) => Some(s),
         _ => None,
     }
@@ -181,7 +181,7 @@ pub fn is_array_type(state: &mut TransformState<'_>, t: P<Type>) -> bool {
     if t.flags().intersects(TypeFlags::Any) {
         return false;
     }
-    if t.is_tuple_type() || state.checker.is_array_like_type(t) {
+    if t.is_tuple_type() || state.checker.is_array_like_type_exported(t) {
         return true;
     }
     let symbol = t.symbol();
@@ -265,7 +265,7 @@ pub fn is_empty_string_type(state: &mut TransformState<'_>, t: P<Type>) -> bool 
         return value.is_empty();
     }
     if t.flags().intersects(TypeFlags::TemplateLiteral) {
-        let texts = t.as_template_literal_type().texts.get();
+        let texts = t.as_template_literal_type().texts();
         return texts.is_empty() || texts.iter().all(|s| s.is_empty());
     }
     is_string_type(state, t)

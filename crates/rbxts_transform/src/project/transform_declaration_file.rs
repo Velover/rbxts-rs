@@ -32,7 +32,7 @@ pub fn transform_declaration_file(paths: &TransformPaths, file_name: &str, conte
     let file = if rewrites.is_empty() { file } else { parse(file_name, &apply(contents, &rewrites)) };
     // `ts.createPrinter()`: LF line ends, comments kept
     let mut printer = tsrs_printer::new_printer(
-        tsrs_printer::PrinterOptions { new_line: NewLineKind::LF, target: ScriptTarget::ESNext, ..Default::default() },
+        tsrs_printer::PrinterOptions { new_line: NewLineKind::LF, target: ScriptTarget::ES_NEXT, ..Default::default() },
         tsrs_printer::PrintHandlers::default(),
         None,
     );

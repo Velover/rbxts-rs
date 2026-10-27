@@ -47,7 +47,7 @@ fn is_last_overload_error(d: P<Diagnostic>) -> bool {
         d.code() == NO_OVERLOAD_MATCHES
             && d.message_chain()
                 .first()
-                .is_some_and(|c| c.code() == messages::The_last_overload_gave_the_following_error.code())
+                .is_some_and(|c| c.code() == messages::THE_LAST_OVERLOAD_GAVE_THE_FOLLOWING_ERROR.code())
     };
     last_overload(d) || d.message_chain().first().is_some_and(|&c| last_overload(c))
 }
@@ -69,14 +69,14 @@ fn is_call_like(node: P<Node>) -> bool {
 fn decorator_head_message(decorator: P<Node>) -> Option<&'static messages::Message> {
     Some(match decorator.parent()?.kind() {
         Kind::ClassDeclaration | Kind::ClassExpression => {
-            &messages::Unable_to_resolve_signature_of_class_decorator_when_called_as_an_expression
+            &messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION
         }
-        Kind::Parameter => &messages::Unable_to_resolve_signature_of_parameter_decorator_when_called_as_an_expression,
+        Kind::Parameter => &messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PARAMETER_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
         Kind::PropertyDeclaration => {
-            &messages::Unable_to_resolve_signature_of_property_decorator_when_called_as_an_expression
+            &messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION
         }
         Kind::MethodDeclaration | Kind::GetAccessor | Kind::SetAccessor => {
-            &messages::Unable_to_resolve_signature_of_method_decorator_when_called_as_an_expression
+            &messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_METHOD_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION
         }
         _ => return None,
     })
@@ -111,7 +111,7 @@ fn signatures_of(checker: &mut Checker, call: P<Node>) -> Option<(Vec<P<tsrs_che
     match call.kind() {
         Kind::TaggedTemplateExpression => {
             let tag_type = checker.check_expression(call.as_tagged_template_expression().tag);
-            let apparent = checker.get_apparent_type(tag_type);
+            let apparent = checker.get_apparent_type_exported(tag_type);
             return Some((checker.get_signatures_of_type(apparent, SignatureKind::Call).to_vec(), SignatureFlags::None));
         }
         Kind::JsxOpeningElement | Kind::JsxSelfClosingElement => {
@@ -131,7 +131,7 @@ fn signatures_of(checker: &mut Checker, call: P<Node>) -> Option<(Vec<P<tsrs_che
     match call.kind() {
         Kind::Decorator => {
             let func_type = checker.check_expression(expression);
-            let apparent = checker.get_apparent_type(func_type);
+            let apparent = checker.get_apparent_type_exported(func_type);
             Some((checker.get_signatures_of_type(apparent, SignatureKind::Call).to_vec(), SignatureFlags::None))
         }
         Kind::CallExpression => {
@@ -152,13 +152,13 @@ fn signatures_of(checker: &mut Checker, call: P<Node>) -> Option<(Vec<P<tsrs_che
                 func_type = non_optional;
             }
             let func_type = checker.get_non_nullable_type(func_type);
-            let apparent = checker.get_apparent_type(func_type);
+            let apparent = checker.get_apparent_type_exported(func_type);
             Some((checker.get_signatures_of_type(apparent, SignatureKind::Call).to_vec(), flags))
         }
         Kind::NewExpression => {
             let expression_type = checker.check_expression(expression);
             let expression_type = checker.get_non_nullable_type(expression_type);
-            let apparent = checker.get_apparent_type(expression_type);
+            let apparent = checker.get_apparent_type_exported(expression_type);
             Some((checker.get_signatures_of_type(apparent, SignatureKind::Construct).to_vec(), SignatureFlags::None))
         }
         _ => None,
@@ -181,7 +181,8 @@ fn ts5_error(checker: &mut Checker, file: P<SourceFile>, call: P<Node>, d: P<Dia
     s.args = checker.get_effective_call_arguments(call);
     s.is_single_non_generic_candidate = s.candidates.len() == 1 && s.candidates[0].type_parameters().is_empty();
     let args = s.args.clone();
-    let context_sensitive = !s.is_single_non_generic_candidate && args.iter().any(|&a| checker.is_context_sensitive(a));
+    let context_sensitive =
+        !s.is_single_non_generic_candidate && args.iter().any(|&a| checker.is_context_sensitive_exported(a));
     s.arg_check_mode = if context_sensitive { CheckMode::SkipContextSensitive } else { CheckMode::Normal };
     s.recursive_resolution = checker.call_resolution_stack.contains(&call);
     checker.call_resolution_stack.push(call);
@@ -231,7 +232,7 @@ fn ts5_error(checker: &mut Checker, file: P<SourceFile>, call: P<Node>, d: P<Dia
             .map(|e| {
                 new_diagnostic_chain(
                     e,
-                    &messages::Overload_0_of_1_2_gave_the_following_error,
+                    &messages::OVERLOAD_0_OF_1_2_GAVE_THE_FOLLOWING_ERROR,
                     &[&index, &count, &signature],
                 )
             })
@@ -260,7 +261,8 @@ fn ts5_error(checker: &mut Checker, file: P<SourceFile>, call: P<Node>, d: P<Dia
     };
     let file_of = if loc == first.loc() { first.file() } else { Some(file) };
     let loc = loc.unwrap_or(TextRange::new(0, 0));
-    let mut error = new_diagnostic(file_of, loc, &messages::No_overload_matches_this_call, &[]).set_message_chain(&diags);
+    let mut error =
+        new_diagnostic(file_of, loc, &messages::NO_OVERLOAD_MATCHES_THIS_CALL, &[]).set_message_chain(&diags);
     if call.kind() == Kind::Decorator
         && let Some(head) = decorator_head_message(call)
     {

@@ -26,7 +26,8 @@ use rbxts_luau::{
 use rbxts_luau_check::{CompileError, LUAU_VERSION};
 use tsrs_ast::{Diagnostic, Node, SourceFile, new_diagnostic};
 use tsrs_core::{P, TextRange};
-use tsrs_diagnostics::{Category, new_ad_hoc_message};
+use crate::shared::diagnostics::new_ad_hoc_message;
+use tsrs_diagnostics::Category;
 
 use super::file_state::SpillableLocal;
 use super::luau_walk::{Visit, walk_statements};

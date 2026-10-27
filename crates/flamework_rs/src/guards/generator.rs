@@ -519,8 +519,8 @@ impl<'g, 'x> Generator<'g, 'x> {
     /// `guardName`: a name for the local of a recursive type's guard: the type's, `TreeArray` for `Tree[]`,
     /// `TreeOptional` for an optional property's `Tree | undefined`.
     fn guard_name(&mut self, ty: P<Type>, fallback: &str) -> String {
-        if alias_symbol(ty).is_none() && self.cx.checker().is_array_type(ty) {
-            let element = self.cx.checker().get_type_arguments(ty).first().copied();
+        if alias_symbol(ty).is_none() && self.cx.checker().is_array_type_exported(ty) {
+            let element = self.cx.checker().get_type_arguments_exported(ty).first().copied();
             let name = match element {
                 Some(element) => self.guard_name(element, fallback),
                 None => fallback.to_owned(),
@@ -578,7 +578,7 @@ impl<'g, 'x> Generator<'g, 'x> {
         }
 
         if flags.intersects(TypeFlags::TypeVariable) {
-            let Some(constraint) = self.cx.checker().get_base_constraint_of_type(ty) else {
+            let Some(constraint) = self.cx.checker().get_base_constraint_of_type_exported(ty) else {
                 return Err(self.fail("could not find constraint of type parameter"));
             };
             return self.build_guard(constraint);
@@ -589,8 +589,8 @@ impl<'g, 'x> Generator<'g, 'x> {
         }
 
         if tsrs_checker::is_tuple_type_exported(ty) {
-            let arguments = self.cx.checker().get_type_arguments(ty);
-            let target = ty.target_tuple_type();
+            let arguments = self.cx.checker().get_type_arguments_exported(ty);
+            let target = ty.target().expect("a tuple reference has a target").as_tuple_type();
             let element_flags = target.element_flags();
             if let Some(rest) = element_flags.iter().position(|f| f.intersects(ElementFlags::Rest)) {
                 let min_length = target.min_length.get();
@@ -608,8 +608,8 @@ impl<'g, 'x> Generator<'g, 'x> {
             return self.t_call("strictArray", guards);
         }
 
-        if self.cx.checker().is_array_type(ty) {
-            let element = self.cx.checker().get_type_arguments(ty).first().copied();
+        if self.cx.checker().is_array_type_exported(ty) {
+            let element = self.cx.checker().get_type_arguments_exported(ty).first().copied();
             let guard = match element {
                 Some(element) => self.build_guard(element)?,
                 None => self.t_field("any")?,
@@ -661,7 +661,7 @@ impl<'g, 'x> Generator<'g, 'x> {
 
         let is = |cx: &mut Cx<'_>, name: &str| global_type(cx, name) == Some(symbol);
         if is(self.cx, "Map") || is(self.cx, "ReadonlyMap") || is(self.cx, "WeakMap") {
-            let arguments = self.cx.checker().get_type_arguments(ty);
+            let arguments = self.cx.checker().get_type_arguments_exported(ty);
             let key = match arguments.first() {
                 Some(&key) => self.build_guard(key)?,
                 None => self.t_field("any")?,
@@ -674,7 +674,7 @@ impl<'g, 'x> Generator<'g, 'x> {
         }
 
         if is(self.cx, "Set") || is(self.cx, "ReadonlySet") {
-            let value = match self.cx.checker().get_type_arguments(ty).first() {
+            let value = match self.cx.checker().get_type_arguments_exported(ty).first() {
                 Some(&value) => self.build_guard(value)?,
                 None => self.t_field("any")?,
             };
@@ -711,7 +711,7 @@ impl<'g, 'x> Generator<'g, 'x> {
         }
 
         let object = is_object(ty);
-        let index_infos = self.cx.checker().get_index_infos_of_type(ty);
+        let index_infos = self.cx.checker().get_index_infos_of_type_exported(ty);
         let apparent_count = self.cx.checker().get_apparent_properties(ty).len();
         if object && apparent_count == 0 && index_infos.is_empty() {
             return self.t_field("any");
@@ -758,8 +758,8 @@ impl<'g, 'x> Generator<'g, 'x> {
         let mut children = Vec::new();
         // TODO(seam-additions): `Cx::ts5_properties_of_type`, for TS5's property order.
         for &property in self.cx.checker().get_properties_of_type(ty) {
-            let property_type = self.cx.checker().get_type_of_property_of_type(ty, property.name());
-            let on_class = self.cx.checker().get_property_of_type(instance_type, property.name()).is_some();
+            let property_type = self.cx.checker().get_type_of_property_of_type_exported(ty, property.name());
+            let on_class = self.cx.checker().get_property_of_type_exported(instance_type, property.name()).is_some();
             if let Some(property_type) = property_type
                 && !on_class
             {
@@ -923,7 +923,7 @@ impl<'g, 'x> Generator<'g, 'x> {
 
     /// `buildIntersectionGuard`
     fn build_intersection_guard(&mut self, ty: P<Type>) -> PResult<Expr> {
-        if self.cx.checker().get_index_infos_of_type(ty).len() > 1 {
+        if self.cx.checker().get_index_infos_of_type_exported(ty).len() > 1 {
             return Err(self.fail("Flamework cannot generate intersections with multiple index signatures."));
         }
 
@@ -958,7 +958,8 @@ impl<'g, 'x> Generator<'g, 'x> {
         // TODO(seam-additions): `Cx::ts5_properties_of_type`, for TS5's property order.
         for &property in self.cx.checker().get_properties_of_type(ty) {
             let property_declaration = property.value_declaration();
-            let Some(property_type) = self.cx.checker().get_type_of_property_of_type(ty, property.name()) else {
+            let Some(property_type) = self.cx.checker().get_type_of_property_of_type_exported(ty, property.name())
+            else {
                 return Err(self.fail("Could not find type for field"));
             };
             if interface
@@ -1048,12 +1049,12 @@ fn types_requiring_dedup(cx: &mut Cx<'_>, ty: P<Type>, limit: u32) -> HashSet<P<
         } else if ty.flags().intersects(TypeFlags::Object) && !is_instance_type(cx, ty) {
             // TODO(seam-additions): `Cx::ts5_properties_of_type`, for TS5's property order.
             for &property in cx.checker().get_properties_of_type(ty) {
-                let Some(property_type) = cx.checker().get_type_of_property_of_type(ty, property.name()) else {
+                let Some(property_type) = cx.checker().get_type_of_property_of_type_exported(ty, property.name()) else {
                     continue;
                 };
                 recurse(cx, walk, property_type, modifier)?;
             }
-            for &info in cx.checker().get_index_infos_of_type(ty) {
+            for &info in cx.checker().get_index_infos_of_type_exported(ty) {
                 recurse(cx, walk, info.key_type(), modifier)?;
                 recurse(cx, walk, info.value_type(), modifier)?;
             }

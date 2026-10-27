@@ -141,8 +141,8 @@ pub fn guard_fields(
 /// third entry `{ guards after the rest }` for a tuple with elements after its rest. A tuple of only a rest element
 /// is an array: `{ {}, element guard }`.
 pub fn tuple_guards(cx: &mut Cx<'_>, config: GuardConfig<'_>, node: P<Node>, ty: P<Type>) -> PResult<LuauExpr> {
-    if cx.checker().is_array_type(ty) {
-        let element = cx.checker().get_type_arguments(ty)[0];
+    if cx.checker().is_array_type_exported(ty) {
+        let element = cx.checker().get_type_arguments_exported(ty)[0];
         let guard = guard_for(cx, config, node, element)?;
         return Ok(create::array(vec![create::array(Vec::new()), guard]));
     }
@@ -151,15 +151,15 @@ pub fn tuple_guards(cx: &mut Cx<'_>, config: GuardConfig<'_>, node: P<Node>, ty:
         return Err(cx.error(node, format!("Intrinsic encountered non-tuple type: {text}")));
     }
 
-    let arguments = cx.checker().get_type_arguments(ty);
-    let infos = ty.target_tuple_type().element_infos();
+    let arguments = cx.checker().get_type_arguments_exported(ty);
+    let infos = ty.target().expect("a tuple reference has a target").as_tuple_type().element_infos();
     let mut guards = Vec::new();
     let mut rest: Option<Expr> = None;
     let mut after = Vec::new();
     for (index, &element) in arguments.iter().enumerate() {
         let info = infos.get(index).copied().unwrap_or_default();
-        let guard = guard_for(cx, config, info.labeled_declaration.unwrap_or(node), element)?;
-        if info.flags.intersects(ElementFlags::Rest) {
+        let guard = guard_for(cx, config, info.labeled_declaration().unwrap_or(node), element)?;
+        if info.tuple_element_flags().intersects(ElementFlags::Rest) {
             rest = Some(guard);
         } else if rest.is_some() {
             after.push(guard);

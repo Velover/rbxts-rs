@@ -34,7 +34,7 @@ fn can_change_receiver_convention(state: &mut TransformState<'_>, t: P<Type>) ->
         let conditional = t.as_conditional_type();
         let root = conditional.root.get().expect("a conditional type has a root");
         let mut check_type = root.check_type.get().expect("a conditional root has a check type");
-        let mut extends_type = conditional.extends_type.get().expect("a conditional type has an extends type");
+        let mut extends_type = conditional.extends_type().expect("a conditional type has an extends type");
         // singleton tuples suppress distribution without changing the void test
         if check_type.is_tuple_type() && extends_type.is_tuple_type() {
             let check_elements = get_type_arguments(state, check_type);
