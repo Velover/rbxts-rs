@@ -1,0 +1,10 @@
+[96msrc/shared/a.ts[0m:[93m6[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'unknown' is not assignable to type 'number'.
+
+[7m6[0m   const n: number = x;
+[7m [0m [91m        ~[0m
+
+[96msrc/shared/a.ts[0m:[93m13[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m13[0m   const n: number = x;
+[7m  [0m [91m        ~[0m
+

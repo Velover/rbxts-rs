@@ -87,24 +87,44 @@ fn diagnostics_print_as_stock_with_an_empty_span() {
 }
 
 /// An overloaded call no overload takes, a function expression argument deciding it (TypeScript 5 fixes its `this` from
-/// the first overload, which rejects it on the return type; the second then refuses that `this`): TS2769 at stock's
-/// place, exit 1 and nothing written. Its elaboration is TypeScript 7's, which reports only the last overload's
-/// error where TypeScript 5 lists each of two or three (`stock-stdout.txt` is stock's; docs/tsrs.md).
+/// the first overload, which rejects it on the return type; the second then refuses that `this`): TS2769 as stock
+/// prints it, each overload's error listed (`rbxts_project`'s `overload_errors`), exit 1 and nothing written.
 #[test]
 fn an_overload_error_reports_ts2769_as_stock() {
     let Some(root) = diagnostics_like_stock("overload_error") else { return };
     assert!(!root.path().join("out").exists(), "nothing is written");
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/overload_error");
+}
+
+/// TS2769 for generic overloads: each listed overload is the one inference instantiated, as stock prints it.
+#[test]
+fn a_generic_overload_error_reports_ts2769_as_stock() {
+    diagnostics_like_stock("overload_error_generic");
+}
+
+/// TS2769 with three overloads tried (a fourth ruled out by arity), and a method's two overloads: stock's text, the
+/// implementation's elaboration and the line end stock prints after an empty related information list.
+#[test]
+fn a_three_overload_error_reports_ts2769_as_stock() {
+    diagnostics_like_stock("overload_error_three");
+}
+
+/// TS2683's related information on an anonymous function expression spans the function's first token (`function`,
+/// `async`), as TypeScript 5 spans it, not the name it is assigned to (TypeScript 7).
+#[test]
+fn an_outer_this_is_shadowed_by_the_function_as_stock_spans_it() {
+    diagnostics_like_stock("this_shadowed");
+}
+
+/// A known difference (docs/tsrs.md): a generator with an explicit `this` parameter whose `yield` is context sensitive
+/// is context sensitive to TypeScript 7, not to TypeScript 5, so a generic call infers otherwise. `expected-stdout.txt`
+/// is rbxts-rs's, `stock-stdout.txt` stock's: they differ in the one error's inferred type alone.
+#[test]
+fn a_context_sensitive_yield_differs_from_stock_as_documented() {
+    diagnostics_like_stock("yield_context_sensitive");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yield_context_sensitive");
     let ours = std::fs::read_to_string(fixture.join("expected-stdout.txt")).unwrap();
     let stock = std::fs::read_to_string(fixture.join("stock-stdout.txt")).unwrap();
-    let (ours, stock): (Vec<&str>, Vec<&str>) = (ours.lines().collect(), stock.lines().collect());
-    assert_eq!(ours[0], stock[0], "the error line (place, TS2769, message) is stock's");
-    // from the code frame on, stock's but for TypeScript 7's "The last overload is declared here" (4 lines)
-    let frame = |lines: &[&str]| lines.iter().position(|l| l.starts_with("[7m11")).unwrap();
-    let mut ours_tail = ours[frame(&ours)..].to_vec();
-    let last = ours_tail.iter().position(|l| l.contains("The last overload is declared here")).unwrap();
-    ours_tail.drain(last - 3..=last);
-    assert_eq!(ours_tail, stock[frame(&stock)..].to_vec());
+    assert_eq!(ours.replacen("'string' is not assignable", "'unknown' is not assignable", 1), stock);
 }
 
 /// roblox-ts's `compileFiles` adds every file's checker diagnostics but transforms file by file, in transform order,

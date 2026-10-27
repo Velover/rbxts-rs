@@ -13,6 +13,7 @@ pub mod rojo;
 pub mod setup;
 pub mod source_cache;
 pub mod stamp;
+mod overload_errors;
 
 pub use packages::{ModuleResolver, PackageInfo, PackageJsonCache, ResolvedModuleInfo};
 pub use path_translator::PathTranslator;
@@ -306,6 +307,59 @@ fn mark_ts5_context_sensitive_functions(file: P<SourceFile>) {
         return;
     }
     visit(file.as_node());
+}
+
+/// `Diagnostics.An_outer_value_of_this_is_shadowed_by_this_container.code` (TS2683's related information).
+const OUTER_THIS_SHADOWED: i32 = 2738;
+/// `Diagnostics.Function_expression_which_lacks_return_type_annotation_implicitly_has_an_0_return_type.code`.
+const FUNCTION_EXPRESSION_IMPLICIT_RETURN: i32 = 7011;
+
+/// rbxts-rs: TypeScript 5's span for a diagnostic on an anonymous function expression. TypeScript 7's
+/// `get_error_range_for_node` takes the function's `get_name_of_declaration`, which for an anonymous function is the
+/// name it is assigned to (`c1` in `const c1 = function () {}`); TypeScript 5's `getErrorSpanForNode` takes only
+/// the function's own name, and without one the function's first token (`function`, or `async`). The diagnostics
+/// TypeScript reports on such a function node are TS2683's related information "An outer value of 'this' is shadowed
+/// by this container." and TS7011; each one whose span is a function's assigned name gets the function's first token.
+/// Idempotent: a span already moved no longer matches (the checker caches its diagnostics).
+fn ts5_function_expression_spans(file: P<SourceFile>, diagnostics: &[P<Diagnostic>]) {
+    let on_function = diagnostics.iter().flat_map(|&d| {
+        let own = (d.code() == FUNCTION_EXPRESSION_IMPLICIT_RETURN).then_some(d);
+        own.into_iter().chain(d.related_information().iter().copied().filter(|r| r.code() == OUTER_THIS_SHADOWED))
+    });
+    for diagnostic in on_function {
+        if diagnostic.file() != Some(file) {
+            continue;
+        }
+        let Some(loc) = diagnostic.loc() else { continue };
+        if let Some(function) = anonymous_function_named_at(file, file.as_node(), loc) {
+            let start = tsrs_scanner::skip_trivia(file.text(), function.pos().expect_source("a parsed function"));
+            diagnostic.set_location(tsrs_scanner::get_range_of_token_at_position(file, start));
+        }
+    }
+}
+
+/// The anonymous function expression under `node` whose assigned name (`get_name_of_declaration`) spans `loc`. The
+/// name is outside the function, within the node holding both: only nodes whose range holds `loc` are looked into.
+fn anonymous_function_named_at(file: P<SourceFile>, node: P<Node>, loc: tsrs_core::TextRange) -> Option<P<Node>> {
+    let loc_pos = loc.pos().expect_source("a diagnostic in a file");
+    let loc_end = loc.end().expect_source("a diagnostic in a file");
+    let mut found = None;
+    node.for_each_child(&mut |child| {
+        if child.kind() == Kind::FunctionExpression
+            && child.name().is_none()
+            && let Some(name) = tsrs_ast::get_name_of_declaration(Some(child))
+            && tsrs_scanner::skip_trivia(file.text(), name.pos().expect_source("a parsed name")) == loc_pos
+            && name.end().expect_source("a parsed name") == loc_end
+        {
+            found = Some(child);
+        } else if child.pos().expect_source("a parsed node") <= loc_pos
+            && loc_end <= child.end().expect_source("a parsed node")
+        {
+            found = anonymous_function_named_at(file, child, loc);
+        }
+        found.is_some()
+    });
+    found
 }
 
 /// Parses the tsconfig as a load does: TypeScript 7's parse, with TypeScript 5's automatic type directives
@@ -663,13 +717,15 @@ impl Project {
             // Released before the global diagnostics below, which take the pool's checkers themselves.
             let mut checker = program.get_type_checker(ctx);
             for (diags, &f) in per_file.iter_mut().zip(files) {
-                diags.extend(program.get_semantic_diagnostics_with_checker(ctx, &mut checker, f));
+                let semantic = program.get_semantic_diagnostics_with_checker(ctx, &mut checker, f);
+                diags.extend(overload_errors::ts5_overload_errors(&mut checker, f, semantic));
             }
         } else {
             let index: HashMap<P<SourceFile>, usize> = files.iter().enumerate().map(|(i, &f)| (f, i)).collect();
             let results = Mutex::new(Vec::with_capacity(files.len()));
             let ran = program.for_each_checker_group(files, |checker, _, f| {
                 let diags = program.get_semantic_diagnostics_with_checker(ctx, checker, f);
+                let diags = overload_errors::ts5_overload_errors(checker, f, diags);
                 results.lock().unwrap().push((index[&f], diags));
             });
             assert!(ran, "the program has no checker pool of its own");
@@ -682,6 +738,9 @@ impl Project {
             for (diags, &f) in per_file.iter_mut().zip(files) {
                 diags.extend(program.get_declaration_diagnostics(ctx, Some(f)));
             }
+        }
+        for (diags, &f) in per_file.iter().zip(files) {
+            ts5_function_expression_spans(f, diags);
         }
         let mut diags: Vec<P<Diagnostic>> = per_file.into_iter().flatten().collect();
         diags.extend(program.get_global_diagnostics(ctx));

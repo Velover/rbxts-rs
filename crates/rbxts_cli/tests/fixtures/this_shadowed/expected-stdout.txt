@@ -1,0 +1,50 @@
+[96msrc/shared/a.ts[0m:[93m4[0m:[93m9[0m - [91merror[0m[90m TS2683: [0m'this' implicitly has type 'any' because it does not have a type annotation.
+
+[7m4[0m  return this;
+[7m [0m [91m        ~~~~[0m
+
+  [96msrc/shared/a.ts[0m:[93m3[0m:[93m19[0m
+    [7m3[0m export const c1 = function () {
+    [7m [0m [96m                  ~~~~~~~~[0m
+    An outer value of 'this' is shadowed by this container.
+
+[96msrc/shared/a.ts[0m:[93m8[0m:[93m9[0m - [91merror[0m[90m TS2683: [0m'this' implicitly has type 'any' because it does not have a type annotation.
+
+[7m8[0m  return this;
+[7m [0m [91m        ~~~~[0m
+
+  [96msrc/shared/a.ts[0m:[93m7[0m:[93m6[0m
+    [7m7[0m c2 = function () {
+    [7m [0m [96m     ~~~~~~~~[0m
+    An outer value of 'this' is shadowed by this container.
+
+[96msrc/shared/a.ts[0m:[93m11[0m:[93m9[0m - [91merror[0m[90m TS2683: [0m'this' implicitly has type 'any' because it does not have a type annotation.
+
+[7m11[0m  return this;
+[7m  [0m [91m        ~~~~[0m
+
+  [96msrc/shared/a.ts[0m:[93m10[0m:[93m19[0m
+    [7m10[0m export const c3 = async function () {
+    [7m  [0m [96m                  ~~~~~[0m
+    An outer value of 'this' is shadowed by this container.
+
+[96msrc/shared/a.ts[0m:[93m15[0m:[93m10[0m - [91merror[0m[90m TS2683: [0m'this' implicitly has type 'any' because it does not have a type annotation.
+
+[7m15[0m   return this;
+[7m  [0m [91m         ~~~~[0m
+
+  [96msrc/shared/a.ts[0m:[93m14[0m:[93m10[0m
+    [7m14[0m  inner: (function () {
+    [7m  [0m [96m         ~~~~~~~~[0m
+    An outer value of 'this' is shadowed by this container.
+
+[96msrc/shared/a.ts[0m:[93m19[0m:[93m9[0m - [91merror[0m[90m TS2683: [0m'this' implicitly has type 'any' because it does not have a type annotation.
+
+[7m19[0m  return this;
+[7m  [0m [91m        ~~~~[0m
+
+  [96msrc/shared/a.ts[0m:[93m18[0m:[93m28[0m
+    [7m18[0m export const c5 = function named() {
+    [7m  [0m [96m                           ~~~~~[0m
+    An outer value of 'this' is shadowed by this container.
+

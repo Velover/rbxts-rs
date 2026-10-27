@@ -31,6 +31,10 @@ const INDENT: &str = "    ";
 const FILE_APPEARS_TO_BE_BINARY: i32 = 1490;
 /// `Diagnostics.The_parser_expected_to_find_a_1_to_match_the_0_token_here.code`.
 const THE_PARSER_EXPECTED_TO_FIND: i32 = 1007;
+/// `Diagnostics.No_overload_matches_this_call.code`.
+const NO_OVERLOAD_MATCHES: i32 = 2769;
+/// `Diagnostics.Overload_0_of_1_2_gave_the_following_error.code`.
+const OVERLOAD_GAVE_ERROR: i32 = 2772;
 
 /// How a diagnostic is printed.
 pub struct Format<'a> {
@@ -176,6 +180,16 @@ fn related_length(info: P<Diagnostic>) -> u32 {
     }
 }
 
+/// rbxts-rs: whether TypeScript 5 gives the diagnostic a related information array even when it is empty, which
+/// `formatDiagnosticsWithColorAndContext` (testing `if (diagnostic.relatedInformation)`) follows with a line end of its
+/// own: TS2769 listing its overloads (`reportCallResolutionErrors` collects their related information into an array
+/// whatever it holds; `rbxts_project`'s `overload_errors` makes it). A tsrs diagnostic has no absent related
+/// information apart from an empty one.
+fn has_empty_related_information(diagnostic: P<Diagnostic>) -> bool {
+    diagnostic.code() == NO_OVERLOAD_MATCHES
+        && diagnostic.message_chain().first().is_some_and(|c| c.code() == OVERLOAD_GAVE_ERROR)
+}
+
 /// One diagnostic as `formatDiagnosticsWithColorAndContext([diagnostic], host)` formats it, ending with a line end.
 pub fn format_diagnostic(diagnostic: P<Diagnostic>, format: &Format<'_>) -> String {
     let nl = format.new_line;
@@ -197,7 +211,7 @@ pub fn format_diagnostic(diagnostic: P<Diagnostic>, format: &Format<'_>) -> Stri
         output.push_str(&code_span(file, start, length, "", category_format(category), nl));
     }
     let related = diagnostic.related_information();
-    if !related.is_empty() {
+    if !related.is_empty() || has_empty_related_information(diagnostic) {
         output.push_str(nl);
         for &info in related {
             if let Some(file) = diagnostic_file(info) {
