@@ -30,7 +30,7 @@ use crate::stamp::{self, FileStamp, PathStat};
 /// file system's clock would get the same time (git's "racily clean" entries). The one place the rule lives: the
 /// program files' stamps ([`crate::stamp`]) and the output stamps (`rbxts_transform`'s `plugins::lifecycle`) use
 /// [`settled_time`], so such a stamp is not relied on and the next check compares the text or the bytes.
-const RACY: Duration = Duration::from_secs(2);
+pub const RACY: Duration = Duration::from_secs(2);
 
 /// `modified` (nanoseconds since the Unix epoch) when it is far enough in the past to tell a later edit apart, else 0
 /// (no time to rely on).

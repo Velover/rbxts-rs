@@ -1,5 +1,34 @@
 {
+	"prepare": [
+		{
+			"settle": true
+		}
+	],
 	"steps": [
+		{
+			"name": "K1: a same-size rewrite that keeps the old modification time (settled stamps)",
+			"do": [
+				{
+					"patch-keep-time": {
+						"file": "src/shared/d.ts",
+						"find": "export function sizeOf(value: A) {\n\treturn value.x.a.size();",
+						"replace": "export function sizeOf(vaxue: A) {\n\treturn vaxue.x.a.size();"
+					}
+				}
+			]
+		},
+		{
+			"name": "K1: and back, the same way",
+			"do": [
+				{
+					"patch-keep-time": {
+						"file": "src/shared/d.ts",
+						"find": "export function sizeOf(vaxue: A) {\n\treturn vaxue.x.a.size();",
+						"replace": "export function sizeOf(value: A) {\n\treturn value.x.a.size();"
+					}
+				}
+			]
+		},
 		{
 			"name": "C → B → D: Inner.a array to map",
 			"do": [

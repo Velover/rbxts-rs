@@ -306,7 +306,10 @@ fn type_root_links_rebuild_as_clean_builds() {
 #[test]
 fn watch_rebuilds_equal_clean_builds_without_plugins() {
     let Some(results) = run_basic("plain", &[], false) else { return };
-    assert!(step(&results, "C → B → D: Inner.a array to map").reused, "the first rebuild keeps the program");
+    // a same-size rewrite with the old modification time: the settled stamps tell it apart by its change time
+    let kept = step(&results, "K1: a same-size rewrite that keeps the old modification time (settled stamps)");
+    assert!(kept.reused && kept.transformed > 0, "the rebuild keeps the program and transforms the file");
+    assert!(step(&results, "C → B → D: Inner.a array to map").reused);
     assert!(step(&results, "an asset edited, one added").reused);
 }
 

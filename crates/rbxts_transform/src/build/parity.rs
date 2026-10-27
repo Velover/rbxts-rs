@@ -21,8 +21,10 @@
 //! where `prepare` edits the watched copy before the initial build. Actions: `{"write":
 //! {"file", "text"}}`, `{"append": {"file", "text"}}`, `{"patch": {"file", "find", "replace"}}` (the text must occur), `{"delete": file}`, `{"rename":
 //! {"from", "to"}}`, `{"mkdir": dir}`, `{"delete-output": file}` (relative to the project, a hand-deleted output),
-//! `{"touch": file}`, `{"link": {"link", "target"}}` (a directory link: a junction on Windows). Paths are relative to the
-//! project directory.
+//! `{"touch": file}`, `{"link": {"link", "target"}}` (a directory link: a junction on Windows), `{"patch-keep-time":
+//! {"file", "find", "replace"}}` (a patch of the same length that puts the old modification time back, as some
+//! tools save), `{"settle": true}` (waits until every earlier edit's times are settled, so the next build's stamps
+//! rely on them: `rbxts_project::read_check::RACY`). Paths are relative to the project directory.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -79,6 +81,19 @@ pub enum Action {
     DeleteOutput(String),
     /// Writes a file's bytes back unchanged (a save without a change).
     Touch(String),
+    /// Replaces the first `find` in the file with `replace`, of the same length, and puts the file's old
+    /// modification time back: only its change time tells the edit apart.
+    PatchKeepTime {
+        /// The file, relative to the project.
+        file: String,
+        /// The text replaced.
+        find: String,
+        /// Its replacement, as long as `find`.
+        replace: String,
+    },
+    /// Waits until the times of every earlier edit are settled ([`rbxts_project::read_check::RACY`]), so the stamps
+    /// the next build takes are relied on, not checked by text.
+    Settle,
     /// Makes `link` a link to the directory `target` (a junction on Windows, a symbolic link elsewhere), as a
     /// package manager links a package.
     Link {
@@ -138,6 +153,14 @@ fn parse_actions(list: &Value, context: &str) -> Result<Vec<Action>, String> {
             "mkdir" => Action::Mkdir(path_of(body, "mkdir")?),
             "delete-output" => Action::DeleteOutput(path_of(body, "delete-output")?),
             "touch" => Action::Touch(path_of(body, "touch")?),
+            "patch-keep-time" => {
+                let (find, replace) = (text_of(body, "find")?, text_of(body, "replace")?);
+                if find.len() != replace.len() {
+                    return Err(format!("{context}: patch-keep-time needs a replacement as long as the text"));
+                }
+                Action::PatchKeepTime { file: text_of(body, "file")?, find, replace }
+            }
+            "settle" => Action::Settle,
             "link" => Action::Link { link: text_of(body, "link")?, target: text_of(body, "target")? },
             other => return Err(format!("{context}: unknown action `{other}`")),
         });
@@ -784,6 +807,25 @@ fn apply(dir: &Path, actions: &[Action]) -> Result<Vec<String>, String> {
                 let bytes = std::fs::read(&path).map_err(|e| format!("{file}: {e}"))?;
                 std::fs::write(&path, bytes).map_err(|e| format!("{file}: {e}"))?;
                 touched.add(text(&path));
+            }
+            Action::PatchKeepTime { file, find, replace } => {
+                let path = abs(file)?;
+                let current = std::fs::read_to_string(&path).map_err(|e| format!("{file}: {e}"))?;
+                if !current.contains(find.as_str()) {
+                    return Err(format!("patch-keep-time: {find:?} is not in {file}"));
+                }
+                let modified = std::fs::metadata(&path).and_then(|m| m.modified()).map_err(|e| format!("{file}: {e}"))?;
+                std::fs::write(&path, current.replacen(find.as_str(), replace, 1))
+                    .map_err(|e| format!("{file}: {e}"))?;
+                std::fs::File::options()
+                    .write(true)
+                    .open(&path)
+                    .and_then(|f| f.set_modified(modified))
+                    .map_err(|e| format!("{file}: {e}"))?;
+                touched.add(text(&path));
+            }
+            Action::Settle => {
+                std::thread::sleep(rbxts_project::read_check::RACY + std::time::Duration::from_millis(200));
             }
             Action::Link { link, target } => {
                 let (path, target_path) = (abs(link)?, abs(target)?);
