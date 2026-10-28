@@ -506,20 +506,14 @@ impl Watched {
     /// only their `package.json` was read (setup's package mapping reads every type-root package's); the JSON
     /// texts read.
     fn add_log(&mut self, log: &ReadLog, dirs: &mut FxHashMap<String, bool>) {
-        self.texts.extend(log.texts().into_iter().map(|(path, hash)| (key(&path), (path, hash))));
         let reads = log.entries();
-        // the directories the load found (a directory, or a file's directory) need no look of their own; one gone
-        // since is caught when its watch is made (`Subscriptions::update`)
-        for (path, seen) in &reads {
-            if seen.has(Seen::DIR) {
-                dirs.insert(key(path), true);
-            }
-            if seen.has(Seen::FILE)
-                && let Some(parent) = parent_of(path)
-            {
-                dirs.insert(key(parent), true);
-            }
-        }
+        found_dirs(&reads, dirs);
+        self.add_reads(log, reads, dirs);
+    }
+
+    /// [`Watched::add_log`] with the log's entries taken already, and the directories they found known.
+    fn add_reads(&mut self, log: &ReadLog, reads: Vec<(String, Seen)>, dirs: &mut FxHashMap<String, bool>) {
+        self.texts.extend(log.texts().into_iter().map(|(path, hash)| (key(&path), (path, hash))));
         for (path, seen) in &reads {
             let k = key(path);
             if self.ignored_roots.iter().any(|root| is_under(&k, root)) {
@@ -638,6 +632,21 @@ impl Watched {
     }
 }
 
+/// Adds the directories a load found (a directory, or a file's directory) to `dirs`: they need no look of their own;
+/// one gone since is caught when its watch is made (`Subscriptions::update`).
+fn found_dirs(reads: &[(String, Seen)], dirs: &mut FxHashMap<String, bool>) {
+    for (path, seen) in reads {
+        if seen.has(Seen::DIR) {
+            dirs.insert(key(path), true);
+        }
+        if seen.has(Seen::FILE)
+            && let Some(parent) = parent_of(path)
+        {
+            dirs.insert(key(parent), true);
+        }
+    }
+}
+
 /// The tsconfig's directory, watched before any project could be loaded (a broken tsconfig at the first build: any
 /// entry counts), and the `node_modules` beside it, which counts even when it does not exist yet (a fresh clone, then
 /// an install).
@@ -680,6 +689,13 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
         if !protected.iter().any(|p| is_under(p, &root)) {
             watched.ignored_roots.push(root);
         }
+    }
+    // the directories the loads found first: the plugins' inputs below are mostly in them (Flamework probes for its
+    // build info in every program directory)
+    let logs = session.read_logs();
+    let reads: Vec<Vec<(String, Seen)>> = logs.iter().map(|log| log.entries()).collect();
+    for reads in &reads {
+        found_dirs(reads, &mut dirs);
     }
     for input in session.config_inputs() {
         watched.config_inputs.insert(key(&input));
@@ -763,8 +779,8 @@ fn watched_set(session: &BuildSession<'_>) -> Option<Watched> {
         watched.open_dirs.insert(key(&dir));
         watched.flat.insert(dir);
     }
-    for log in session.read_logs() {
-        watched.add_log(&log, &mut dirs);
+    for (log, reads) in logs.iter().zip(reads) {
+        watched.add_reads(log, reads, &mut dirs);
     }
     watched.add_rojo_dirs(session.rojo_partitions(), &mut dirs);
     // the runtime include files: the package.json paths their source lookup looks at, and the source folder
@@ -815,6 +831,12 @@ fn add_referenced_project(watched: &mut Watched, session: &BuildSession<'_>, dir
             watched.ignored_roots.push(root);
         }
     }
+    // the directories its loads found first, as for the root project
+    let logs = session.read_logs();
+    let reads: Vec<Vec<(String, Seen)>> = logs.iter().map(|log| log.entries()).collect();
+    for reads in &reads {
+        found_dirs(reads, dirs);
+    }
     for input in session.config_inputs() {
         watched.config_inputs.insert(key(&input));
         watched.cover(&input, dirs);
@@ -839,8 +861,8 @@ fn add_referenced_project(watched: &mut Watched, session: &BuildSession<'_>, dir
         watched.open_dirs.insert(key(&dir));
         watched.flat.insert(dir);
     }
-    for log in session.read_logs() {
-        watched.add_log(&log, dirs);
+    for (log, reads) in logs.iter().zip(reads) {
+        watched.add_reads(log, reads, dirs);
     }
     watched.add_rojo_dirs(session.rojo_partitions(), dirs);
     watched.stamps.extend(session.loaded_stamps());
