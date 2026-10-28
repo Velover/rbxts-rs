@@ -344,6 +344,7 @@ fn decorators_and_new_are_declined() {
             receiver: None,
             in_optional_chain: false,
             value_used: true,
+            chain_outer: false,
         };
         assert_eq!(
             instance.call(&mut cx, &site, support::stamp::HERE),

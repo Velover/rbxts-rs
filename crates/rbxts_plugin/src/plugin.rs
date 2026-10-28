@@ -8,7 +8,7 @@ use tsrs_core::P;
 
 use crate::{
     AccessSite, AssignSite, CallSite, ChangeSet, CheckerInfo, Claim, ClassSite, Cx, Fatal,
-    FileIndex, FinishCx, Interest, LuauExpr, LuauStmt, PResult, PluginDiagnostic, PluginInfo,
+    FileIndex, FinishCx, Interest, KeyAnswer, LuauExpr, LuauStmt, PResult, PluginDiagnostic, PluginInfo,
     RebuildPlan, SetupCx, SymbolRole, Tag,
 };
 
@@ -238,6 +238,14 @@ pub trait Plugin: Send + Sync + 'static {
 
     /// Makes the instance of one checker. Called on that checker's thread, once per checker group and build
     /// (instances never outlive a build, so their caches can key on nodes).
+    ///
+    /// **What an instance may cache.** A checker transforms a subset of the files, in an order the scheduler picks,
+    /// and that subset and order change with the checker count and between builds. So an instance may cache only
+    /// answers that do not depend on which files it has seen (a symbol's classification, a type's shape, a node's
+    /// facts), never anything that counts, numbers or orders what it met so far: the output would then depend on the
+    /// scheduling. [`CheckerInfo`] is for diagnostics and tuning only (cache sizes, timings): output must not depend
+    /// on it. Anything that must be the same for every checker belongs in [`Plugin::Shared`] (computed in `setup`)
+    /// or is resolved in [`Plugin::finish`] (from the file parts, in transform order, with late strings).
     fn instance(&self, shared: Arc<Self::Shared>, checker: CheckerInfo) -> Self::Instance;
 
     /// Merges the file parts of every current source file, in transform order (`parts` is sorted by this build's
@@ -344,7 +352,9 @@ pub trait PluginInstance: 'static {
     /// plain text (not escaped). roblox-ts lowers the access with it in every position (read, write, compound,
     /// `++`, chains): `obj.key` when the key is a valid Luau identifier, else
     /// `obj[text_literal(key)]` ([`crate::text_literal`]). As a method callee, a valid identifier gives
-    /// `obj:key(...)`, anything else `obj[text_literal(key)](obj, ...)`.
+    /// `obj:key(...)`, anything else `obj[text_literal(key)](obj, ...)`. (The compiler asks
+    /// [`PluginInstance::property_key_answer`], whose default is this hook; override that one to choose the element
+    /// access spelling, `obj["key"](obj, ...)`, for a call.)
     ///
     /// **Computed keys.** Element accesses are offered whatever their key. An answer equal to `access.key` leaves
     /// the access as written (`obj[k]` stays `obj[k]`). When a rewritten key replaces a computed argument
@@ -361,6 +371,24 @@ pub trait PluginInstance: 'static {
     ) -> PResult<Claim<String>> {
         let _ = (cx, access, tag);
         Ok(Claim::Decline)
+    }
+
+    /// [`PluginInstance::property_key`] with the spelling of the answer ([`KeyAnswer::as_element_access`]): what the
+    /// compiler asks. Override this one instead of `property_key` to have a call through the key spelled as roblox-ts
+    /// spells an element call, `obj["k"](obj, …)` (`obj.k(obj, …)` in Luau), as a TS transformer that rewrote
+    /// `obj.m(…)` into `obj["k"](…)` gets; the contract is `property_key`'s.
+    ///
+    /// **Default:** `property_key`'s answer as a property access ([`KeyAnswer::new`]).
+    fn property_key_answer(
+        &self,
+        cx: &mut Cx<'_>,
+        access: &AccessSite,
+        tag: Tag,
+    ) -> PResult<Claim<KeyAnswer>> {
+        Ok(match self.property_key(cx, access, tag)? {
+            Claim::Take(key) => Claim::Take(KeyAnswer::new(key)),
+            Claim::Decline => Claim::Decline,
+        })
     }
 
     /// An assignment, update or `delete` whose target's property symbol was classified with `tag`. Return the

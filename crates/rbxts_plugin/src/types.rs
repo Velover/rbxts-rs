@@ -150,6 +150,10 @@ pub struct CallSite {
     pub in_optional_chain: bool,
     /// False in statement position, where the call's value is dropped.
     pub value_used: bool,
+    /// The call is offered as the outermost link of its optional chain, before anything of the chain is compiled
+    /// ([`crate::Interest::calls_chain_outer`]): a value taken replaces the whole chain. False for every other offer,
+    /// the same call's later offer inside the chain included.
+    pub chain_outer: bool,
 }
 
 /// How a claimed property access is used.
@@ -196,6 +200,37 @@ pub struct AccessSite {
 /// A binary operator, as TypeScript's operator token kind (`Kind::PlusToken`, `Kind::AsteriskAsteriskToken`, …).
 /// Compound assignments carry the operator without `=` (`+=` is `PlusToken`).
 pub type BinOp = Kind;
+
+/// A [`crate::PluginInstance::property_key_answer`]: the key to use, and how a call through it is spelled.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyAnswer {
+    /// The key, as plain text (not escaped), as [`crate::PluginInstance::property_key`] returns it.
+    pub key: String,
+    /// Lower the access as the element access `obj["key"]` a TS transformer would have written, not as `obj.key`.
+    /// Only a call spells the two differently: as a method callee `obj["key"](…)` is roblox-ts's element call,
+    /// `obj.key(obj, …)` (the receiver passed explicitly), where `obj.key` is the method call `obj:key(…)`. Reads,
+    /// writes and other positions render the same either way. An answer with this set and the written key still
+    /// changes the call's spelling (it is not "the access as written").
+    pub as_element_access: bool,
+}
+
+impl KeyAnswer {
+    /// The key, spelled as a property access (`obj.key`): what a plain `property_key` answer means.
+    pub fn new(key: impl Into<String>) -> KeyAnswer {
+        KeyAnswer { key: key.into(), as_element_access: false }
+    }
+
+    /// The key, spelled as an element access (`obj["key"]`; a call through it is `obj.key(obj, …)`).
+    pub fn element(key: impl Into<String>) -> KeyAnswer {
+        KeyAnswer { key: key.into(), as_element_access: true }
+    }
+}
+
+impl From<String> for KeyAnswer {
+    fn from(key: String) -> KeyAnswer {
+        KeyAnswer::new(key)
+    }
+}
 
 /// The operation of an [`AssignSite`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -260,6 +295,12 @@ pub enum Arg {
     Luau(LuauExpr),
     /// `nil`, to pad a missing argument.
     Nil,
+    /// A value the plugin builds when the lowering reaches this slot: after the `Original` slots before it are
+    /// compiled, before the ones after it. Only [`crate::Cx::compile_call_with`] takes it (its `build` is called with
+    /// this index); its prereqs take part in `ensureTransformOrder` as an `Original` slot's do (earlier values are
+    /// bound to locals when it has some). So temporaries and hoists the build makes are named among the written
+    /// arguments' in argument order, as a TS transformer's generated argument is printed among them.
+    Deferred(usize),
 }
 
 /// The callee of [`crate::Cx::compile_call`].
@@ -287,10 +328,22 @@ pub enum FieldOrder {
     /// Emitted field `i` is field `order[i]` of the written-then-appended list. Values are still evaluated in
     /// source order (the compiler binds them to locals first when the order differs and a value has effects).
     Permuted(Vec<u32>),
+    /// The literal a TS transformer rebuilt with its members in another order, lowered as roblox-ts lowers that
+    /// literal: member `i` is entry `order[i]` of the written-then-appended list (spreads and methods are written
+    /// members too, so every member is listed once), and members are evaluated in this order, not as written. So
+    /// it is `transformObjectLiteralExpression` on the rebuilt literal: a table built inline until a member needs
+    /// statements, then a local filled by assignments (`_object[_left] = value`). An order that does not list each
+    /// entry once is an internal error naming the plugin.
+    Emitted(Vec<u32>),
 }
 
 /// Edits applied while roblox-ts compiles an object literal ([`crate::Cx::compile_object_literal`]). Spreads,
 /// methods and computed keys are kept and lowered as usual; edits name fields by their written key.
+///
+/// A `rename` or `replace` naming a key the literal writes only as an accessor (`get k() {}`) reports roblox-ts's
+/// error for the accessor ("Getters and Setters are not supported!") and fails the call (an `Abort`), as lowering
+/// the literal would; a key the literal does not write at all, or writes more than once, or names a method, is an
+/// internal error naming the plugin.
 #[derive(Clone, Debug, Default)]
 pub struct ObjectEdits {
     /// Written key → emitted key.
@@ -316,6 +369,11 @@ pub struct PluginDiagnostic {
     /// one diagnostic. `None` (what every constructor sets) uses the plugin's. How the compiler renders a source is
     /// on [`crate::Plugin::diagnostic_source`].
     pub source: Option<&'static str>,
+    /// A TypeScript diagnostic code (`1117`), shown in the code slot as TypeScript shows its own: `error TS1117:
+    /// …`, which VS Code's `$tsc` problem matcher (`TS\d+`) reads. It takes the slot instead of the source
+    /// ([`PluginDiagnostic::source`], the plugin's [`crate::Plugin::diagnostic_source`]), as a TS transformer's
+    /// diagnostic with a numeric `code` has it. `None` (what every constructor sets): the source, as before.
+    pub code: Option<u32>,
 }
 
 impl PluginDiagnostic {
@@ -328,6 +386,7 @@ impl PluginDiagnostic {
             hint: None,
             related: Vec::new(),
             source: None,
+            code: None,
         }
     }
 
@@ -350,6 +409,12 @@ impl PluginDiagnostic {
     /// Names this diagnostic's source, instead of the plugin's ([`PluginDiagnostic::source`]).
     pub fn with_source(mut self, source: &'static str) -> PluginDiagnostic {
         self.source = Some(source);
+        self
+    }
+
+    /// Gives the diagnostic a TypeScript code, rendered `TS<code>` ([`PluginDiagnostic::code`]).
+    pub fn with_code(mut self, code: u32) -> PluginDiagnostic {
+        self.code = Some(code);
         self
     }
 

@@ -7,7 +7,8 @@
 //!   in a header comment and a local; their part says so. One containing `probe-glob` also records
 //!   `Cx::record_glob(file-glob, *.txt)` (in the header and the part too). A file containing
 //!   `probe-warn` gets a warning at its start (the plugin's diagnostic source, `@probe/inputs`), one containing
-//!   `probe-own-source` a warning naming its own source (`@probe/own`).
+//!   `probe-own-source` a warning naming its own source (`@probe/own`), one containing `probe-code` a warning with
+//!   the TypeScript code 1117 (`TS1117`).
 //! - **finish:** `record_glob(globs/finish, *.json)`, `read_dir(finish-dir)`, `exists(finish-flag)` and
 //!   `read_file(finish-file.txt)` go into the artifact `probe-inputs.txt` with the parts and the setup facts; each
 //!   file of `finish-dir` gets an artifact `probe-out/deep/<name>.out` (so removing them empties two directories);
@@ -233,6 +234,9 @@ impl PluginInstance for InputsInstance {
         }
         if text.contains("probe-own-source") {
             cx.report(PluginDiagnostic::warning(source.as_node(), "probe-inputs own source").with_source("@probe/own"));
+        }
+        if text.contains("probe-code") {
+            cx.report(PluginDiagnostic::warning(source.as_node(), "probe-inputs with a code").with_code(1117));
         }
         *self.part.borrow_mut() = part;
         Ok(())

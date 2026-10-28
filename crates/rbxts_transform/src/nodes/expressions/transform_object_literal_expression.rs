@@ -131,10 +131,38 @@ pub fn transform_object_literal_with(
     edits: &mut [FieldEdit],
     append: Vec<(Expr, Expr)>,
 ) -> Expr {
+    transform_object_literal_ordered(state, prereqs, node, edits, append, None)
+}
+
+/// [`transform_object_literal_with`] over the members in `order` (rbxts-rs: `FieldOrder::Emitted`): entry `k` is
+/// written member `order[k]`, or appended field `order[k] - written` past the written ones, as roblox-ts lowers a
+/// literal a TS transformer rebuilt with its members in that order: they are evaluated and emitted in it. `None` is
+/// the written members, then the appended fields. The caller checks that `order` lists each entry once.
+pub fn transform_object_literal_ordered(
+    state: &mut TransformState<'_>,
+    prereqs: &mut Prereqs,
+    node: P<Node>,
+    edits: &mut [FieldEdit],
+    append: Vec<(Expr, Expr)>,
+    order: Option<&[u32]>,
+) -> Expr {
     let mut edit_of = |i: usize| edits.get_mut(i).map(std::mem::take).unwrap_or_default();
     // starts as a map, becomes a temporary identifier once `disable_map_inline` is called
     let mut ptr = create_map_pointer("object");
-    for (i, &property) in node.properties().iter().enumerate() {
+    let properties = node.properties();
+    let written = properties.len();
+    let mut append: Vec<Option<(Expr, Expr)>> = append.into_iter().map(Some).collect();
+    let order: Vec<usize> = match order {
+        Some(order) => order.iter().map(|&i| i as usize).collect(),
+        None => (0..written + append.len()).collect(),
+    };
+    for i in order {
+        if i >= written {
+            let (key, value) = append[i - written].take().expect("each appended field once");
+            assign_to_map_pointer(prereqs, &mut ptr, key, value);
+            continue;
+        }
+        let property = properties[i];
         validate_method_assignment(state, property);
         match property.kind() {
             Kind::PropertyAssignment => {
@@ -158,9 +186,6 @@ pub fn transform_object_literal_with(
             // must be an accessor declaration, which is banned
             _ => state.add_diagnostic(errors::no_getter_setter(property)),
         }
-    }
-    for (key, value) in append {
-        assign_to_map_pointer(prereqs, &mut ptr, key, value);
     }
     ptr.value
 }

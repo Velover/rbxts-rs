@@ -9,7 +9,9 @@ use tsrs_core::P;
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
-use crate::nodes::expressions::transform_object_literal_expression::{FieldEdit, transform_object_literal_with};
+use crate::nodes::expressions::transform_object_literal_expression::{
+    FieldEdit, transform_object_literal_ordered, transform_object_literal_with,
+};
 use crate::nodes::transform_logical::{flatten_logical_operands, transform_logical_operands};
 use crate::nodes::transform_property_name::transform_property_name;
 use crate::shared::diagnostics::errors;
@@ -168,16 +170,34 @@ fn written_key(property: P<Node>) -> Option<&'static str> {
     matches!(name.kind(), Kind::Identifier | Kind::StringLiteral | Kind::NumericLiteral).then(|| name.text())
 }
 
-/// The property a written key names: exactly one, or an error.
-fn field_index(properties: &[P<Node>], key: &str, what: &str) -> Result<usize, String> {
+/// The property a written key names: exactly one, or an error. `Ok(None)` when the key names an accessor instead
+/// (`get k() {}`, `set k(v) {}`), which the user wrote and roblox-ts rejects: its error is reported at the accessor,
+/// as lowering the literal would (`errors.noGetterSetter`), and the plugin's call fails with it, not as a plugin bug.
+fn field_index(
+    state: &mut TransformState<'_>,
+    properties: &[P<Node>],
+    key: &str,
+    what: &str,
+) -> Result<Option<usize>, String> {
     let mut found = properties.iter().enumerate().filter(|(_, p)| written_key(**p) == Some(key)).map(|(i, _)| i);
-    let first = found
-        .next()
-        .ok_or_else(|| format!("compile_object_literal: {what} `{key}`, which is not a written key of the literal"))?;
+    let Some(first) = found.next() else {
+        let accessor = properties.iter().copied().find(|p| {
+            matches!(p.kind(), Kind::GetAccessor | Kind::SetAccessor)
+                && p.name().is_some_and(|name| {
+                    matches!(name.kind(), Kind::Identifier | Kind::StringLiteral | Kind::NumericLiteral)
+                        && name.text() == key
+                })
+        });
+        if let Some(accessor) = accessor {
+            state.add_diagnostic(errors::no_getter_setter(accessor));
+            return Ok(None);
+        }
+        return Err(format!("compile_object_literal: {what} `{key}`, which is not a written key of the literal"));
+    };
     if found.next().is_some() {
         return Err(format!("compile_object_literal: {what} `{key}`, which the literal writes more than once"));
     }
-    Ok(first)
+    Ok(Some(first))
 }
 
 /// `compile_object_literal`: the literal lowered as roblox-ts lowers object literals, with `edits` applied: renamed
@@ -199,7 +219,7 @@ pub(crate) fn lower_object_literal(
     let properties = node.properties();
     let mut fields = vec![FieldEdit::default(); properties.len()];
     for (key, emitted) in edits.rename {
-        let i = field_index(properties, &key, "rename names")?;
+        let Some(i) = field_index(state, properties, &key, "rename names")? else { return Ok(Expr::None) };
         if properties[i].kind() == Kind::MethodDeclaration {
             return Err(format!("compile_object_literal: rename names `{key}`, a method (only fields can be edited)"));
         }
@@ -208,7 +228,7 @@ pub(crate) fn lower_object_literal(
         }
     }
     for (key, value) in edits.replace {
-        let i = field_index(properties, &key, "replace names")?;
+        let Some(i) = field_index(state, properties, &key, "replace names")? else { return Ok(Expr::None) };
         if properties[i].kind() == Kind::MethodDeclaration {
             return Err(format!("compile_object_literal: replace names `{key}`, a method (only fields can be edited)"));
         }
@@ -219,6 +239,19 @@ pub(crate) fn lower_object_literal(
     match edits.order {
         FieldOrder::Source => Ok(transform_object_literal_with(state, prereqs, node, &mut fields, edits.append)),
         FieldOrder::Permuted(order) => lower_permuted(state, prereqs, node, fields, edits.append, &order),
+        FieldOrder::Emitted(order) => {
+            let count = properties.len() + edits.append.len();
+            let mut seen = vec![false; count];
+            if order.len() != count
+                || order.iter().any(|&i| (i as usize) >= count || std::mem::replace(&mut seen[i as usize], true))
+            {
+                return Err(format!(
+                    "compile_object_literal: FieldOrder::Emitted must list each of the {count} members (written, \
+                     then appended) once"
+                ));
+            }
+            Ok(transform_object_literal_ordered(state, prereqs, node, &mut fields, edits.append, Some(&order)))
+        }
     }
 }
 

@@ -41,7 +41,7 @@ pub struct Aborted;
 /// | --- | --- | --- | --- | --- |
 /// | program, file, checker, project, module and package queries, source facts (`file_identifier_texts` included) | yes | yes | yes | yes |
 /// | lowering: `compile_*`, `compile_receiver`, `prereq`, `push_to_var`, capture, `insert_before_root_statement`, `insert_before_statement`, `hoist`, `hoist_spillable`, `hoist_spillable_named`, `comment` | yes | refused | refused | refused |
-/// | file-level: `header`, `import_named`, `mark_import_used`, `request_import_elision`, `runtime_member`, `temp_id`, `late_string`, `late_string_synthesized` | yes | yes | refused | refused |
+/// | file-level: `header`, `import_named`, `import_named_at`, `mark_import_used`, `request_import_elision`, `runtime_member`, `temp_id`, `late_string`, `late_string_synthesized` | yes | yes | refused | refused |
 /// | `report` (and `Cx::error` / `warning`) | yes | yes | refused | yes |
 /// | `is_usable_local_name`, `locals` | yes | yes | yes | yes |
 /// | build inputs: `env`, `record_glob` | yes | yes | refused | yes |
@@ -117,6 +117,25 @@ pub trait CxBackend {
         callee: Callee,
         args: Vec<Arg>,
     ) -> Result<LuauExpr, Aborted>;
+    /// [`CxBackend::compile_call`] with [`Arg::Deferred`] slots: `build(backend, index)` makes the value of
+    /// `Arg::Deferred(index)` when the lowering reaches that slot, with the slot's own prereq scope (what it emits goes
+    /// with that argument, ordered as an `Original` slot's prereqs are). The backend handed to `build` is the hook's,
+    /// with that scope: the hook's primitives work there, but `compile_call` / `compile_call_with` and
+    /// `compile_receiver` of the call being lowered are refused (it is being lowered). `build` returning `Err` fails
+    /// the call (`Err(Aborted)`); it must have recorded an error, as a hook's `Err` must.
+    ///
+    /// **Default:** an error naming the call: a backend without it cannot build values mid-lowering.
+    fn compile_call_with(
+        &mut self,
+        call: &CallSite,
+        callee: Callee,
+        args: Vec<Arg>,
+        build: &mut dyn FnMut(&mut dyn CxBackend, usize) -> Result<LuauExpr, Aborted>,
+    ) -> Result<LuauExpr, Aborted> {
+        let _ = (callee, args, build);
+        self.report(PluginDiagnostic::error(call.node, "compile_call_with is not supported by this compiler backend"));
+        Err(Aborted)
+    }
     /// Compiles an object literal node with edits; spreads, methods and computed keys are kept.
     fn compile_object_literal(
         &mut self,
@@ -235,6 +254,21 @@ pub trait CxBackend {
     /// A reused user import is kept alive like a [`CxBackend::mark_import_used`] one, so it counts as left behind
     /// for declining.
     fn import_named(&mut self, specifier: &str, export: &str) -> Result<LuauExpr, Aborted>;
+    /// As [`CxBackend::import_named`], placed as if it were asked for at `at`'s start (`getStart()`) instead of at
+    /// the hook's node, ties broken by request order. For a TS transformer that visits nodes out of source order:
+    /// TypeScript transforms a class's members before its decorators, so an import a member's code asks for comes
+    /// before one the decorator's asks for, though the decorator is written first; the hook ordering them passes the
+    /// node whose visit made the request in the TS. An import asked for again (by either method) keeps its local;
+    /// this method moves it to the earliest position asked, keeping its place in the request order for ties.
+    ///
+    /// `at` must be a node of the file being transformed (else an internal error naming the plugin). It changes only
+    /// the order of the plugin imports (and so which of two same-named exports gets the plain name), nothing else.
+    ///
+    /// **Default:** [`CxBackend::import_named`], ordered by the hook's node.
+    fn import_named_at(&mut self, specifier: &str, export: &str, at: P<Node>) -> Result<LuauExpr, Aborted> {
+        let _ = at;
+        self.import_named(specifier, export)
+    }
     /// `TS.<object>.<member>`: a member of the roblox-ts runtime library, as roblox-ts compiles a reference to a
     /// global it provides (`Promise.is` becomes `TS.Promise.is`). The file gets `local TS = require(...)` as for the
     /// compiler's own runtime-library uses, and the use counts for import elision like theirs. Both names must be
@@ -486,6 +520,23 @@ impl<'a> Cx<'a> {
         self.backend.compile_call(call, callee, args).map_err(abort)
     }
 
+    /// The call with another callee or argument slots, `Arg::Deferred(i)` slots built by `build(cx, i)` when the
+    /// lowering reaches them ([`CxBackend::compile_call_with`]): generated values among the written arguments, named
+    /// in argument order as a TS transformer's are.
+    pub fn compile_call_with(
+        &mut self,
+        call: &CallSite,
+        callee: Callee,
+        args: Vec<Arg>,
+        mut build: impl FnMut(&mut Cx<'_>, usize) -> PResult<LuauExpr>,
+    ) -> PResult<LuauExpr> {
+        let mut build = |backend: &mut dyn CxBackend, index: usize| {
+            let mut cx = Cx::new(backend);
+            build(&mut cx, index).map_err(|_| Aborted)
+        };
+        self.backend.compile_call_with(call, callee, args, &mut build).map_err(abort)
+    }
+
     /// An object literal with edits ([`CxBackend::compile_object_literal`]).
     pub fn compile_object_literal(
         &mut self,
@@ -577,6 +628,11 @@ impl<'a> Cx<'a> {
         self.backend.import_named(specifier, export).map_err(abort)
     }
 
+    /// An imported value, ordered with the plugin imports as if asked for at `at` ([`CxBackend::import_named_at`]).
+    pub fn import_named_at(&mut self, specifier: &str, export: &str, at: P<Node>) -> PResult<LuauExpr> {
+        self.backend.import_named_at(specifier, export, at).map_err(abort)
+    }
+
     /// `TS.<object>.<member>`, a member of the roblox-ts runtime library, with the file's `local TS`
     /// ([`CxBackend::runtime_member`]).
     pub fn runtime_member(&mut self, object: &str, member: &str) -> LuauExpr {
@@ -635,6 +691,104 @@ impl<'a> Cx<'a> {
     }
 
     // --- source facts ---
+
+    // --- evaluation order ---
+
+    /// What evaluating `expression` may do (roblox-ts's `getEffects`, [`crate::effects::effects_of`]): for ordering a
+    /// plugin's values as `ensureTransformOrder` and `createOrderedPropertyCall` do. Needs no compiler state.
+    pub fn effects_of(&self, expression: &LuauExpr) -> crate::effects::Effects {
+        crate::effects::effects_of(expression)
+    }
+
+    /// What running `statements` may do (`getEffects` of a statement list, [`crate::effects::effects_of_statements`]):
+    /// the prereqs a value's compilation emitted.
+    pub fn effects_of_statements(&self, statements: &[LuauStmt]) -> crate::effects::Effects {
+        crate::effects::effects_of_statements(statements)
+    }
+
+    /// `receiver[key](receiver, args…)` lowered as roblox-ts lowers an element call whose receiver, key and arguments
+    /// are compiled already (`transformElementCallExpressionInner` with `ensureTransformOrder` and
+    /// `createOrderedPropertyCall`): what a TS transformer's `x[KEY](a, b)` becomes, for a plugin that builds it.
+    ///
+    /// `key` and each argument come with the statements compiling them emitted (capture them with [`Cx::capture`]).
+    /// In roblox-ts's order and with its effect analysis ([`crate::effects`]): a late-read `receiver` is bound to a
+    /// local (`_exp`) before a key with effects; the key's statements run; the arguments' statements run in order,
+    /// an earlier argument bound to a local when a later one's could change it (`ensureTransformOrder`); with
+    /// `method`, the receiver is passed first and bound (`_self`) unless it is simple and the lookup and arguments
+    /// cannot change it; the looked-up function is bound (`_fn`) when the arguments could change the lookup. Every
+    /// statement goes to the current prereq scope; the call is returned. A roblox-ts builtin method is not
+    /// recognised here (the receiver and key are Luau, not TypeScript nodes), so it is never `receiver:key(…)`.
+    pub fn ordered_element_call(
+        &mut self,
+        receiver: LuauExpr,
+        key: (LuauExpr, Vec<LuauStmt>),
+        args: Vec<(LuauExpr, Vec<LuauStmt>)>,
+        method: bool,
+    ) -> PResult<LuauExpr> {
+        use crate::effects::{effects_commute, effects_of, effects_of_statements, is_late_read, join_effects};
+        let indexable = |e: LuauExpr| if e.is_indexable() { e } else { rbxts_luau::create::paren(e) };
+        let (key, key_statements) = key;
+        // `transformElementCallExpressionInner`: a late-read receiver is held before a key with effects
+        let later = join_effects(
+            effects_of_statements(&key_statements),
+            &(if is_late_read(&receiver) { effects_of(&key) } else { crate::effects::Effects::none() }),
+        );
+        let mut base = if effects_commute(&effects_of(&receiver), &later) {
+            receiver
+        } else {
+            self.push_to_var(receiver, "exp")
+        };
+        for statement in key_statements {
+            self.prereq(statement);
+        }
+        // `ensureTransformOrder` over the compiled arguments: the statements stay with the call, as its prereqs
+        let mut captures = vec![false; args.len()];
+        let mut suffix = crate::effects::Effects::none();
+        for i in (0..args.len()).rev() {
+            let (expression, statements) = &args[i];
+            let effects = effects_of(expression);
+            captures[i] = !effects_commute(&effects, &suffix);
+            if captures[i] {
+                suffix = join_effects(effects, &suffix);
+            }
+            suffix = join_effects(effects_of_statements(statements), &suffix);
+        }
+        let mut statements: Vec<LuauStmt> = Vec::new();
+        let mut values = Vec::with_capacity(args.len());
+        for ((expression, arg_statements), capture) in args.into_iter().zip(captures) {
+            statements.extend(arg_statements);
+            if capture {
+                let (value, held) = self.capture(|cx| Ok(cx.push_to_var(expression, "exp")))?;
+                statements.extend(held);
+                values.push(value);
+            } else {
+                values.push(expression);
+            }
+        }
+        // `createOrderedPropertyCall` with an index key
+        let prereq_effects = effects_of_statements(&statements);
+        let mut callee = rbxts_luau::create::computed_index(indexable(base.clone()), key.clone());
+        let lookup_effects = effects_of(&callee);
+        let capture_callee = !effects_commute(&lookup_effects, &prereq_effects);
+        if method
+            && (!base.is_simple() || !effects_commute(&effects_of(&base), &join_effects(lookup_effects, &prereq_effects)))
+        {
+            base = self.push_to_var(base, "self");
+            callee = rbxts_luau::create::computed_index(indexable(base.clone()), key);
+        }
+        if capture_callee {
+            callee = self.push_to_var(callee, "fn");
+        }
+        for statement in statements {
+            self.prereq(statement);
+        }
+        let mut call_args = Vec::with_capacity(values.len() + 1);
+        if method {
+            call_args.push(base);
+        }
+        call_args.extend(values);
+        Ok(rbxts_luau::create::call(callee, call_args))
+    }
 
     /// The node's UTF-16 start, with TypeScript's line counting ([`CxBackend::utf16_pos`]).
     pub fn utf16_pos(&self, node: P<Node>) -> Utf16Pos {

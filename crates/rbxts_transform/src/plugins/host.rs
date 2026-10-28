@@ -53,6 +53,8 @@ pub(crate) struct HostPlugin {
     pub name: &'static str,
     pub instance: Box<dyn DynInstance>,
     pub calls_by_symbol: bool,
+    /// `calls_chain_outer` was registered.
+    pub chain_outer: bool,
     pub receivers: Vec<ReceiverInterest>,
     pub callee_markers: Vec<(&'static str, Tag)>,
     pub class_filter: Option<ClassFilter>,
@@ -93,6 +95,8 @@ pub struct PluginHost {
     pub(crate) any_calls: bool,
     /// Some plugin classifies callee symbols.
     pub(crate) any_symbol: bool,
+    /// Some plugin registered `calls_chain_outer`.
+    pub(crate) any_chain_outer: bool,
     /// Every method name of a receiver interest, for a quick test.
     pub(crate) receiver_methods: FxHashSet<&'static str>,
     pub(crate) any_classes: bool,
@@ -136,6 +140,7 @@ impl PluginHost {
             env: Arc::default(),
             any_calls: false,
             any_symbol: false,
+            any_chain_outer: false,
             receiver_methods: FxHashSet::default(),
             any_classes: false,
             access_markers: Vec::new(),
@@ -169,6 +174,7 @@ impl PluginHost {
             }
             host.receiver_methods.extend(interest.receiver_calls().iter().flat_map(|r| r.methods.iter().copied()));
             host.any_symbol |= interest.wants_calls_by_symbol();
+            host.any_chain_outer |= interest.wants_calls_chain_outer();
             host.any_calls |= interest.wants_calls_by_symbol()
                 || !interest.receiver_calls().is_empty()
                 || !interest.callee_markers().is_empty();
@@ -177,6 +183,7 @@ impl PluginHost {
                 name: plugin.info.name,
                 instance,
                 calls_by_symbol: interest.wants_calls_by_symbol(),
+                chain_outer: interest.wants_calls_chain_outer(),
                 receivers: interest.receiver_calls().to_vec(),
                 callee_markers: interest.callee_markers().to_vec(),
                 class_filter: interest.class_filter(),

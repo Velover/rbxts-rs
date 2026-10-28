@@ -156,11 +156,23 @@ pub(crate) struct CallContext {
     pub item: Option<ChainItem>,
     /// An optional call (`o.m?.()`): lowered inside the chain's nil check on its callee.
     pub optional: Option<OptionalCall>,
+    /// The outermost call of an optional chain, offered before the chain is compiled (`CallSite::chain_outer`): the
+    /// call's own `?.` (`o.m?.()`, `f?.()`), which a replaced callee keeps.
+    pub chain_outer: Option<bool>,
 }
 
 impl CallContext {
     pub(crate) fn new(site: CallSite, shape: CallShape, base: Option<Expr>) -> CallContext {
-        CallContext { site, shape, base, base_marks: None, base_captured: false, item: None, optional: None }
+        CallContext {
+            site,
+            shape,
+            base,
+            base_marks: None,
+            base_captured: false,
+            item: None,
+            optional: None,
+            chain_outer: None,
+        }
     }
 }
 
@@ -292,6 +304,16 @@ pub fn diagnostic_source(diagnostic: P<Diagnostic>) -> Option<&'static str> {
     SOURCES.lock().unwrap_or_else(PoisonError::into_inner).as_ref()?.get(&address).copied()
 }
 
+/// The TypeScript codes of plugin diagnostics (`PluginDiagnostic::code`), by the address of their ad hoc message.
+static CODES: Mutex<Option<FxHashMap<usize, u32>>> = Mutex::new(None);
+
+/// The TypeScript code a plugin diagnostic has (`PluginDiagnostic::with_code`), for the reporter's code slot:
+/// `error TS<code>: …`. `None` for every other diagnostic.
+pub fn diagnostic_code(diagnostic: P<Diagnostic>) -> Option<u32> {
+    let address = message_address(diagnostic)?;
+    CODES.lock().unwrap_or_else(PoisonError::into_inner).as_ref()?.get(&address).copied()
+}
+
 /// A plugin diagnostic as a tsrs diagnostic: the node's `getStart()` to its end, the hint on a line of its own,
 /// related information attached. `plugin_source` is the plugin's `diagnostic_source()`; the diagnostic's own
 /// source wins over it.
@@ -309,6 +331,11 @@ pub(crate) fn to_diagnostic(diagnostic: &PluginDiagnostic, plugin_source: Option
         && let Some(address) = message_address(d)
     {
         SOURCES.lock().unwrap_or_else(PoisonError::into_inner).get_or_insert_with(FxHashMap::default).insert(address, source);
+    }
+    if let Some(code) = diagnostic.code
+        && let Some(address) = message_address(d)
+    {
+        CODES.lock().unwrap_or_else(PoisonError::into_inner).get_or_insert_with(FxHashMap::default).insert(address, code);
     }
     if !diagnostic.related.is_empty() {
         let related: Vec<P<Diagnostic>> =
@@ -347,6 +374,29 @@ impl HookBackend<'_, '_> {
         let key = super::lifecycle::late_key(self.name(), key);
         self.state.plugin_file.use_late_key(self.plugin, key.clone());
         if synthesized { create::late_string_synthesized(key) } else { create::late_string(key) }
+    }
+
+    /// `import_named` and `import_named_at` (`at`: where the request counts as made, for the import order).
+    fn import_named_ordered(&mut self, specifier: &str, export: &str, at: Option<P<Node>>) -> Result<Expr, Aborted> {
+        let primitive = if at.is_some() { "import_named_at" } else { "import_named" };
+        if self.refused(primitive, Row::FileLevel) {
+            return Err(Aborted);
+        }
+        self.note_effect(if at.is_some() { "calling import_named_at" } else { "calling import_named" });
+        self.touch();
+        let anchor = self.anchor;
+        let before = self.state.diagnostics.diagnostics.len();
+        match dispatch::import_named(self.state, self.host, anchor, specifier, export, at) {
+            Ok(value) if !has_errors_since(self.state, before) => {
+                // declared with the imports, at the top of the file
+                if let Expr::TemporaryIdentifier(t) = &value {
+                    self.state.plugin_file.top_level_temps.insert(t.id);
+                }
+                Ok(value)
+            }
+            Ok(_) => Err(Aborted),
+            Err(message) => Err(self.misuse(&message)),
+        }
     }
 
     /// A primitive that changes compiler state ran (see [`HookFrame::touched`]).
@@ -633,6 +683,12 @@ impl CxBackend for HookBackend<'_, '_> {
             return Err(Aborted);
         }
         self.check_site(call, "compile_receiver")?;
+        if call.chain_outer {
+            return Err(self.misuse(
+                "compile_receiver in a chain's outer offer (CallSite::chain_outer): the chain is not compiled; decline \
+                 the offer to have the receiver compiled",
+            ));
+        }
         let in_capture = !self.captures.is_empty();
         self.lower_unchecked(|state, prereqs, context| {
             let context = context.expect("checked above");
@@ -660,7 +716,39 @@ impl CxBackend for HookBackend<'_, '_> {
                 frame.called = true;
             }
             note_effect(state, "lowering it with compile_call");
-            lower_call(state, prereqs, context, callee, args)
+            lower_call(state, prereqs, context, callee, args, &mut None)
+        })
+    }
+
+    fn compile_call_with(
+        &mut self,
+        call: &CallSite,
+        callee: Callee,
+        args: Vec<Arg>,
+        build: &mut dyn FnMut(&mut dyn CxBackend, usize) -> Result<Expr, Aborted>,
+    ) -> Result<Expr, Aborted> {
+        if self.refused("compile_call_with", Row::Lowering) {
+            return Err(Aborted);
+        }
+        self.check_site(call, "compile_call_with")?;
+        let frame = self.state.plugin_file.frames.last().copied().unwrap_or_default();
+        if frame.called {
+            return Err(self.misuse("compile_call_with ran after its call was lowered (it would be lowered twice)"));
+        }
+        if frame.self_compiled {
+            return Err(self.misuse(
+                "compile_call_with after the call was lowered with compile_expr (it would be lowered twice)",
+            ));
+        }
+        let mut deferred =
+            Some(DeferredBuild { build, plugin: self.plugin, hook: self.hook, phase: self.phase, anchor: self.anchor });
+        self.lower_unchecked(|state, prereqs, context| {
+            let context = context.expect("checked above");
+            if let Some(frame) = state.plugin_file.frames.last_mut() {
+                frame.called = true;
+            }
+            note_effect(state, "lowering it with compile_call_with");
+            lower_call(state, prereqs, context, callee, args, &mut deferred)
         })
     }
 
@@ -795,24 +883,11 @@ impl CxBackend for HookBackend<'_, '_> {
     }
 
     fn import_named(&mut self, specifier: &str, export: &str) -> Result<Expr, Aborted> {
-        if self.refused("import_named", Row::FileLevel) {
-            return Err(Aborted);
-        }
-        self.note_effect("calling import_named");
-        self.touch();
-        let anchor = self.anchor;
-        let before = self.state.diagnostics.diagnostics.len();
-        match dispatch::import_named(self.state, self.host, anchor, specifier, export) {
-            Ok(value) if !has_errors_since(self.state, before) => {
-                // declared with the imports, at the top of the file
-                if let Expr::TemporaryIdentifier(t) = &value {
-                    self.state.plugin_file.top_level_temps.insert(t.id);
-                }
-                Ok(value)
-            }
-            Ok(_) => Err(Aborted),
-            Err(message) => Err(self.misuse(&message)),
-        }
+        self.import_named_ordered(specifier, export, None)
+    }
+
+    fn import_named_at(&mut self, specifier: &str, export: &str, at: P<Node>) -> Result<Expr, Aborted> {
+        self.import_named_ordered(specifier, export, Some(at))
     }
 
     fn runtime_member(&mut self, object: &str, member: &str) -> Expr {
@@ -1246,7 +1321,21 @@ type Slots = (Vec<Expr>, Vec<Option<P<Node>>>, Prereqs);
 /// The argument slots, compiled in evaluation order: each `Original` node with its own prereqs, then the values
 /// bound to locals where a later slot's prereqs could change them (`ensureTransformOrder` over every slot, ready
 /// Luau values included). Returns the values, the slot nodes (`None` for Luau and `nil` slots) and the prereqs.
-fn compile_slots(state: &mut TransformState<'_>, context: &mut CallContext, args: Vec<Arg>) -> Result<Slots, String> {
+/// What `compile_call_with` builds its `Arg::Deferred` slots with: the plugin's `build`, and the hook it runs in.
+pub(crate) struct DeferredBuild<'b> {
+    build: &'b mut dyn FnMut(&mut dyn CxBackend, usize) -> Result<Expr, Aborted>,
+    plugin: usize,
+    hook: HookKind,
+    phase: Phase,
+    anchor: P<Node>,
+}
+
+fn compile_slots(
+    state: &mut TransformState<'_>,
+    context: &mut CallContext,
+    args: Vec<Arg>,
+    deferred: &mut Option<DeferredBuild<'_>>,
+) -> Result<Slots, String> {
     let mut infos: Vec<(Expr, Vec<Stmt>, Option<P<Node>>)> = Vec::with_capacity(args.len());
     for arg in args {
         match arg {
@@ -1258,6 +1347,42 @@ fn compile_slots(state: &mut TransformState<'_>, context: &mut CallContext, args
             }
             Arg::Luau(value) => infos.push((value, Vec::new(), None)),
             Arg::Nil => infos.push((create::nil(), Vec::new(), None)),
+            Arg::Deferred(index) => {
+                let Some(deferred) = deferred.as_mut() else {
+                    return Err("compile_call: Arg::Deferred needs compile_call_with, which builds it".to_owned());
+                };
+                // the plugin's value, built now, with the slot's own prereq scope
+                let host = state.plugins.expect("the build has plugins");
+                let errors_before = state.diagnostics.diagnostics.len();
+                let mut slot = Prereqs::new();
+                let built = {
+                    let mut backend = HookBackend {
+                        state: &mut *state,
+                        host,
+                        prereqs: Some(&mut slot),
+                        captures: Vec::new(),
+                        call: None,
+                        plugin: deferred.plugin,
+                        hook: deferred.hook,
+                        phase: deferred.phase,
+                        anchor: deferred.anchor,
+                    };
+                    (deferred.build)(&mut backend, index)
+                };
+                match built {
+                    Ok(value) => infos.push((value, slot.statements, None)),
+                    // the error is recorded: the call fails with it (`lower_unchecked` sees it)
+                    Err(Aborted) if has_errors_since(state, errors_before) => {
+                        infos.push((create::nil(), slot.statements, None));
+                    }
+                    Err(Aborted) => {
+                        return Err(format!(
+                            "compile_call_with: the build of Arg::Deferred({index}) returned Err without reporting \
+                             an error"
+                        ));
+                    }
+                }
+            }
         }
     }
     let mut captures = vec![false; infos.len()];
@@ -1305,8 +1430,12 @@ fn lower_call(
     context: &mut CallContext,
     callee: Callee,
     args: Vec<Arg>,
+    deferred: &mut Option<DeferredBuild<'_>>,
 ) -> Result<Expr, String> {
     let node = context.site.node;
+    if let Some(own_optional) = context.chain_outer {
+        return lower_chain_outer_call(state, prereqs, context, callee, args, deferred, own_optional);
+    }
     match callee {
         Callee::Original => {
             if let CallShape::Decorator { call: None } = context.shape {
@@ -1322,7 +1451,7 @@ fn lower_call(
             }
             if let Some(optional) = context.optional.clone() {
                 // inside the chain's nil check: `function(self, args)`, as roblox-ts's optional call lowering
-                let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
+                let (values, _, arg_prereqs) = compile_slots(state, context, args, deferred)?;
                 prereqs.push_list(arg_prereqs.statements);
                 let mut call_args: Vec<Expr> = optional.self_arg.into_iter().collect();
                 call_args.extend(values);
@@ -1346,7 +1475,7 @@ fn lower_call(
             let mut base = ensure_base(state, prereqs, context);
             match context.shape {
                 CallShape::Property { access, name } if super_access => {
-                    let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
+                    let (values, _, arg_prereqs) = compile_slots(state, context, args, deferred)?;
                     prereqs.push_list(arg_prereqs.statements);
                     let key = dispatch::rewritten_key(state, access, AccessPosition::Callee);
                     let callee = keyed_access(base, key.as_deref().unwrap_or(name));
@@ -1364,19 +1493,19 @@ fn lower_call(
                             create::computed_index(convert_to_indexable_expression(base), index)
                         }
                     };
-                    let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
+                    let (values, _, arg_prereqs) = compile_slots(state, context, args, deferred)?;
                     prereqs.push_list(arg_prereqs.statements);
                     Ok(create::call(callee, with_super_self(state, access, values)))
                 }
                 CallShape::Super => {
-                    let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
+                    let (values, _, arg_prereqs) = compile_slots(state, context, args, deferred)?;
                     prereqs.push_list(arg_prereqs.statements);
                     let mut with_self = vec![rbxts_luau::globals::self_()];
                     with_self.extend(values);
                     Ok(create::call(create::property(convert_to_indexable_expression(base), "constructor"), with_self))
                 }
                 CallShape::New => {
-                    let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
+                    let (values, _, arg_prereqs) = compile_slots(state, context, args, deferred)?;
                     // as `transform_new_expression` (stockfix): the constructor is read before the arguments run, so
                     // it is captured when their prerequisites could change it (`new C((C = B, x))`)
                     if !effects_commute(&get_effects(&base), &get_effects_of_statements(&arg_prereqs.statements)) {
@@ -1386,7 +1515,7 @@ fn lower_call(
                     Ok(create::call(create::property(base, "new"), values))
                 }
                 CallShape::Call | CallShape::Decorator { .. } => {
-                    let (mut values, nodes, arg_prereqs) = compile_slots(state, context, args)?;
+                    let (mut values, nodes, arg_prereqs) = compile_slots(state, context, args, deferred)?;
                     let callee_node = context.site.callee;
                     fix_void_slots(state, context, &mut values, &nodes);
                     if !effects_commute(&get_effects(&base), &get_effects_of_statements(&arg_prereqs.statements)) {
@@ -1405,11 +1534,11 @@ fn lower_call(
                     })
                 }
                 CallShape::Property { access, name } => {
-                    let (mut values, nodes, arg_prereqs) = compile_slots(state, context, args)?;
+                    let (mut values, nodes, arg_prereqs) = compile_slots(state, context, args, deferred)?;
                     fix_void_slots(state, context, &mut values, &nodes);
                     let method = is_method(state, access);
                     let key = match dispatch::rewritten_key(state, access, AccessPosition::Callee) {
-                        Some(key) => property_key_of(&key),
+                        Some(key) => dispatch::rewritten_callee_key(state, access, &key),
                         None => PropertyKey::Name(name.to_owned()),
                     };
                     let call = create_ordered_property_call(
@@ -1444,10 +1573,10 @@ fn lower_call(
                         base = prereqs.push_to_var(base, "exp");
                     }
                     prereqs.push_list(key_prereqs.statements);
-                    let (mut values, nodes, arg_prereqs) = compile_slots(state, context, args)?;
+                    let (mut values, nodes, arg_prereqs) = compile_slots(state, context, args, deferred)?;
                     fix_void_slots(state, context, &mut values, &nodes);
                     let key = match rewritten {
-                        Some(key) => property_key_of(&key),
+                        Some(key) => dispatch::rewritten_callee_key(state, access, &key),
                         None => {
                             let receiver_type = state.get_type(access.as_element_access_expression().expression);
                             let receiver_type = state.checker.get_non_optional_type(receiver_type);
@@ -1470,7 +1599,7 @@ fn lower_call(
             }
         }
         Callee::Function(function) => {
-            let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
+            let (values, _, arg_prereqs) = compile_slots(state, context, args, deferred)?;
             let function =
                 if effects_commute(&get_effects(&function), &get_effects_of_statements(&arg_prereqs.statements)) {
                     function
@@ -1487,7 +1616,7 @@ fn lower_call(
                      with the object as the first argument)"
                 ));
             }
-            let (values, _, arg_prereqs) = compile_slots(state, context, args)?;
+            let (values, _, arg_prereqs) = compile_slots(state, context, args, deferred)?;
             let object = if effects_commute(&get_effects(&object), &get_effects_of_statements(&arg_prereqs.statements))
             {
                 object
@@ -1498,6 +1627,85 @@ fn lower_call(
             Ok(create::method_call(convert_to_indexable_expression(object), name, values))
         }
     }
+}
+
+/// `compile_call` in a chain's outer offer (`CallSite::chain_outer`): the chain replaced by a call of another callee,
+/// which keeps only the call's own `?.`, as TypeScript's `updateCallChain` on a TS transformer's replaced call and
+/// roblox-ts's lowering of it give. A plain call for `o?.m(x)`; for `o.m?.(x)` the callee read into a local (named as
+/// roblox-ts names an optional chain's) and nil-checked, the slots compiled inside the check (a method's object bound
+/// first, as roblox-ts binds an optional method call's receiver).
+fn lower_chain_outer_call(
+    state: &mut TransformState<'_>,
+    prereqs: &mut Prereqs,
+    context: &mut CallContext,
+    callee: Callee,
+    args: Vec<Arg>,
+    deferred: &mut Option<DeferredBuild<'_>>,
+    own_optional: bool,
+) -> Result<Expr, String> {
+    let node = context.site.node;
+    let (function, self_arg) = match callee {
+        Callee::Original => {
+            return Err("compile_call: Callee::Original in a chain's outer offer (CallSite::chain_outer) would lower \
+                        the chain inside its own replacement: decline the offer instead (the call is offered again \
+                        inside the chain)"
+                .to_owned());
+        }
+        Callee::Function(function) if !own_optional => {
+            return lower_call(state, prereqs, context_without_outer(context), Callee::Function(function), args, deferred);
+        }
+        Callee::Method { object, name } if !own_optional => {
+            let callee = Callee::Method { object, name };
+            return lower_call(state, prereqs, context_without_outer(context), callee, args, deferred);
+        }
+        Callee::Function(function) => (function, None),
+        Callee::Method { object, name } => {
+            if !rbxts_luau::is_valid_identifier(&name) {
+                return Err(format!(
+                    "compile_call: Callee::Method name `{name}` is not a valid Luau identifier (use Callee::Function \
+                     with the object as the first argument)"
+                ));
+            }
+            let object = prereqs.push_to_var(object, "self");
+            (create::property(convert_to_indexable_expression(object.clone()), name), Some(object))
+        }
+    };
+    let name = match node.parent() {
+        Some(parent)
+            if parent.kind() == Kind::VariableDeclaration
+                && parent.name().is_some_and(|n| n.kind() == Kind::Identifier) =>
+        {
+            parent.name().expect("checked").text().to_owned()
+        }
+        _ => "result".to_owned(),
+    };
+    let temp = prereqs.push_to_var(function, &name);
+    let mut inside = Prereqs::new();
+    context.chain_outer = None;
+    let slots = compile_slots(state, context, args, deferred);
+    context.chain_outer = Some(own_optional);
+    let (values, _, arg_prereqs) = slots?;
+    inside.push_list(arg_prereqs.statements);
+    let mut call_args: Vec<Expr> = self_arg.into_iter().collect();
+    call_args.extend(values);
+    let call = wrap_return_if_lua_tuple(state, node, create::call(temp.clone(), call_args));
+    if context.site.value_used {
+        inside.push(create::assignment(temp.clone(), rbxts_luau::AssignmentOperator::Assign, call));
+    } else {
+        inside.push(create::call_statement(call));
+    }
+    prereqs.push(create::if_stmt(
+        create::binary(temp.clone(), rbxts_luau::BinaryOperator::Ne, Expr::Nil),
+        inside.statements,
+        rbxts_luau::ElseBody::default(),
+    ));
+    Ok(if context.site.value_used { temp } else { Expr::None })
+}
+
+/// The call context with its chain's outer offer cleared, for lowering a replaced callee as an ordinary call.
+fn context_without_outer(context: &mut CallContext) -> &mut CallContext {
+    context.chain_outer = None;
+    context
 }
 
 /// The `CallKind` of a property or element call: a method call when roblox-ts calls it with `:`.

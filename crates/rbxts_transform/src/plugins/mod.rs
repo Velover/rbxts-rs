@@ -189,6 +189,22 @@ pub fn diagnostic_source(diagnostic: tsrs_core::P<tsrs_ast::Diagnostic>) -> Opti
     backend::diagnostic_source(diagnostic).or_else(|| crate::build::replay::source(diagnostic))
 }
 
+/// The TypeScript code a plugin diagnostic has (`PluginDiagnostic::code`), which takes the reporter's code slot
+/// instead of the source: `error TS<code>: …`; also for one a new process made again from the incremental state.
+/// `None` for every other diagnostic.
+pub fn diagnostic_code(diagnostic: tsrs_core::P<tsrs_ast::Diagnostic>) -> Option<u32> {
+    backend::diagnostic_code(diagnostic).or_else(|| crate::build::replay::code(diagnostic))
+}
+
+/// What the reporter shows in a plugin diagnostic's code slot, after `TS`: `1117` for a code, ` <source>` (a
+/// leading space, as roblox-ts's own ` roblox-ts`) for a source, `None` for a diagnostic with neither.
+pub fn diagnostic_code_slot(diagnostic: tsrs_core::P<tsrs_ast::Diagnostic>) -> Option<String> {
+    match diagnostic_code(diagnostic) {
+        Some(code) => Some(code.to_string()),
+        None => diagnostic_source(diagnostic).map(|source| format!(" {source}")),
+    }
+}
+
 pub use host::PluginHost;
 pub use lifecycle::{BuildInput, PluginOptions, PluginTimings};
 

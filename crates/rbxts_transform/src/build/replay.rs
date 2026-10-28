@@ -62,6 +62,7 @@ pub fn to_disk(diagnostics: &[P<Diagnostic>], plugin: &[P<Diagnostic>], owner: P
             category: category_number(d.category()),
             text,
             source: crate::plugins::diagnostic_source(d).map(str::to_owned),
+            code: crate::plugins::diagnostic_code(d),
             plugin: plugin.contains(&d),
             related,
         });
@@ -77,6 +78,15 @@ static SOURCES: Mutex<Option<FxHashMap<usize, &'static str>>> = Mutex::new(None)
 pub fn source(diagnostic: P<Diagnostic>) -> Option<&'static str> {
     let address = std::ptr::from_ref(diagnostic.message()?) as usize;
     SOURCES.lock().unwrap_or_else(PoisonError::into_inner).as_ref()?.get(&address).copied()
+}
+
+/// The plugin codes of replayed plugin diagnostics, by the address of their ad hoc message.
+static CODES: Mutex<Option<FxHashMap<usize, u32>>> = Mutex::new(None);
+
+/// The plugin code (`PluginDiagnostic::code`) of a diagnostic [`from_disk`] made, `None` for any other.
+pub fn code(diagnostic: P<Diagnostic>) -> Option<u32> {
+    let address = std::ptr::from_ref(diagnostic.message()?) as usize;
+    CODES.lock().unwrap_or_else(PoisonError::into_inner).as_ref()?.get(&address).copied()
 }
 
 /// A diagnostic `file` kept, made again in `program` (one at another file, and related information, in the program's
@@ -103,6 +113,15 @@ pub fn from_disk(kept: &DiskDiagnostic, file: P<SourceFile>, program: &Program) 
             .unwrap_or_else(PoisonError::into_inner)
             .get_or_insert_with(FxHashMap::default)
             .insert(std::ptr::from_ref(message) as usize, source);
+    }
+    if let Some(code) = kept.code
+        && let Some(message) = d.message()
+    {
+        CODES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert_with(FxHashMap::default)
+            .insert(std::ptr::from_ref(message) as usize, code);
     }
     if !kept.related.is_empty() {
         // related information at a file the program no longer has: as for the diagnostic's own file, the owner is
@@ -152,6 +171,7 @@ mod tests {
             source: None,
             plugin: false,
             related: vec![(Some(format!("{cwd}/{related_file}")), 0, 6, 3, "related".into())],
+            code: None,
         };
         let replayed = from_disk(&kept("b.ts"), a, program).expect("both files are there");
         let related = replayed.related_information();

@@ -424,13 +424,14 @@ pub(crate) struct DiagnosticOwner<'a> {
 /// rebuild reports what a clean build would: when the file holding the kept copy stops reporting it, or is deleted,
 /// a copy another file holds is reported in its place.
 pub(crate) fn drop_plugin_duplicates(owners: &mut [DiagnosticOwner<'_>]) {
-    type Key = (Option<String>, Option<u32>, Option<u32>, Option<&'static str>, i32, String);
+    type Key = (Option<String>, Option<u32>, Option<u32>, Option<String>, i32, String);
     if owners.iter().all(|owner| owner.plugin.is_empty()) {
         return;
     }
     let key = |d: P<Diagnostic>| -> Key {
-        let source = crate::plugins::diagnostic_source(d);
-        (d.file().map(|f| f.file_name().to_owned()), d.pos(), d.end(), source, d.code(), d.localize())
+        // the code slot: a plugin's code or source
+        let slot = crate::plugins::diagnostic_code_slot(d);
+        (d.file().map(|f| f.file_name().to_owned()), d.pos(), d.end(), slot, d.code(), d.localize())
     };
     // (owner, position in its list, diagnostic, a plugin's)
     type Candidate = (usize, usize, P<Diagnostic>, bool);
@@ -474,7 +475,7 @@ pub(crate) fn drop_plugin_duplicates(owners: &mut [DiagnosticOwner<'_>]) {
 fn ts_compare_diagnostics(d1: P<Diagnostic>, d2: P<Diagnostic>) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let file = |d: P<Diagnostic>| d.file().map(|f| f.path().to_string());
-    let source = crate::plugins::diagnostic_source;
+    let source = crate::plugins::diagnostic_code_slot;
     let skip_related = file(d1)
         .cmp(&file(d2))
         .then(d1.pos().cmp(&d2.pos()))

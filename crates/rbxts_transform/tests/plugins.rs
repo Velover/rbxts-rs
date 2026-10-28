@@ -133,6 +133,17 @@ impl Project {
         checkers: Option<usize>,
         configure: impl FnOnce(&mut PluginOptions<'_>),
     ) -> CompileReport {
+        self.build_compile(plugins, checkers, configure, |_| {})
+    }
+
+    /// [`Project::build_with`] with the compile options changed by `compile`.
+    fn build_compile(
+        &self,
+        plugins: &[&str],
+        checkers: Option<usize>,
+        configure: impl FnOnce(&mut PluginOptions<'_>),
+        compile: impl FnOnce(&mut CompileOptions) + Send,
+    ) -> CompileReport {
         let plugins: Vec<Box<dyn DynPlugin>> =
             plugins.iter().map(|name| rbxts_test_plugins::by_name(name).expect("a test plugin")).collect();
         let cwd = self.root.to_string_lossy().into_owned();
@@ -146,18 +157,17 @@ impl Project {
                 .spawn_scoped(scope, move || {
                     let options =
                         PluginOptions { plugins: &plugins, ignore_unknown_tsconfig_plugins: ignore, claims_all };
-                    compile_project_with(
-                        &CompileOptions {
-                            tsconfig: "tsconfig.json".into(),
-                            cwd,
-                            project_options: ProjectOptionLayer::default(),
-                            out_dir_override: None,
-                            write_partial: false,
-                            no_write: false,
-                            checkers,
-                        },
-                        &options,
-                    )
+                    let mut compile_options = CompileOptions {
+                        tsconfig: "tsconfig.json".into(),
+                        cwd,
+                        project_options: ProjectOptionLayer::default(),
+                        out_dir_override: None,
+                        write_partial: false,
+                        no_write: false,
+                        checkers,
+                    };
+                    compile(&mut compile_options);
+                    compile_project_with(&compile_options, &options)
                 })
                 .unwrap()
                 .join()
@@ -335,8 +345,12 @@ fn the_first_plugin_to_take_a_call_wins_and_double_claims_are_reported_on_reques
     let classes = report.files.iter().find(|f| f.file_name.ends_with("classes.ts")).unwrap().luau.as_deref().unwrap();
     assert!(
         classes.contains(
-            "	Decorated.__probed = \"probe\"
-	Decorated.__probed = \"probe-b\"
+            "	do
+		Decorated.__probed = \"probe\"
+	end
+	do
+		Decorated.__probed = \"probe-b\"
+	end
 	Decorated = probeDecorator(\"probed\")"
         ),
         "{classes}"
@@ -1359,17 +1373,103 @@ fn a_plugin_diagnostic_is_kept_once_in_the_build() {
     assert_eq!(truthy, vec![Category::Message]);
 }
 
+/// A copy of `plugin_fixtures/fwapi` (with its `lib`).
+fn fwapi_project(label: &str) -> Option<Project> {
+    let names = ["src", "lib", "tsconfig.json", "default.project.json", "package.json"];
+    Project::copy_of(&fixture_dir_of("fwapi"), &names, label)
+}
+
 /// The `fwapi` round's API additions against stock TypeScript 5 (`plugin_fixtures/fwapi`): its `expected/` Luau is
 /// what stock roblox-ts gives with a JS transformer doing what each probe op does (as Flamework's TS transformer
 /// does it), so this fixture, unlike `probe`, has a stock reference. Covered: plugin imports after every leading
-/// comment of the first statement (`ts.copyComments`, `cmt*.ts`); synthesized late strings (`late.ts`); `import_named` of modules
+/// comment of the first statement (`ts.copyComments`, `cmt*.ts`); synthesized late strings (`late.ts`); a call in a parenthesized decorator
+/// expression offered as an ordinary call (`deco.ts`); `FieldOrder::Emitted` (`objemitted.ts`); `import_named_at`
+/// (`importat.ts`); `KeyAnswer::as_element_access` (`elemkey.ts`); `compile_call_with` and
+/// `Arg::Deferred` (`deferred.ts`); `calls_chain_outer` (`chainouter.ts`); `Cx::ordered_element_call` (`ordered.ts`); `import_named` of modules
 /// no program file imports, a package and a declaration file outside the source root (`notinprog.ts`).
 #[test]
 fn fwapi_fixture_matches_stock_typescript_5() {
-    let names = ["src", "lib", "tsconfig.json", "default.project.json", "package.json"];
-    let Some(project) = Project::copy_of(&fixture_dir_of("fwapi"), &names, "fwapi") else { return };
+    let Some(project) = fwapi_project("fwapi") else { return };
     let report = project.build(&["probe"], |_| {});
     assert!(report.fatal.is_empty(), "{:?}", report.fatal);
     assert_eq!(errors(&report), Vec::<String>::new());
     assert_expected_of("fwapi", &report, &[]);
+}
+
+/// `SetupCx::incremental_state_path`: the compiler's state file beside roblox-ts's build info, for every build of an
+/// incremental or composite project (whether or not this build writes state), `None` for any other project; deleting
+/// it makes the next build clean.
+#[test]
+fn incremental_state_path_names_the_compilers_state_file() {
+    let Some(project) = fwapi_project("statepath") else { return };
+    let state_message = |report: &CompileReport| -> Vec<String> {
+        report
+            .plugin_messages
+            .iter()
+            .filter(|m| m.contains("incremental state at") || m.contains("not incremental"))
+            .cloned()
+            .collect()
+    };
+    let root = project.root.to_string_lossy().replace('\\', "/");
+    let tsconfig = std::fs::read_to_string(project.root.join("tsconfig.json")).unwrap();
+    let with = |extra: &str| tsconfig.replacen("\"compilerOptions\": {", &format!("\"compilerOptions\": {{{extra}"), 1);
+
+    // not incremental
+    let report = project.build(&["probe"], |_| {});
+    assert_eq!(errors(&report), Vec::<String>::new());
+    assert_eq!(state_message(&report), vec!["probe: not incremental"]);
+
+    // incremental: beside roblox-ts's build info (`tsconfig.rbxtsc.tsbuildinfo`), where the compiler writes it
+    project.write("tsconfig.json", &with("\"incremental\": true,"));
+    let report = project.build(&["probe"], |_| {});
+    assert_eq!(errors(&report), Vec::<String>::new());
+    // (`rootDir` src and `outDir` out put TypeScript's build info, so roblox-ts's and the compiler's, at the project
+    // directory: `out/` plus the tsconfig's path relative to `src/`)
+    let expected = format!("probe: incremental state at {root}/tsconfig.rbxts-rs.buildinfo");
+    assert_eq!(state_message(&report), vec![expected.clone()]);
+    assert!(project.root.join("tsconfig.rbxts-rs.buildinfo").is_file(), "the compiler's state is that file");
+
+    // the same path for builds that write no state: --noWrite, write-partial, an outDir override
+    let elsewhere = project.root.join("elsewhere").to_string_lossy().into_owned();
+    let changes: [(&str, Box<dyn Fn(&mut CompileOptions) + Send + Sync>); 3] = [
+        ("no-write", Box::new(|o| o.no_write = true)),
+        ("write-partial", Box::new(|o| o.write_partial = true)),
+        ("out-dir override", Box::new(move |o| o.out_dir_override = Some(elsewhere.clone()))),
+    ];
+    for (label, change) in &changes {
+        let report = project.build_compile(&["probe"], None, |_| {}, |o| change(o));
+        assert_eq!(state_message(&report), vec![expected.clone()], "{label}");
+    }
+
+    // composite, with tsBuildInfoFile: `<base>.tsbuildinfo` gives `<base>.rbxts-rs.buildinfo`
+    project.write("tsconfig.json", &with("\"composite\": true, \"tsBuildInfoFile\": \"cache/build.tsbuildinfo\","));
+    let report = project.build_compile(&["probe"], None, |_| {}, |o| o.no_write = true);
+    assert_eq!(state_message(&report), vec![format!("probe: incremental state at {root}/cache/build.rbxts-rs.buildinfo")]);
+}
+
+/// `compile_object_literal`: a `replace` (or `rename`) naming a key the literal writes only as an accessor reports
+/// roblox-ts's own error at the accessor, as lowering the literal would, not an internal error; a key the literal
+/// does not write at all stays a plugin bug (an internal error).
+#[test]
+fn an_edit_of_an_accessor_key_is_roblox_ts_s_error() {
+    let Some(project) = fwapi_project("objaccessor") else { return };
+    project.write(
+        "src/shared/accessors.d.ts",
+        "/** @probe objaccessor */\ndeclare function probeObjAccessor<T>(literal: T): T;\n",
+    );
+    project.write(
+        "src/shared/accessor.ts",
+        "export const x = probeObjAccessor({ get attributes() { return 1; }, other: 2 });\n",
+    );
+    let report = project.build(&["probe"], |_| {});
+    let found = errors(&report);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].starts_with("error accessor.ts: Getters and Setters are not supported!"), "{found:?}");
+    assert!(report.files.iter().all(|f| !f.written));
+
+    project.write("src/shared/accessor.ts", "export const x = probeObjAccessor({ other: 2 });\n");
+    let report = project.build(&["probe"], |_| {});
+    let found = errors(&report);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("internal error: plugin `probe`: compile_object_literal: replace names `attributes`, which is not a written key"), "{found:?}");
 }

@@ -14,7 +14,9 @@ do
 	function Decorated:constructor()
 	end
 	Decorated.count = 1
-	Decorated.__probed = "probe"
+	do
+		Decorated.__probed = "probe"
+	end
 	Decorated = probeDecorator("probed")(Decorated) or Decorated
 end
 local Plain

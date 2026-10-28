@@ -291,7 +291,8 @@ const NEW_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
 /// file name rules (case-insensitive on Windows). rbxts-rs: roblox-ts's own diagnostics, ad hoc messages here, show
 /// roblox-ts's code (`TS roblox-ts`, from `createTextDiagnostic` and `createDiagnosticWithLocation`) instead of tsrs's
 /// `TS-1`; a plugin diagnostic with a source (`Plugin::diagnostic_source`, `PluginDiagnostic::source`) shows that
-/// source instead (`TS @flamework-experimental/transformer`).
+/// source instead (`TS @flamework-experimental/transformer`), and one with a code (`PluginDiagnostic::code`) the code
+/// as TypeScript shows its own (`TS1117`).
 pub fn format_diagnostic(diagnostic: P<Diagnostic>, cwd: &str) -> String {
     format_with(diagnostic, cwd, cfg!(not(windows)))
 }
@@ -305,8 +306,9 @@ pub fn format_diagnostic_logged(diagnostic: P<Diagnostic>, cwd: &str) -> String 
 fn format_with(diagnostic: P<Diagnostic>, cwd: &str, case_sensitive: bool) -> String {
     let code = |diagnostic: P<Diagnostic>| {
         if diagnostic.code() == -1 {
-            // a plugin diagnostic with a source shows it in the code slot, as the TS transformers' do (`code: " <name>"`)
-            format!(" {}", rbxts_transform::plugins::diagnostic_source(diagnostic).unwrap_or("roblox-ts"))
+            // a plugin diagnostic with a code or a source shows it in the code slot, as the TS transformers' do
+            // (`code: 1117`, `code: " <name>"`)
+            rbxts_transform::plugins::diagnostic_code_slot(diagnostic).unwrap_or_else(|| " roblox-ts".to_owned())
         } else {
             diagnostic.code().to_string()
         }

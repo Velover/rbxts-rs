@@ -400,6 +400,7 @@ fn chain_site(
         receiver,
         in_optional_chain: tsrs_ast::is_optional_chain(node),
         value_used: !is_used_as_statement(node),
+        chain_outer: false,
     };
     let mut context = CallContext::new(site, shape, None);
     context.item = Some(*item);
@@ -456,6 +457,60 @@ fn claim_chain_lazy_slow(
         }
     }
     None
+}
+
+/// The chain's outermost link, when it is a call after a `?.` (or an optional call itself), offered before anything of
+/// the chain is compiled to the call plugins that registered `calls_chain_outer` (`CallSite::chain_outer`), as a TS
+/// transformer sees the chain's outermost `CallExpression`. A value taken replaces the whole chain; `None` lowers
+/// the chain as usual, and the call is offered again inside it (a decline here is not the call's decline).
+#[inline]
+pub fn claim_chain_outer(state: &mut TransformState<'_>, prereqs: &mut Prereqs, chain: &[ChainItem]) -> Option<Expr> {
+    let host = state.plugins?;
+    if !host.any_chain_outer {
+        return None;
+    }
+    claim_chain_outer_slow(state, host, prereqs, chain)
+}
+
+#[inline(never)]
+fn claim_chain_outer_slow(
+    state: &mut TransformState<'_>,
+    host: &PluginHost,
+    prereqs: &mut Prereqs,
+    chain: &[ChainItem],
+) -> Option<Expr> {
+    let (outer, before) = chain.split_last()?;
+    if is_access(outer) {
+        return None;
+    }
+    // after a `?.` link, or an optional call itself (`o.m?.()`, `f?.()`): not the chain's lazily offered first call
+    let own_optional = is_optional_call(outer) || (matches!(outer.kind, ChainItemKind::Call) && outer.optional);
+    if !own_optional && !outer.optional && !before.iter().any(|item| item.optional || is_optional_call(item)) {
+        return None;
+    }
+    let node = outer.node;
+    if state.plugin_file.in_offer.contains(&node) || state.plugin_file.offered.contains(&node) {
+        return None;
+    }
+    let (mut context, method) = chain_site(state, host, outer)?;
+    let candidates: Vec<(usize, Tag)> = call_candidates(state, host, &context.site, method)
+        .into_iter()
+        .filter(|&(plugin, _)| host.plugins[plugin].chain_outer)
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    finish_kind(state, &mut context);
+    context.site.chain_outer = true;
+    context.site.in_optional_chain = true;
+    context.chain_outer = Some(own_optional);
+    let declined_before = state.plugin_file.call_declined.contains(&node);
+    let value = offer_call(state, host, prereqs, &mut context, &candidates);
+    if value.is_none() && !declined_before {
+        // declined as the chain's outer call only: offered again where the chain lowering reaches it
+        state.plugin_file.call_declined.remove(&node);
+    }
+    value
 }
 
 /// The chain's first call, offered to the call plugins before its callee is compiled. The claimed value, or the
@@ -622,6 +677,7 @@ fn claim_new_slow(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P
         receiver: None,
         in_optional_chain: false,
         value_used: !is_used_as_statement(node),
+        chain_outer: false,
     };
     let candidates = call_candidates(state, host, &site, None);
     if candidates.is_empty() {
@@ -646,12 +702,15 @@ fn claim_decorator_slow(state: &mut TransformState<'_>, prereqs: &mut Prereqs, d
         return None;
     }
     let expression = decorator.expression()?;
-    let inner = skip_downwards(expression);
-    let (call, callee, args): (Option<P<Node>>, P<Node>, &'static [P<Node>]) = if inner.kind() == Kind::CallExpression {
-        (Some(inner), inner.expression()?, inner.arguments())
-    } else {
-        (None, expression, &[])
-    };
+    // `@d(…)` is a decorator call; in `@(d(…))` (or `@(d(…) as T)`) the call is an ordinary call inside the
+    // decorator's expression, offered as a call when the parentheses are lowered, as a TS transformer sees it (a
+    // decorator whose expression is not a CallExpression, and a call node of its own)
+    let (call, callee, args): (Option<P<Node>>, P<Node>, &'static [P<Node>]) =
+        if expression.kind() == Kind::CallExpression {
+            (Some(expression), expression.expression()?, expression.arguments())
+        } else {
+            (None, expression, &[])
+        };
     let symbol = if host.any_symbol { callee_symbol(state, Some(skip_downwards(callee))) } else { None };
     let site = CallSite {
         node: decorator,
@@ -662,6 +721,7 @@ fn claim_decorator_slow(state: &mut TransformState<'_>, prereqs: &mut Prereqs, d
         receiver: None,
         in_optional_chain: false,
         value_used: true,
+        chain_outer: false,
     };
     let candidates = call_candidates(state, host, &site, None);
     if candidates.is_empty() {
@@ -858,6 +918,22 @@ fn access_candidates(state: &mut TransformState<'_>, host: &PluginHost, receiver
     matched.into_iter().map(|i| (host.access_markers[i].0, host.access_markers[i].2)).collect()
 }
 
+/// The callee key of a call through `access` with the key a plugin gave it ([`rewritten_key`]): the method name
+/// (`obj:key(…)`) when it is a valid Luau identifier, else the index (`obj[key](obj, …)`); the index whatever the key
+/// when the answer asked for the element access spelling (`KeyAnswer::as_element_access`), as roblox-ts lowers the
+/// element call a TS transformer wrote (`obj.key(obj, …)`).
+pub(crate) fn rewritten_callee_key(
+    state: &TransformState<'_>,
+    access: P<Node>,
+    key: &str,
+) -> crate::nodes::expressions::transform_call_expression::PropertyKey {
+    if state.plugin_file.element_key_answers.contains(&access) {
+        crate::nodes::expressions::transform_call_expression::PropertyKey::Index(rbxts_plugin::text_literal(key))
+    } else {
+        super::backend::property_key_of(key)
+    }
+}
+
 /// The key a plugin's `property_key` gave the access `access` (a PropertyAccessExpression or an
 /// ElementAccessExpression), when it differs from the site's key. `None` lowers the access as written. Asked once
 /// per access node; every lowering of it (a read, a write, a callee) gets the same answer. A caller that uses a
@@ -903,7 +979,7 @@ fn property_key_offer(
         let start = state.plugin_file.effect_mark(0);
         let (result, frame) =
             run_hook_framed(state, None, None, plugin, HookKind::PropertyKey, access, |instance, cx| {
-                instance.property_key(cx, &site, tag)
+                instance.property_key_answer(cx, &site, tag)
             });
         match result {
             Ok(Claim::Take(_)) if key.is_none() => {
@@ -916,11 +992,14 @@ fn property_key_offer(
                 state.plugin_internal_error(access, &message);
                 return None;
             }
-            // the key as it is lowers the access as written
-            Ok(Claim::Take(new_key)) => {
-                let changed = Some(new_key.as_str()) != key;
+            // the key as it is lowers the access as written, unless it asks for the element access spelling
+            Ok(Claim::Take(answer)) => {
+                let changed = Some(answer.key.as_str()) != key || answer.as_element_access;
                 state.plugin_file.emitted |= changed;
-                return changed.then_some(new_key);
+                if answer.as_element_access {
+                    state.plugin_file.element_key_answers.insert(access);
+                }
+                return changed.then_some(answer.key);
             }
             Ok(Claim::Decline) => {
                 let now = state.plugin_file.effect_mark(0);
@@ -1860,16 +1939,37 @@ fn find_user_import(
 /// `import_named`: the value of `export` from `specifier`, imported once per file. A user import of the same
 /// export is reused (and kept alive); otherwise a `local <export> = TS.import(…).<export>` goes with the plugin
 /// imports at the top of the file, named after the export unless a name in the file could shadow it.
+///
+/// `at` (`import_named_at`) orders the import as if it were asked for at that node's start instead of the hook's
+/// node: a request of an import already asked for moves it to the earliest position asked, keeping its place in
+/// the request order for ties.
 pub(crate) fn import_named(
     state: &mut TransformState<'_>,
     host: &PluginHost,
     anchor: P<Node>,
     specifier: &str,
     export: &str,
+    at: Option<P<Node>>,
 ) -> Result<Expr, String> {
+    if let Some(at) = at
+        && tsrs_ast::get_source_file_of_node(at) != Some(state.source_file)
+    {
+        return Err("import_named_at: `at` is not a node of the file being transformed".to_owned());
+    }
+    let position_of = |node: P<Node>| if node.kind() == Kind::SourceFile { 0 } else { crate::util::traversal::get_start(node) };
     let key = (specifier.to_owned(), export.to_owned());
     if let Some(value) = state.plugin_file.import_cache.get(&key) {
-        return Ok(value.clone());
+        let value = value.clone();
+        if let Some(at) = at {
+            let position = position_of(at);
+            if let Some(import) =
+                state.plugin_file.imports.iter_mut().find(|i| i.specifier == specifier && i.export == export)
+                && position < import.order.0
+            {
+                import.order.0 = position;
+            }
+        }
+        return Ok(value);
     }
     let file = state.source_file;
     let resolved = host
@@ -1918,7 +2018,7 @@ pub(crate) fn import_named(
         let same_path = state.plugin_file.imports.iter().filter(|i| i.specifier == specifier).count();
         state.plugin_file.main_chunk_locals += if same_path == 1 { 2 } else { 1 };
         let value: Expr = id.clone().into();
-        let position = if anchor.kind() == Kind::SourceFile { 0 } else { crate::util::traversal::get_start(anchor) };
+        let position = position_of(at.unwrap_or(anchor));
         let order = (position, state.plugin_file.imports.len());
         state.plugin_file.imports.push(PluginImport {
             specifier: specifier.to_owned(),

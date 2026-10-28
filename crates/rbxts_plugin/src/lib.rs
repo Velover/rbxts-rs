@@ -169,6 +169,7 @@
 //! cached files transformed again in a new process.
 
 mod cx;
+pub mod effects;
 pub mod erased;
 mod escape;
 mod finish_cx;

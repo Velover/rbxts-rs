@@ -1,10 +1,11 @@
 //! `SetupCx`: what [`crate::Plugin::setup`] can ask of the compiler (DESIGN §11.3, §14).
 
+use std::cell::OnceCell;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rbxts_project::{ProjectServices, ResolvedModuleInfo};
+use rbxts_project::{ProjectServices, ResolvedModuleInfo, nodepath};
 use serde_json::{Map, Value};
 use tsrs_compiler::Program;
 use tsrs_core::{CompilerOptions, P};
@@ -91,12 +92,37 @@ pub trait SetupBackend {
 /// The context of [`crate::Plugin::setup`]; forwards to [`SetupBackend`].
 pub struct SetupCx<'a> {
     backend: &'a mut dyn SetupBackend,
+    incremental_state_path: OnceCell<Option<PathBuf>>,
 }
 
 impl<'a> SetupCx<'a> {
     /// Wraps the compiler's backend for one `setup` call.
     pub fn new(backend: &'a mut dyn SetupBackend) -> SetupCx<'a> {
-        SetupCx { backend }
+        SetupCx { backend, incremental_state_path: OnceCell::new() }
+    }
+
+    /// The compiler's incremental state file of this project, absolute: `<base>.rbxts-rs.buildinfo` beside
+    /// roblox-ts's build info (`<base>.rbxtsc.tsbuildinfo`, [`rbxts_project::setup::incremental_state_path`]).
+    /// Deleting it makes the next build of the project a clean one, so it is the file a remedy asks the user to
+    /// delete. `None` only when the project is not `incremental` or `composite` (no build of it keeps state).
+    ///
+    /// It names the project's file whatever this build does: a build that writes no state (`--noWrite`,
+    /// write-partial, an `outDir` override) gets the same path as one that does. Whether the file exists is not
+    /// checked.
+    pub fn incremental_state_path(&self) -> Option<&Path> {
+        self.incremental_state_path
+            .get_or_init(|| {
+                let services = self.backend.project();
+                let build_info = services.path_translator.build_info_output_path.as_deref()?;
+                let path = rbxts_project::setup::incremental_state_path(build_info);
+                let absolute = if nodepath::is_absolute(&path) {
+                    nodepath::normalize(&path)
+                } else {
+                    nodepath::resolve(&[&services.data.project_path, &path])
+                };
+                Some(PathBuf::from(absolute))
+            })
+            .as_deref()
     }
 
     /// The program ([`SetupBackend::program`]).

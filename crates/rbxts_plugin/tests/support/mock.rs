@@ -827,6 +827,7 @@ impl MockCompiler {
                     receiver: None,
                     in_optional_chain: false,
                     value_used: true,
+                    chain_outer: false,
                 };
                 backend.phase = Phase::Claim;
                 let outcome = match guarded(&mut backend, |cx| instance.call(cx, &site, tag)) {

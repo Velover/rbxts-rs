@@ -11,7 +11,7 @@ use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::expressions::transform_import_expression::transform_import_expression;
 use crate::nodes::transform_macro_call::{MacroKind, transform_macro_call};
 use crate::nodes::transform_optional_chain::transform_optional_chain;
-use crate::plugins::backend::{keyed_access, property_key_of};
+use crate::plugins::backend::keyed_access;
 use crate::util::add_one_if_array_type::add_one_if_array_type;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
 use crate::util::ensure_transform_order::ensure_transform_order;
@@ -221,7 +221,7 @@ pub fn transform_property_call_expression_inner(
     let method = is_method(state, expression);
     // rbxts-rs: a plugin's `property_key` (DESIGN §11.5)
     let key = match crate::plugins::dispatch::rewritten_key(state, expression, AccessPosition::Callee) {
-        Some(key) => property_key_of(&key),
+        Some(key) => crate::plugins::dispatch::rewritten_callee_key(state, expression, &key),
         None => PropertyKey::Name(name.to_owned()),
     };
     let mut exp = create_ordered_property_call(
@@ -323,7 +323,7 @@ pub fn transform_element_call_expression_inner(
     let mut args = ensure_transform_order(state, &mut args_prereqs, node_arguments);
     fix_void_arguments_for_roblox_functions(state, exp_type, &mut args, node_arguments);
     let key = match rewritten {
-        Some(key) => property_key_of(&key),
+        Some(key) => crate::plugins::dispatch::rewritten_callee_key(state, expression, &key),
         None => {
             let receiver_type = state.get_type(access.expression);
             let receiver_type = state.checker.get_non_optional_type(receiver_type);

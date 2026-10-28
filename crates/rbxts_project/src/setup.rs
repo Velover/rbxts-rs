@@ -671,6 +671,15 @@ pub fn get_root_dirs(opts: &CompilerOptions) -> Vec<String> {
     if !opts.root_dir.is_empty() { vec![opts.root_dir.clone()] } else { opts.root_dirs.clone().unwrap_or_default() }
 }
 
+/// Where rbxts-rs keeps the incremental state of a project whose roblox-ts build info is `build_info`
+/// (`PathTranslator::build_info_output_path`, `<base>.rbxtsc.tsbuildinfo`): `<base>.rbxts-rs.buildinfo` beside it,
+/// with `.rbxtsc.tsbuildinfo`, else `.tsbuildinfo`, stripped. The one naming of the file, for the compiler's state and
+/// for plugins (`SetupCx::incremental_state_path`).
+pub fn incremental_state_path(build_info: &str) -> String {
+    let base = build_info.strip_suffix(".rbxtsc.tsbuildinfo").or_else(|| build_info.strip_suffix(".tsbuildinfo"));
+    format!("{}.rbxts-rs.buildinfo", base.unwrap_or(build_info))
+}
+
 /// TypeScript 5's `getTsBuildInfoEmitOutputFilePath` (the build info of an incremental or composite build): tsc's
 /// own file, which roblox-ts's clean keeps beside its `.rbxtsc.tsbuildinfo`.
 pub fn ts5_build_info_path(opts: &CompilerOptions) -> Option<String> {

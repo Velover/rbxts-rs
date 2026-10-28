@@ -51,13 +51,15 @@ pub struct DiskDiagnostic {
     pub plugin: bool,
     /// (file, pos, end, category, text) of each related information (file `None`: none).
     pub related: Vec<(Option<String>, u32, u32, u8, String)>,
+    /// A plugin diagnostic's TypeScript code (`PluginDiagnostic::code`), which takes the code slot.
+    pub code: Option<u32>,
 }
 
 impl DiskDiagnostic {
     fn to_json(&self) -> Value {
         let related: Vec<Value> =
             self.related.iter().map(|(file, pos, end, category, text)| json!([file, pos, end, category, text])).collect();
-        json!([self.file, self.pos, self.end, self.category, self.text, self.source, self.plugin, related])
+        json!([self.file, self.pos, self.end, self.category, self.text, self.source, self.plugin, related, self.code])
     }
 
     fn from_json(value: &Value) -> Option<DiskDiagnostic> {
@@ -84,6 +86,10 @@ impl DiskDiagnostic {
                     ))
                 })
                 .collect::<Option<_>>()?,
+            code: match value.get(8) {
+                None | Some(Value::Null) => None,
+                Some(code) => Some(u32::try_from(code.as_u64()?).ok()?),
+            },
         })
     }
 }
@@ -181,8 +187,7 @@ pub fn compiler_identity() -> String {
 
 /// Where the state of a project with roblox-ts build info at `build_info` goes.
 pub fn state_path(build_info: &str) -> String {
-    let base = build_info.strip_suffix(".rbxtsc.tsbuildinfo").or_else(|| build_info.strip_suffix(".tsbuildinfo"));
-    format!("{}.rbxts-rs.buildinfo", base.unwrap_or(build_info))
+    rbxts_project::setup::incremental_state_path(build_info)
 }
 
 fn strings(value: &Value) -> Option<Vec<String>> {
@@ -468,6 +473,7 @@ mod tests {
                         source: Some("@probe/inputs".into()),
                         plugin: true,
                         related: vec![(Some("E:/p/src/b.ts".into()), 0, 4, 3, "declared here".into()), (None, 0, 0, 3, "x".into())],
+                        code: Some(1117),
                     },
                     DiskDiagnostic {
                         file: None,
@@ -478,6 +484,7 @@ mod tests {
                         source: None,
                         plugin: false,
                         related: vec![],
+                        code: None,
                     },
                 ],
                 no_replay: false,

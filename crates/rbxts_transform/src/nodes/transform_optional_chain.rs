@@ -447,6 +447,11 @@ fn transform_optional_chain_inner(
 /// `transformOptionalChain`
 pub fn transform_optional_chain(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Expr {
     let (chain, expression) = flatten_optional_chain(node);
+    // rbxts-rs: the call plugins that asked for it may claim the chain's outermost call, after a `?.`, in place of
+    // the whole chain (`Interest::calls_chain_outer`)
+    if let Some(value) = crate::plugins::dispatch::claim_chain_outer(state, prereqs, &chain) {
+        return value;
+    }
     // rbxts-rs: plugins may claim a link before anything of the chain is compiled (DESIGN §11.5): the expression
     // hooks any link before the first `?.`, the call plugins the chain's first call
     if let Some((index, value)) = crate::plugins::dispatch::claim_chain_lazy(state, prereqs, &chain) {

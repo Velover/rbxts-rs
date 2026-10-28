@@ -1,7 +1,7 @@
 //! The `probe-inputs` test plugin (`rbxts_test_plugins::inputs`) through the command line, in processes of its own:
 //! this test binary is the compiler when `RBXTS_TEST_CHILD_ARGS` is set (the `child` test).
 //! - an incremental build in a new process transforms again only the files whose `Cx::env` reads read another value
-//!   now; a plugin diagnostic shows its source in TypeScript's code slot (`TS @probe/inputs`);
+//!   now; a plugin diagnostic shows its source in TypeScript's code slot (`TS @probe/inputs`), or its code (`TS1117`);
 //! - the watcher: a file a finish glob matches, a listed directory's entries, a path finish tested or read, a file a
 //!   file's glob matches, a glob root removed and created again; events that change no answer start nothing; a
 //!   listed directory that cannot be watched and builds failing before `finish` start no rebuild loop.
@@ -141,18 +141,21 @@ fn build(project: &Project, env: &[(&str, &str)]) -> (String, usize) {
 #[test]
 fn a_new_process_transforms_the_files_whose_environment_changed() {
     let Some(project) = Project::new("env", true) else { return };
-    project.write("src/shared/warned.ts", "// probe-warn probe-own-source\nexport const warned = 1;\n");
+    project.write("src/shared/warned.ts", "// probe-warn probe-own-source probe-code\nexport const warned = 1;\n");
     let (output, all) = build(&project, &[]);
     assert!(all > 3);
     // the plugin's source in the code slot, and a diagnostic's own
     assert!(output.contains(" TS @probe/inputs: \u{1b}[0mprobe-inputs warning"), "{output}");
     assert!(output.contains(" TS @probe/own: \u{1b}[0mprobe-inputs own source"), "{output}");
+    // a diagnostic with a code shows it as TypeScript shows its own (`TS1117`, which `$tsc`'s `TS\d+` matches)
+    assert!(output.contains(" TS1117: \u{1b}[0mprobe-inputs with a code"), "{output}");
     // nothing changed: the file with a glob only (its matcher is not persisted); the other files' warnings are reported
     // again from the incremental state, with their sources, as a clean build reports them
     let (again, count) = build(&project, &[]);
     assert_eq!(count, 1);
     assert!(again.contains(" TS @probe/inputs: \u{1b}[0mprobe-inputs warning"), "{again}");
     assert!(again.contains(" TS @probe/own: \u{1b}[0mprobe-inputs own source"), "{again}");
+    assert!(again.contains(" TS1117: \u{1b}[0mprobe-inputs with a code"), "{again}");
     // PROBE_FILE set: the two files that read it (one has the glob too), and nothing else
     assert_eq!(build(&project, &[("PROBE_FILE", "one")]).1, 2);
     assert!(project.read("out/shared/marked.luau").contains("env Some(\"one\")"));

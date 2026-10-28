@@ -20,7 +20,7 @@ use tsrs_core::P;
 
 use crate::{
     AccessSite, AssignSite, CallSite, ChangeSet, CheckerInfo, Claim, ClassSite, Cx, Fatal,
-    FileIndex, FinishCx, Interest, LuauExpr, LuauStmt, PResult, Plugin, PluginDiagnostic,
+    FileIndex, FinishCx, Interest, KeyAnswer, LuauExpr, LuauStmt, PResult, Plugin, PluginDiagnostic,
     PluginInfo, PluginInstance, RebuildPlan, SetupCx, SymbolRole, Tag,
 };
 
@@ -121,6 +121,8 @@ pub trait DynInstance {
         access: &AccessSite,
         tag: Tag,
     ) -> PResult<Claim<String>>;
+    /// [`PluginInstance::property_key_answer`].
+    fn property_key_answer(&self, cx: &mut Cx<'_>, access: &AccessSite, tag: Tag) -> PResult<Claim<KeyAnswer>>;
     /// [`PluginInstance::assignment`].
     fn assignment(&self, cx: &mut Cx<'_>, site: &AssignSite, tag: Tag) -> PResult<Claim<LuauExpr>>;
     /// [`PluginInstance::class`].
@@ -262,6 +264,10 @@ impl<I: PluginInstance> DynInstance for ErasedInstance<I> {
         tag: Tag,
     ) -> PResult<Claim<String>> {
         self.0.property_key(cx, access, tag)
+    }
+
+    fn property_key_answer(&self, cx: &mut Cx<'_>, access: &AccessSite, tag: Tag) -> PResult<Claim<KeyAnswer>> {
+        self.0.property_key_answer(cx, access, tag)
     }
 
     fn assignment(&self, cx: &mut Cx<'_>, site: &AssignSite, tag: Tag) -> PResult<Claim<LuauExpr>> {

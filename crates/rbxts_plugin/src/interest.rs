@@ -31,6 +31,7 @@ pub struct ReceiverInterest {
 #[derive(Clone, Debug, Default)]
 pub struct Interest {
     calls_by_symbol: bool,
+    calls_chain_outer: bool,
     receiver_calls: Vec<ReceiverInterest>,
     callee_markers: Vec<(&'static str, Tag)>,
     access_markers: Vec<(&'static str, Tag)>,
@@ -53,6 +54,26 @@ impl Interest {
     /// `Some(tag)` sends its calls to [`crate::PluginInstance::call`] with that tag.
     pub fn calls_by_symbol(&mut self) {
         self.calls_by_symbol = true;
+    }
+
+    /// Also offer this instance's calls (those its other call interests match) that are the outermost link of an
+    /// optional chain, before anything of the chain is compiled, with [`crate::CallSite::chain_outer`] set: as a TS
+    /// transformer sees the chain's outermost `CallExpression` (`maybe?.m<T>()`, `o.m?.(x)`, `o?.m?.(x)`,
+    /// `super.m?.()`) before roblox-ts lowers any of it. The hook can:
+    /// - take it with a value, which replaces the whole chain: nothing of the chain is evaluated (a TS transformer
+    ///   replacing the call node with a literal);
+    /// - take it with [`crate::Cx::compile_call`] (or `compile_call_with`) and a `Callee::Function` / `Callee::Method`:
+    ///   the chain is replaced by a call of that callee, which keeps only the call's own `?.` (TypeScript's
+    ///   `updateCallChain`): for `o.m?.(x)` the callee is read into a local and nil-checked, `Original` slots compiled
+    ///   inside the check (`local _m = f; if _m ~= nil then _m = _m(x) end`); for `o?.m(x)` it is a plain call;
+    ///   `Callee::Original` and `compile_receiver` are refused (an internal error naming the plugin): decline instead;
+    /// - decline it: the chain is lowered as usual, and the call offered again where it is offered today (inside the
+    ///   chain's nil check, `chain_outer` unset), to every call plugin. The rules of "Declining" apply.
+    ///
+    /// A chain whose first call comes before its first `?.` is offered that call lazily as usual; only the
+    /// outermost link, and only when it is a call after a `?.` (or is itself an optional call), gets this offer.
+    pub fn calls_chain_outer(&mut self) {
+        self.calls_chain_outer = true;
     }
 
     /// Method calls `obj.m(...)` with `m` in `methods` and `obj`'s type carrying `marker`, optional ones
@@ -121,6 +142,11 @@ impl Interest {
     /// Whether [`Interest::calls_by_symbol`] was registered.
     pub fn wants_calls_by_symbol(&self) -> bool {
         self.calls_by_symbol
+    }
+
+    /// Whether [`Interest::calls_chain_outer`] was registered.
+    pub fn wants_calls_chain_outer(&self) -> bool {
+        self.calls_chain_outer
     }
 
     /// The [`Interest::calls_by_receiver`] registrations, in order.

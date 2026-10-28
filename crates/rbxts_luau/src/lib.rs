@@ -6,6 +6,7 @@
 //! - [`create`]: builders mirroring `luau.create` / `luau.id` / `luau.call` …, and [`TempIds`] (`luau.tempId`).
 //! - [`globals`]: `luau.globals` and `luau.strings`.
 //! - [`facts`]: the evaluation facts roblox-ts records on nodes (`TSTransformer/util/evaluation/facts.ts`).
+//! - [`evaluation`]: the effect analysis over those facts (`util/evaluation/effects.ts`).
 //! - [`render()`]: `renderAST`, with [`LateStrings`] for string literals whose text is known only after the
 //!   transform (DESIGN §4 step 5).
 //! - name and number rules: [`is_valid_identifier`], [`is_metamethod`], [`is_reserved_identifier`],
@@ -22,6 +23,7 @@
 
 pub mod ast;
 pub mod create;
+pub mod evaluation;
 pub mod facts;
 pub mod globals;
 mod render;

@@ -53,26 +53,39 @@
 //!   build, beside roblox-ts's own and across files; the copy with related information is the one kept);
 //! - `importfrom`: `import_named(path, export)` of its two string literal arguments (plugin imports are grouped by
 //!   path, in the order each path was first asked for);
+//! - `orderedcall`: `ordered_element_call(compile_expr(o), capture(k), [capture(a)…], method)` for
+//!   `probeOrderedCall(o, k, a…)`, roblox-ts's `o[k](a…)`;
+//! - `deferred`: `compile_call_with(Original, [Original(a), Deferred(0), Original(b)])`, `Deferred(0)` built as
+//!   `compile_expr(c)` of the third argument;
+//! - `importatclass`: `import_named_at(path, export, <the enclosing class>)` of its two string literal arguments;
+//! - `objemitted`: `compile_object_literal` with `FieldOrder::Emitted`, the members reversed and `w = 4` appended
+//!   (first); `objaccessor`: a `replace` of `attributes`, which the literal writes as an accessor (roblox-ts's error);
 //! - `latesynth`: `late_string_synthesized`, resolved in `finish` to `ünï "<plugin>"\t#<n>` (numbered with `late`'s);
 //! - `boom`: panics in [`Mode::Panic`]; `fail`: an error in [`Mode::Fail`]; `err`: `Err` with no new error in
 //!   [`Mode::ErrWithoutError`]; declined otherwise.
 //!
 //! **By receiver**: `obj.probeMethod(x)` where `obj`'s type has `__probeMarker` →
 //! `compile_call(Method { compile_receiver, "probed" }, [Original(x)])`.
+//! **Chains' outer calls** ([`Interest::calls_chain_outer`]): `x.inline()` / `x.rewrite(…)` where `x`'s type has
+//! `__probeChain`, offered as the outermost call of an optional chain: `inline` takes the value `"inlined"` (the whole
+//! chain replaced), `rewrite` `compile_call(Function(Rewrite.impl), [Original(args)…])` (the call keeps only its own
+//! `?.`); every other call declines a chain's outer offer, and these decline anywhere else.
 //! **By callee marker**: `f(x)` where `f`'s type has `__probeCallee` → `compile_call(Original, [Original(x),
 //! Luau(1)])`.
 //! **Property keys**: accesses whose receiver has `__probeKey` get the key `k_<key>` (`key with space` for `swap`, the
-//! written key for `same`); computed keys (`key` `None`) are declined, but for a key node `probeTakeComputed`, which
+//! written key for `same`; through `property_key_answer`, `k_elem` for `elem` and the written key for `elemsame`, both
+//! with the element access spelling); computed keys (`key` `None`) are declined, but for a key node `probeTakeComputed`, which
 //! is taken (an internal error).
 //! **Assignments**: to `this.<p>.key` where `p`'s JSDoc has `@probeattrs`: `self:setAttribute("key", value[, true])`
 //! (compound values with `compile_binary`); a computed key is `compile_expr(site.key_node)`; `@probeattrsread`
 //! compiles the target whatever the operation.
-//! **Class hook** (decorated classes): `Class.__probed = "<name>"`; [`Mode::ClassSelf`] compiles a class expression
+//! **Class hook** (decorated classes): `do Class.__probed = "<name>" end` (a static block's lowering); [`Mode::ClassSelf`] compiles a class expression
 //! itself (an internal error).
 //! **By kind**: `void probeVoid` becomes `"void claimed"` (other `void`s are declined); `debugger` becomes
 //! `print("probe: debugger")`.
 //! **explain_checker_diagnostic**: a checker message naming `probeBroken` is replaced; one naming `probeLoud` is not, but
 //! explaining it reports an error (`probe: an error while explaining`, at the file).
+//! **Setup**: an info message naming `incremental_state_path` (`incremental state at <path>`, or `not incremental`).
 //! **Finish**: an artifact `probe-report.json` with the claims per file; in [`Mode::Unresolved`] one late key is left
 //! unresolved, in [`Mode::ArtifactOutside`] an artifact goes outside the project.
 //! **[`Mode::Refuse`]** calls refused primitives in each phase: `prereq` in `begin_file`, `late_string` in
@@ -85,7 +98,7 @@ use rbxts_luau::{AssignmentOperator, BinaryOperator, create};
 use rbxts_plugin::ts::{Diagnostic, Kind, Node, P, Symbol};
 use rbxts_plugin::{
     Abort, AccessSite, Arg, AssignOp, AssignSite, CallKind, CallSite, Callee, CheckerInfo, Claim, ClassFilter,
-    ClassSite, Cx, Fatal, FieldOrder, FileIndex, FinishCx, Interest, LuauExpr, LuauStmt, ObjectEdits, PResult, Plugin,
+    ClassSite, Cx, Fatal, FieldOrder, FileIndex, FinishCx, Interest, KeyAnswer, LuauExpr, LuauStmt, ObjectEdits, PResult, Plugin,
     PluginDiagnostic, PluginInfo, PluginInstance, SetupCx, SymbolRole, Tag, text_literal,
 };
 
@@ -194,6 +207,11 @@ const OPS: &[&str] = &[
     "importafter",
     "importfrom",
     "latesynth",
+    "objemitted",
+    "importatclass",
+    "deferred",
+    "orderedcall",
+    "objaccessor",
     "diagsame",
     "diagdecl",
 ];
@@ -209,6 +227,7 @@ const ATTRSREAD: Tag = Tag(109);
 const EXPRBIN: Tag = Tag(110);
 const EXPRACC: Tag = Tag(111);
 const BODY: Tag = Tag(112);
+const CHAIN: Tag = Tag(113);
 
 fn op(tag: Tag) -> &'static str {
     OPS.get(tag.0 as usize).copied().unwrap_or("?")
@@ -256,6 +275,14 @@ impl Plugin for Probe {
             panic!("probe: setup panic");
         }
         cx.info("probe set up");
+        // the compiler's incremental state file, as a remedy would name it
+        match cx.incremental_state_path() {
+            Some(path) => {
+                let path = path.to_string_lossy().replace('\\', "/");
+                cx.info(&format!("incremental state at {path}"));
+            }
+            None => cx.info("not incremental"),
+        }
         Ok(Arc::new(ProbeShared { name: self.name, mode: self.mode }))
     }
 
@@ -540,6 +567,27 @@ impl ProbeInstance {
                 let value = cx.compile_object_literal(arg(0).expect("an argument"), edits)?;
                 self.claimed(value)
             }
+            "objemitted" => {
+                // the literal rebuilt in reverse, with `w = 4` appended (so first): evaluated in that order
+                let literal = arg(0).expect("an argument");
+                let entries = literal.properties().len() as u32 + 1;
+                let edits = ObjectEdits {
+                    append: vec![(text_literal("w"), create::number(4.0))],
+                    order: FieldOrder::Emitted((0..entries).rev().collect()),
+                    ..ObjectEdits::default()
+                };
+                let value = cx.compile_object_literal(literal, edits)?;
+                self.claimed(value)
+            }
+            "objaccessor" => {
+                // a replace naming a key the literal writes only as an accessor: roblox-ts's error, not an internal one
+                let edits = ObjectEdits {
+                    replace: vec![("attributes".to_owned(), create::number(1.0))],
+                    ..ObjectEdits::default()
+                };
+                let value = cx.compile_object_literal(arg(0).expect("an argument"), edits)?;
+                self.claimed(value)
+            }
             "binary" => {
                 let value =
                     cx.compile_binary(Kind::PlusToken, arg(0).expect("an argument"), arg(1).expect("two arguments"))?;
@@ -714,6 +762,37 @@ impl ProbeInstance {
                 let value = cx.late_string_synthesized(&key);
                 self.claimed(value)
             }
+            "orderedcall" => {
+                // `Cx::ordered_element_call`: `probeOrderedCall(o, k, a, b)` is `o[k](o, a, b)` as roblox-ts orders it
+                let base = cx.compile_expr(arg(0).expect("a receiver"))?;
+                let key = cx.capture(|cx| cx.compile_expr(arg(1).expect("a key")))?;
+                let mut args = Vec::new();
+                for &argument in &call.args[2..] {
+                    args.push(cx.capture(|cx| cx.compile_expr(argument))?);
+                }
+                let value = cx.ordered_element_call(base, key, args, true)?;
+                self.claimed(value)
+            }
+            "deferred" => {
+                // `compile_call_with`: the third written argument built in the second slot, when the lowering gets
+                // there (`f(a, b, c)` -> `f(a, c, b)`, its temporaries named between `a`'s and `b`'s)
+                let (a, b, c) = (arg(0).expect("three arguments"), arg(1).expect("three"), arg(2).expect("three"));
+                let args = vec![Arg::Original(a), Arg::Deferred(0), Arg::Original(b)];
+                let value = cx.compile_call_with(call, Callee::Original, args, |cx, _| cx.compile_expr(c))?;
+                self.claimed(value)
+            }
+            "importatclass" => {
+                // `import_named_at` at the enclosing class: ordered as if asked for there (before its decorators')
+                let text = |node: Option<P<Node>>| node.expect("two arguments").text();
+                let mut class = call.node.parent();
+                while let Some(node) = class
+                    && !matches!(node.kind(), Kind::ClassDeclaration | Kind::ClassExpression)
+                {
+                    class = node.parent();
+                }
+                let value = cx.import_named_at(text(arg(0)), text(arg(1)), class.expect("inside a class"))?;
+                self.claimed(value)
+            }
             "importafter" => {
                 let value = cx.compile_expr(arg(0).expect("an argument"))?;
                 let other = cx.import_named("./runtime", "other")?;
@@ -775,6 +854,8 @@ impl PluginInstance for ProbeInstance {
             return;
         }
         interest.calls_by_receiver(&["probeMethod"], "__probeMarker", RECEIVER);
+        interest.calls_by_receiver(&["inline", "rewrite"], "__probeChain", CHAIN);
+        interest.calls_chain_outer();
         interest.calls_by_callee_marker("__probeCallee", CALLEE);
         interest.classes(ClassFilter::Decorated);
         interest.expressions(Kind::VoidExpression, VOID);
@@ -819,7 +900,27 @@ impl PluginInstance for ProbeInstance {
             cx.is_usable_local_name("touchedName");
             return Ok(Claim::Decline);
         }
+        // a chain's outer offer is taken for the chain ops only; every other call declines it, cleanly, and is
+        // offered again inside the chain (so its output is what it was without the offer)
+        if call.chain_outer && tag != CHAIN {
+            return Ok(Claim::Decline);
+        }
         match tag {
+            CHAIN => {
+                let name = call.callee.as_property_access_expression().name.text();
+                match (call.chain_outer, name) {
+                    // the chain replaced by a value, or by a call that keeps only the call's own `?.`
+                    (true, "inline") => self.claimed(text_literal("inlined")),
+                    (true, _) => {
+                        let callee = create::property(create::id("Rewrite"), "impl");
+                        let args = call.args.iter().map(|&a| Arg::Original(a)).collect();
+                        let value = cx.compile_call(call, Callee::Function(callee), args)?;
+                        self.claimed(value)
+                    }
+                    // not a chain's outer call: lowered as written
+                    (false, _) => Ok(Claim::Decline),
+                }
+            }
             RECEIVER => {
                 let object = cx.compile_receiver(call)?;
                 let args = call.args.iter().map(|&a| Arg::Original(a)).collect();
@@ -843,11 +944,12 @@ impl PluginInstance for ProbeInstance {
             }
             return Ok(Vec::new());
         }
-        Ok(vec![create::assignment(
+        // in a `do` block, as a TS transformer's `static { Class.__probed = "<name>" }` lowers
+        Ok(vec![create::do_stmt(vec![create::assignment(
             create::property(class.luau_name.clone(), "__probed"),
             AssignmentOperator::Assign,
             text_literal(self.name),
-        )])
+        )])])
     }
 
     fn expression(&self, cx: &mut Cx<'_>, node: P<Node>, tag: Tag) -> PResult<Claim<LuauExpr>> {
@@ -970,6 +1072,18 @@ impl PluginInstance for ProbeInstance {
             None if cx.source_text(access.key_node) == "probeTakeComputed" => "taken".to_owned(),
             None => return Ok(Claim::Decline),
         }))
+    }
+
+    fn property_key_answer(&self, cx: &mut Cx<'_>, access: &AccessSite, tag: Tag) -> PResult<Claim<KeyAnswer>> {
+        // `elem` and `elemsame` answer with the element access spelling (`k_elem`, and the written key)
+        match (tag, access.key) {
+            (KEY, Some("elem")) => Ok(Claim::Take(KeyAnswer::element("k_elem"))),
+            (KEY, Some("elemsame")) => Ok(Claim::Take(KeyAnswer::element("elemsame"))),
+            _ => Ok(match self.property_key(cx, access, tag)? {
+                Claim::Take(key) => Claim::Take(KeyAnswer::new(key)),
+                Claim::Decline => Claim::Decline,
+            }),
+        }
     }
 
     fn assignment(&self, cx: &mut Cx<'_>, site: &AssignSite, tag: Tag) -> PResult<Claim<LuauExpr>> {

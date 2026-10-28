@@ -269,6 +269,9 @@ pub struct PluginFileState {
     /// The `property_key` answers, by access node: one answer per access, however often it is lowered. `None` when
     /// every plugin declined (or a hook failed).
     pub key_answers: FxHashMap<P<Node>, Option<String>>,
+    /// The accesses whose `property_key_answer` asked for the element access spelling (`KeyAnswer::as_element_access`):
+    /// a call through them is roblox-ts's element call, `obj.key(obj, …)`.
+    pub element_key_answers: FxHashSet<P<Node>>,
     /// Locals each function body declared at its top level so far, by body node (`locals().function`).
     pub function_locals: FxHashMap<P<Node>, u32>,
     /// `hoist_spillable` locals, in hoist order: spilled into one table when the main chunk passes Luau's limit.

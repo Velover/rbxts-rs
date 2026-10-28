@@ -13,7 +13,9 @@ do
 	end
 	function WithCall:constructor()
 	end
-	WithCall.__probed = "probe"
+	do
+		WithCall.__probed = "probe"
+	end
 	WithCall = probeDecoSelf("x")(WithCall) or WithCall
 end
 local WithoutCall
@@ -30,7 +32,9 @@ do
 	end
 	function WithoutCall:constructor()
 	end
-	WithoutCall.__probed = "probe"
+	do
+		WithoutCall.__probed = "probe"
+	end
 	WithoutCall = probeDecoSelfPlain(WithoutCall) or WithoutCall
 end
 return {
