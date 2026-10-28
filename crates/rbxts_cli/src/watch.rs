@@ -67,7 +67,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use notify::event::ModifyKind;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
@@ -937,6 +937,14 @@ fn relevant(path: &str, folder_modify: bool, watched: &Watched, own: &Own) -> bo
     watched.open_dirs.contains(parent) && watched.open_entry_counts(path, name)
 }
 
+/// The watcher's own times before a rebuild (`--timings`): from the burst's first event to the end of its debounce,
+/// and judging its paths.
+#[derive(Clone, Copy)]
+struct Burst {
+    debounce: Duration,
+    filter: Duration,
+}
+
 /// The watches of the last build that loaded a project, and those in use after a build that loaded none.
 struct Watches {
     good: Watched,
@@ -1241,7 +1249,7 @@ fn watch(
     let mut watched = Watches { good: minimal_set(&session), failed: None };
     status("Starting compilation in watch mode...");
     let (mut stale, again, _) =
-        rebuild(&mut session, &mut subscriptions, &mut watched, build, cwd, generation, &[], &mut own);
+        rebuild(&mut session, &mut subscriptions, &mut watched, build, cwd, generation, &[], &mut own, None);
     // the last build's commit changed what a plugin's setup read (its own state file created): one more build at
     // once, which runs that setup again; a build started that way starts no other (no loop, whatever a plugin
     // writes), unless it lost a state file itself: deleted or edited again by someone else since the last commit
@@ -1250,8 +1258,10 @@ fn watch(
     stale.extend(again);
     loop {
         // paths that changed before their directory was watched (already judged) start a rebuild of their own
+        let mut burst = None;
         let mut paths: Vec<String> = if stale.is_empty() {
-            let Some(events) = collect(&receiver) else { return 0 };
+            let Some((events, first)) = collect(&receiver) else { return 0 };
+            let filter = Instant::now();
             // a directory watched from now on is compared with the disk from here (the answers below read it)
             let since = SystemTime::now();
             watched.current().forget_listings();
@@ -1271,6 +1281,7 @@ fn watch(
                     stale = inputs::refresh(&session, &mut subscriptions, &mut watched, &own, since);
                 }
             }
+            burst = Some(Burst { debounce: filter - first, filter: filter.elapsed() });
             paths
         } else {
             std::mem::take(&mut stale)
@@ -1288,7 +1299,7 @@ fn watch(
         status("File change detected. Starting incremental compilation...");
         let (again, lost);
         (stale, again, lost) =
-            rebuild(&mut session, &mut subscriptions, &mut watched, build, cwd, generation, &paths, &mut own);
+            rebuild(&mut session, &mut subscriptions, &mut watched, build, cwd, generation, &paths, &mut own, burst);
         follow_up = (!follow_up || lost) && !again.is_empty();
         if follow_up {
             stale.extend(again);
@@ -1311,7 +1322,7 @@ fn watch(
 /// Whether a path is a directory is looked at once the burst ended, not while it runs: opening a directory being
 /// deleted leaves it pending deletion while the handle is open, and the deleting tool (`npm`, `rm -rf`) failing
 /// on it with EPERM. `None` when the watcher stopped.
-fn collect(receiver: &Receiver<notify::Result<Event>>) -> Option<Vec<(String, bool)>> {
+fn collect(receiver: &Receiver<notify::Result<Event>>) -> Option<(Vec<(String, bool)>, Instant)> {
     let mut paths: BTreeMap<String, bool> = BTreeMap::new();
     let add = |event: notify::Result<Event>, paths: &mut BTreeMap<String, bool>| match event {
         _ if debug() && {
@@ -1339,13 +1350,14 @@ fn collect(receiver: &Receiver<notify::Result<Event>>) -> Option<Vec<(String, bo
         Ok(_) => {}
     };
     add(receiver.recv().ok()?, &mut paths);
+    let first = Instant::now();
     loop {
         match receiver.recv_timeout(DEBOUNCE) {
             Ok(event) => add(event, &mut paths),
             Err(RecvTimeoutError::Timeout) => {
-                return Some(
-                    paths.into_iter().map(|(p, modify)| (p.clone(), modify && Path::new(&p).is_dir())).collect(),
-                );
+                let paths =
+                    paths.into_iter().map(|(p, modify)| (p.clone(), modify && Path::new(&p).is_dir())).collect();
+                return Some((paths, first));
             }
             Err(RecvTimeoutError::Disconnected) => return None,
         }
@@ -1373,7 +1385,9 @@ fn rebuild(
     generation: u64,
     paths: &[String],
     own: &mut Own,
+    burst: Option<Burst>,
 ) -> (Vec<String>, Vec<String>, bool) {
+    let rebuild_start = Instant::now();
     if build.events_json {
         println!("{{\"event\":\"build-start\",\"gen\":{generation},\"changes\":{}}}", json_list(paths));
     }
@@ -1382,6 +1396,7 @@ fn rebuild(
     if result.is_err() {
         session.reset();
     }
+    let built = Instant::now();
     // this build's own writes are known before the new watches look for changes
     if let Ok((_, summary)) = &result {
         let stamps: FxHashMap<String, rbxts_transform::build::outputs::Stamp> =
@@ -1398,7 +1413,8 @@ fn rebuild(
             own.insert(key(path), OwnWrite::Gone);
         }
     }
-    let start = std::time::Instant::now();
+    let start = Instant::now();
+    let own_time = start - built;
     match watched_set(session) {
         Some(set) => {
             watched.good = set;
@@ -1418,18 +1434,21 @@ fn rebuild(
     let computed = start.elapsed();
     let before = subscriptions.active.clone();
     let mut stale = subscriptions.update(watched.current(), since, own);
+    let updated = start.elapsed() - computed;
+    let recheck_start = Instant::now();
     // a recorded input read before its directory was watched: asked again now that it is (a watch made, not one
     // failing again)
     if result.is_ok() {
         let new_input_watches = watched.current().inputs.has_new_watches(&before, &subscriptions.active);
         stale.extend(inputs::recheck(session, &watched.current().inputs, new_input_watches));
     }
+    let recheck = recheck_start.elapsed();
     if debug() {
         let current = watched.current();
         eprintln!(
             "[rbxtsc watch] watch set {:.1} ms, update and scan {:.1} ms: {} reads, {} anchors, {} packages, {} recursive, {} flat",
             computed.as_secs_f64() * 1000.0,
-            (start.elapsed() - computed).as_secs_f64() * 1000.0,
+            updated.as_secs_f64() * 1000.0,
             current.reads.len(),
             current.anchors.len(),
             current.package_dirs.len(),
@@ -1456,10 +1475,25 @@ fn rebuild(
             return (stale, Vec::new(), false);
         }
     };
+    let report_start = Instant::now();
     print_report(&report, cwd, build);
     let errors = error_count(&report);
     if build.events_json {
         print_end(generation, &report, &summary, errors);
+    }
+    if build.timings {
+        let ms = |d: Duration| format!("{:.1}", d.as_secs_f64() * 1e3);
+        let burst = burst.map_or_else(String::new, |b| format!("debounce {} filter {} ", ms(b.debounce), ms(b.filter)));
+        println!(
+            "watch: {burst}build {} own {} watch set {} update and scan {} recheck {} report {} (to the status line {})",
+            ms(built - rebuild_start),
+            ms(own_time),
+            ms(computed),
+            ms(updated),
+            ms(recheck),
+            ms(report_start.elapsed()),
+            ms(rebuild_start.elapsed())
+        );
     }
     status(&format!("Found {errors} error{}. Watching for file changes.", if errors == 1 { "" } else { "s" }));
     (stale, summary.setup_inputs_changed, !summary.lost_state_files.is_empty())

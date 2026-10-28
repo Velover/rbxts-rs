@@ -1257,6 +1257,54 @@ fn an_artifact_may_not_overwrite_an_asset_output() {
     drop(copy);
 }
 
+/// The outputs a build finds on disk (listed before it writes) are compared with an artifact as the file system resolves
+/// both (`output_keys`): another spelling of a Luau output, or a path through a junction to it, is that output.
+#[test]
+fn an_artifact_may_not_overwrite_an_output_already_on_disk() {
+    let Some(node_modules) = node_modules() else {
+        rbxts_test_support::skip(module_path!(), "no node_modules with the roblox-ts tests' packages");
+        return;
+    };
+    let root = std::env::temp_dir().join(format!("rbxts-rs-watch-artifact-disk-{}", std::process::id()));
+    parity::remove_tree(&root);
+    let copy = Copy(root.clone());
+    parity::copy_tree(&fixtures().join("basic"), &root).unwrap();
+    parity::junction(&root.join("node_modules"), &node_modules).unwrap();
+    let build = |plugins: &[Box<dyn rbxts_plugin::erased::DynPlugin>]| {
+        big_stack(|| {
+            let options = PluginOptions { plugins, ignore_unknown_tsconfig_plugins: true, ..PluginOptions::default() };
+            let mut session = BuildSession::new(
+                CompileOptions {
+                    tsconfig: "tsconfig.json".into(),
+                    cwd: root.to_string_lossy().into_owned(),
+                    project_options: ProjectOptionLayer::default(),
+                    out_dir_override: None,
+                    write_partial: false,
+                    no_write: false,
+                    checkers: None,
+                },
+                &options,
+                false,
+            );
+            session.build(&[]).0.fatal
+        })
+    };
+    assert_eq!(build(&[]), Vec::<String>::new(), "the outputs are written");
+    let luau = root.join("out/shared/b.luau");
+    let written = std::fs::read(&luau).unwrap();
+    parity::junction(&root.join("out/via"), &root.join("out/shared")).unwrap();
+    for at in ["OUT/Shared/B.luau", "out/via/b.luau"] {
+        let fatal = build(&[erase(ArtifactAt(at))]);
+        assert!(
+            fatal.iter().any(|f| f.contains("artifact-at") && f.contains("is an output of this build")),
+            "{at}: {fatal:?}"
+        );
+        assert_eq!(std::fs::read(&luau).unwrap(), written, "{at}: the output is not overwritten");
+    }
+    let _ = std::fs::remove_dir(root.join("out/via"));
+    drop(copy);
+}
+
 #[test]
 fn a_watch_rebuild_load_checks_what_a_plugin_emitted_into() {
     let Some(node_modules) = node_modules() else {

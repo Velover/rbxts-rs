@@ -63,7 +63,7 @@ Options:
       --usePolling              use polling for watch mode                     [boolean]
       --events                  machine-readable watch events on stdout   [choices: \"json\"]
       --luau                    emit files with .luau extension                [boolean]
-      --timings                 print plugin hook timings                      [boolean]
+      --timings                 print plugin hook and phase timings            [boolean]
       --checkers                type checkers (one thread each)    [number] [default: 4]
   -h, --help                    show help
   -v, --version                 show version number";
@@ -349,7 +349,20 @@ pub fn print_report(report: &CompileReport, cwd: &str, build: &BuildArgs) {
     }
     if build.timings {
         print!("{}", format_plugin_timings(report));
+        println!("{}", format_phase_timings(report));
     }
+}
+
+/// The build's phase times on one line (`--timings`), in milliseconds; phases that took no time are left out.
+pub fn format_phase_timings(report: &CompileReport) -> String {
+    let phases: Vec<String> = report
+        .timings
+        .phases()
+        .iter()
+        .filter(|(_, time)| !time.is_zero())
+        .map(|(name, time)| format!("{name} {:.1}", time.as_secs_f64() * 1e3))
+        .collect();
+    format!("phases: {}", phases.join(" "))
 }
 
 /// The plugin hook timings as a table: plugin, hook, calls, milliseconds (hooks that never ran are left out).

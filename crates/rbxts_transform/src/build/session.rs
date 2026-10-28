@@ -76,7 +76,7 @@ use crate::compile::{
 use crate::plugins::host::{HookTime, resolve_module_from};
 use crate::plugins::lifecycle::{
     ActivePlugin, BuildInput, CommitQueue, Finish, PluginOptions, Setup, activate, commit_artifacts, commit_removals,
-    commit_state_files, output_key, plain_late_key, run_finish, run_setup,
+    commit_state_files, output_keys, plain_late_key, run_finish, run_setup,
 };
 use crate::plugins::spill::LoadCheck;
 use crate::plugins::{HookKind, PluginHost};
@@ -658,6 +658,7 @@ impl<'p> BuildSession<'p> {
 
     /// One build of this project alone (with the graph's facts when it is part of one).
     pub(super) fn build_project(&mut self, touched: &[String]) -> (CompileReport, BuildSummary) {
+        let start = Instant::now();
         let rebuilds = self.rebuilds;
         self.finish_ran = false;
         let committed = self.committed.take();
@@ -675,7 +676,7 @@ impl<'p> BuildSession<'p> {
             }
             (report, summary, committed, last)
         }));
-        let (report, summary, committed, last) = match result {
+        let (mut report, summary, committed, last) = match result {
             Ok(result) => result,
             Err(panic) => {
                 // the build's programs, the last build's included, unwound with it (the session forgets the last
@@ -693,7 +694,10 @@ impl<'p> BuildSession<'p> {
         };
         self.committed = committed;
         self.last = last;
+        let free = Instant::now();
         self.free_replaced(replaced);
+        report.timings.free = free.elapsed();
+        report.timings.total = start.elapsed();
         (report, summary)
     }
 
@@ -1236,6 +1240,7 @@ impl<'p> BuildSession<'p> {
         }
 
         // plugins: keep the Shared (rebuild_start) or set up again
+        let plan_start = Instant::now();
         let mut plans: Vec<Option<(ErasedShared, ErasedState, Vec<BuildInput>)>> = Vec::with_capacity(active.len());
         for plugin in &active {
             let record = committed.as_ref().and_then(|c| c.plugins.iter().find(|r| r.name == plugin.info.name));
@@ -1276,6 +1281,7 @@ impl<'p> BuildSession<'p> {
             }
             plans.push(kept);
         }
+        report.timings.plan = plan_start.elapsed();
         if !report.fatal.is_empty() {
             return (report, summary, committed, Some(loaded));
         }
@@ -1352,7 +1358,7 @@ impl<'p> BuildSession<'p> {
             all = true;
             summary.all = true;
         }
-        report.timings.invalidate = invalidate_start.elapsed();
+        report.timings.invalidate = invalidate_start.elapsed().saturating_sub(report.timings.plan);
 
         // 3. check the files to transform
         let start = Instant::now();
@@ -1781,20 +1787,16 @@ impl<'p> BuildSession<'p> {
         let rules = DirRules::new(services, &project.options(), &report.out_dir);
         let mut finished = run.is_none();
         if !any_errors && let Some(run) = run.as_mut() {
-            let mut luau_outputs = FxHashSet::default();
+            let mut output_paths = Vec::with_capacity(files.len() * 2);
             for &file in &files {
                 let name = file.get().file_name();
-                luau_outputs.insert(output_key(
-                    services,
-                    &output_path(services, name, self.options.out_dir_override.as_deref()),
-                ));
-                luau_outputs.insert(output_key(services, &services.path_translator.get_output_path(name)));
+                output_paths.push(output_path(services, name, self.options.out_dir_override.as_deref()));
+                output_paths.push(services.path_translator.get_output_path(name));
             }
             // the rest of the output set too (assets, declaration and transformed outputs): an artifact never
             // overwrites a copied asset
-            for path in &project_outputs.files {
-                luau_outputs.insert(output_key(services, path));
-            }
+            let luau_outputs =
+                output_keys(services, &listing, output_paths.iter().chain(&project_outputs.files).map(String::as_str));
             let mut resolved = FxHashSet::default();
             let mut errors = Vec::new();
             for (index, plugin) in run.active.iter().enumerate() {
@@ -2275,6 +2277,7 @@ impl<'p> BuildSession<'p> {
         }
 
         // 9. the new committed state
+        let start = Instant::now();
         let run_parts = run.map(|run| {
             (run.active.iter().map(|p| p.info.name).collect::<Vec<_>>(), run.shared, run.states, run.inputs)
         });
@@ -2440,6 +2443,7 @@ impl<'p> BuildSession<'p> {
         };
         summary.changes = changes;
         self.pending.clear();
+        report.timings.commit = start.elapsed();
         (report, summary, Some(committed), Some(loaded))
     }
 

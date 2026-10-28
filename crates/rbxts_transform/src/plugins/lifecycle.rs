@@ -21,6 +21,7 @@ use rbxts_plugin::{
     StateOrigin, Utf16Pos,
 };
 
+use crate::build::outputs::Listing;
 use crate::build::plugin_inputs::{
     DirRules, EnvSnapshot, FinishRead, RecordedGlob, plain, read_answer, read_dir_now, read_file_now, record_read,
     valid_env_name,
@@ -981,6 +982,47 @@ pub(crate) fn commit_state_files(queue: &CommitQueue) -> Result<Vec<String>, Str
 /// The key for a Luau output path, to keep artifacts off them.
 pub(crate) fn output_key(services: &ProjectServices, path: &str) -> String {
     real_key(services, path)
+}
+
+/// [`output_key`] of many paths, over the build's listing of the output roots (taken before anything was written):
+/// a file the listing found, not a link, has no link between the listed root it is under and itself (the listing
+/// enters no link), so its key is the root's real key with the rest of its own key appended, without a look at the
+/// file system per file (`real_key` canonicalises each path: a few hundred microseconds each on Windows, so most of a
+/// rebuild's time for a project of several hundred files). Any other path (not found, a link, outside the roots, the
+/// include folder the listing does not enter) gets [`output_key`].
+pub(crate) fn output_keys<'p>(
+    services: &ProjectServices,
+    listing: &Listing,
+    paths: impl IntoIterator<Item = &'p str>,
+) -> FxHashSet<String> {
+    // the roots the listing entered (a directory, not a link), longest first: (key, real key)
+    let mut roots: Vec<(String, OnceCell<String>, &str)> = listing
+        .roots
+        .iter()
+        .filter(|root| std::fs::symlink_metadata(root.as_str()).is_ok_and(|m| m.file_type().is_dir()))
+        .map(|root| (path_key(services, root), OnceCell::new(), root.as_str()))
+        .collect();
+    roots.sort_by_key(|(key, _, _)| std::cmp::Reverse(key.len()));
+    paths
+        .into_iter()
+        .map(|path| {
+            let key = path_key(services, path);
+            if listing.found.contains_key(&key) && !listing.links.contains(&key) {
+                // a root that ends in `/` (a drive) is followed by no other
+                let root = roots.iter().find(|(root, _, _)| {
+                    key.len() > root.len()
+                        && key.starts_with(root.as_str())
+                        && !root.ends_with('/')
+                        && key.as_bytes()[root.len()] == b'/'
+                });
+                if let Some((root, real, spelled)) = root {
+                    let real = real.get_or_init(|| real_key(services, spelled));
+                    return format!("{real}{}", &key[root.len()..]);
+                }
+            }
+            real_key(services, path)
+        })
+        .collect()
 }
 
 #[cfg(test)]

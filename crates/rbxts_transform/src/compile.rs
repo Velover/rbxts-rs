@@ -136,6 +136,77 @@ pub struct Timings {
     pub load_checked: u32,
     /// Writing the outputs, assets and state, and removing stale outputs.
     pub write: Duration,
+    /// Deciding, per plugin, whether a watch rebuild keeps its `Shared` (recorded inputs asked again,
+    /// `rebuild_start`).
+    pub plan: Duration,
+    /// Making the new committed state (the parts, diagnostics and late strings kept for the next build).
+    pub commit: Duration,
+    /// Freeing the programs a watch rebuild replaced.
+    pub free: Duration,
+    /// The whole build, as the session ran it.
+    pub total: Duration,
+}
+
+impl Timings {
+    /// The phases with a time, in build order, by name (`--timings`).
+    pub fn phases(&self) -> [(&'static str, Duration); 16] {
+        [
+            ("config", self.config),
+            ("program", self.program),
+            ("setup", self.setup),
+            ("invalidate", self.invalidate),
+            ("plan", self.plan),
+            ("check", self.check),
+            ("plugin_setup", self.plugin_setup),
+            ("transform", self.transform),
+            ("plugin_finish", self.plugin_finish),
+            ("render", self.render),
+            ("load_check", self.load_check),
+            ("write", self.write),
+            ("commit", self.commit),
+            ("free", self.free),
+            ("total", self.total),
+            ("other", self.total.saturating_sub(self.phases_sum())),
+        ]
+    }
+
+    /// The phases' times together (not `total`).
+    fn phases_sum(&self) -> Duration {
+        self.config
+            + self.program
+            + self.setup
+            + self.invalidate
+            + self.plan
+            + self.check
+            + self.plugin_setup
+            + self.transform
+            + self.plugin_finish
+            + self.render
+            + self.load_check
+            + self.write
+            + self.commit
+            + self.free
+    }
+
+    /// Adds another build's times (a project of a build with project references).
+    pub fn add(&mut self, other: &Timings) {
+        self.config += other.config;
+        self.program += other.program;
+        self.setup += other.setup;
+        self.invalidate += other.invalidate;
+        self.plan += other.plan;
+        self.check += other.check;
+        self.plugin_setup += other.plugin_setup;
+        self.transform += other.transform;
+        self.plugin_finish += other.plugin_finish;
+        self.render += other.render;
+        self.load_check += other.load_check;
+        self.load_checked += other.load_checked;
+        self.write += other.write;
+        self.commit += other.commit;
+        self.free += other.free;
+        self.total += other.total;
+    }
 }
 
 /// One project file's outcome.
