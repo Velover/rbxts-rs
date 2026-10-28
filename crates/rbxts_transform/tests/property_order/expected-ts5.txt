@@ -51,6 +51,29 @@ src/literals.ts var plainValue: pz, py, px
 src/literals.ts var spreadValue: sd, sa, sb, sc
 src/merge.ts decl Settings: volume, theme, scale
 src/merge.ts decl Settings: volume, theme, scale
+src/rests.ts decl GenericB: y, w, v, x
+src/rests.ts decl Holder: inner, other
+src/rests.ts decl Late: b
+src/rests.ts decl RestA: x, y
+src/rests.ts decl RestB: y, z, x
+src/rests.ts decl RestBase: k1, k2, method
+src/rests.ts decl RestDerived: k3, k1, k2, method
+src/rests.ts decl UnionP: y, p, x
+src/rests.ts decl UnionQ: x, q, y
+src/rests.ts var derived: k3, k1, k2, method
+src/rests.ts var genericB: y, w, v, x
+src/rests.ts var holder: inner, other
+src/rests.ts var late: b
+src/rests.ts var restB: y, z, x
+src/rests.ts var restOfClassValue: k3, k1, k2
+src/rests.ts var restOfGenericValue: y, w, x
+src/rests.ts var restOfInterfaceValue: y, x
+src/rests.ts var restOfNestedValue: z, x
+src/rests.ts var restOfOptionalValue: y, x
+src/rests.ts var restOfParameterValue: y, x
+src/rests.ts var restOfSpreadValue: b, a
+src/rests.ts var restOfUnionPValue: p, x
+src/rests.ts var restOfUnionQValue: x, q
 src/spreads.ts decl GX: gx2, gx1
 src/spreads.ts decl Instance: m, f, g, p, z
 src/spreads.ts decl Source: s2, s1

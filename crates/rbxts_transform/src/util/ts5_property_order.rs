@@ -23,10 +23,13 @@
 //!   TypeScript 7 sorts the result by declaration.
 //! - A homomorphic mapped type (`{ [P in keyof T]: ... }`, `resolveMappedTypeMembers`, 63030) follows `T`'s list,
 //!   which TypeScript 7 sorts.
+//! - An object rest (`const { a, ...rest } = source`, `getRestType`, 60364) lists the source's properties in the
+//!   source's order, the destructured ones left out; TypeScript 7 sorts the rest type by declaration.
 //!
 //! [`ts5_property_order`] rebuilds TypeScript 5's order, recursively, for class and interface types (declared, or
 //! references to generic ones), intersections, type literals, instantiations of anonymous types (in their target's
-//! order), homomorphic mapped types and object literal types. For a spread it follows `checkObjectLiteral`: only
+//! order), homomorphic mapped types, object literal types and object rests of a binding pattern (in their source's
+//! order; for a union source, the member the rest was made from). For a spread it follows `checkObjectLiteral`: only
 //! spreadable members, union operands as `tryMergeUnionOfObjectTypeAndEmptyObject` and `mapType` treat them, and a
 //! generic operand's intersection, whose object parts it orders one by one. Elsewhere it keeps TypeScript 7's order:
 //! - mapped types over a union of keys (`Record<K, V>`, `Pick`, `{ [P in K]: ... }`): TypeScript 5 follows the
@@ -34,6 +37,8 @@
 //! - an object literal type spread from a union of objects whose members hold the same property symbols in different
 //!   orders (a non-generic `PXY | PYX`, `interface PYX extends PY, PX`): which member it came from cannot be told,
 //!   and the first is taken;
+//! - an object rest of a destructuring assignment (`({ a, ...rest } = source)`), whose type names no binding pattern
+//!   (a type literal or object literal source is still ordered, through the source's symbol it takes);
 //! - the property list of a union type itself, and tuples.
 
 use tsrs_ast::{Kind, ModifierFlags, Node, Symbol, SymbolFlags};
@@ -161,14 +166,19 @@ fn own_names(checker: &mut Checker, t: P<Type>, symbol: P<Symbol>) -> Vec<&'stat
     names
 }
 
-/// Anonymous object types: an instantiation in its target's order, a type literal as declared
-/// (`resolveAnonymousTypeMembers` takes `getMembersOfSymbol`), an object literal by its spreads. `None`: TypeScript
-/// 7's order.
+/// Anonymous object types: an instantiation in its target's order, an object rest in its source's, a type literal as
+/// declared (`resolveAnonymousTypeMembers` takes `getMembersOfSymbol`), an object literal by its spreads. `None`:
+/// TypeScript 7's order.
 fn anonymous_names(checker: &mut Checker, t: P<Type>, stack: &mut Vec<P<Type>>) -> Option<Vec<&'static str>> {
     if let Some(target) = t.target() {
         stack.push(t);
         let names = ts5_names(checker, target, stack);
         stack.pop();
+        return Some(names);
+    }
+    if t.object_flags().intersects(ObjectFlags::ObjectRestType)
+        && let Some(names) = rest_names(checker, t, stack)
+    {
         return Some(names);
     }
     let symbol = t.symbol()?;
@@ -183,6 +193,65 @@ fn anonymous_names(checker: &mut Checker, t: P<Type>, stack: &mut Vec<P<Type>>) 
     let names = object_literal_names(checker, t, literal, stack);
     stack.pop();
     names
+}
+
+/// An object rest of a binding pattern (`getRestType(parentType, literalMembers, declaration.symbol)`, 5.9.3:60364):
+/// the rest declaration's symbol names the `...rest` element, whose pattern's type is the source (as
+/// `getTypeOfNode` gives a binding pattern's type). TypeScript 5 lists the source's properties in its order, leaving
+/// out the destructured and unspreadable ones; a union source makes one rest per member (`mapType`), and `t` is the
+/// one made from the member holding its properties. `None` when the source cannot be told.
+fn rest_names(checker: &mut Checker, t: P<Type>, stack: &mut Vec<P<Type>>) -> Option<Vec<&'static str>> {
+    let element = t.symbol()?.declarations().first().copied()?;
+    if element.kind() != Kind::BindingElement || element.as_binding_element().dot_dot_dot_token().is_none() {
+        return None;
+    }
+    let pattern = element.parent()?;
+    let mut source = checker.get_type_at_location(pattern);
+    if source.flags().intersects(TypeFlags::Union) {
+        // `getRestType` drops the nullable members first; the rest of each other member is a type of its own
+        let members: Vec<P<Type>> =
+            source.types().iter().copied().filter(|m| !m.flags().intersects(TypeFlags::Nullable)).collect();
+        source = match members.as_slice() {
+            [only] => *only,
+            several => rest_member(checker, several, t)?,
+        };
+    }
+    stack.push(t);
+    let names = ts5_names(checker, source, stack);
+    stack.pop();
+    Some(names)
+}
+
+/// The union member an object rest `t` was made from: of the members having every property of `t` (the same symbol,
+/// or a copy sharing its declarations, as `getSpreadSymbol` makes of a readonly one), the one holding most of them as
+/// the same symbols, then with the fewest properties beside them; the first on a tie.
+fn rest_member(checker: &mut Checker, members: &[P<Type>], t: P<Type>) -> Option<P<Type>> {
+    let own = checker.get_properties_of_type_exported(t);
+    // (same symbols, fewest other properties)
+    type Score = (usize, std::cmp::Reverse<usize>);
+    let mut best: Option<(Score, P<Type>)> = None;
+    for &member in members {
+        let properties = checker.get_properties_of_type_exported(member);
+        let mut same = 0;
+        let mut found = 0;
+        for &property in own {
+            let Some(&other) = properties.iter().find(|p| p.name() == property.name()) else { break };
+            if other == property {
+                same += 1;
+            } else if !other.declarations().iter().any(|d| property.declarations().contains(d)) {
+                break;
+            }
+            found += 1;
+        }
+        if found != own.len() {
+            continue;
+        }
+        let score = (same, std::cmp::Reverse(properties.len() - own.len()));
+        if best.is_none_or(|(s, _)| score > s) {
+            best = Some((score, member));
+        }
+    }
+    best.map(|(_, member)| member)
 }
 
 /// A name on one side of a spread, with the symbol it came from (an operand's property, a literal member's), which

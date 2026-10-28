@@ -4,7 +4,9 @@
 //! inside the derived interface's range, type literals (alone, in an intersection, instantiated), object literal
 //! types with a spread (alone and as an interface's base; class instances, falsy and object unions and generic operands
 //! spread, a generic operand between same-named parts, optional and intersected generic operands, union members with
-//! the same names) and homomorphic mapped types (filtering and renaming `as` clauses included).
+//! the same names), homomorphic mapped types (filtering and renaming `as` clauses included) and object rests (of a
+//! spread, an interface, a parameter, a nested pattern, an optional source, a class instance, a generic instantiation
+//! and a union).
 //!
 //! - The rebuilt order must equal TypeScript 5's, `expected-ts5.txt`, which `tests/property_order/ts5props.cjs`
 //!   writes with TypeScript 5.9.3 (the lines are compared as sorted sets: the two compilers list files in different
@@ -160,6 +162,15 @@ fn run(check_first: bool) {
         "src/generic_spreads.ts var intersectedValue: tz, rb, ra, rd, rc, re, a",
         "src/generic_spreads.ts var eitherNumberValue: x2, x1, y2, y1",
         "src/generic_spreads.ts var evGettersValue: get_onA, get_onY, get_onZ, get_w, get_x, get_y",
+        // Object rests sorted by declaration instead of in their source's order.
+        "src/rests.ts var restOfSpreadValue: a, b",
+        "src/rests.ts var restOfInterfaceValue: x, y",
+        "src/rests.ts var restOfParameterValue: x, y",
+        "src/rests.ts var restOfNestedValue: x, z",
+        "src/rests.ts var restOfOptionalValue: x, y",
+        "src/rests.ts var restOfClassValue: k2, k3, k1",
+        "src/rests.ts var restOfGenericValue: x, y, w",
+        "src/rests.ts var restOfUnionPValue: x, p",
     ] {
         assert!(raw.contains(&line), "TypeScript 7 order {line:?} not found in:\n{}", raw.join("\n"));
     }
