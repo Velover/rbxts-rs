@@ -92,6 +92,21 @@ pub trait CxBackend {
     /// as usual. On the hook's own node it lowers the node as roblox-ts does, macros included, without offering
     /// it to that offer kind again (see "Compiling a hook's own node" in the crate docs); do that at most once.
     fn compile_expr(&mut self, node: P<Node>) -> Result<LuauExpr, Aborted>;
+    /// [`CxBackend::compile_expr`] of `node` as the initializer of a local named `name` (`const name = <node>`): an
+    /// optional chain's temporary is named after `name`, as roblox-ts names it after the variable a chain
+    /// initializes (`temp_name_for`): `local _name = a; if _name ~= nil then … end`, numbered `_name_1`, … by the
+    /// renderer where the name is taken. For a TS transformer that bound the node to a variable it declared, so that
+    /// roblox-ts compiled the chain as that variable's initializer; the plugin declares the local itself (`local name =
+    /// value`). Only the chain whose outermost node is `node` itself is named: a chain under parentheses, `!` or a
+    /// cast (`(a?.b)`) is the initializer's operand, which roblox-ts names `_result`. Everything else lowers as
+    /// `compile_expr` (the same rules for the hook's own node). `name` must be a valid Luau identifier
+    /// ([`rbxts_luau::is_valid_identifier`]), else an internal error naming the plugin.
+    ///
+    /// **Default:** [`CxBackend::compile_expr`] (the temporary keeps its own name).
+    fn compile_expr_named(&mut self, node: P<Node>, name: &str) -> Result<LuauExpr, Aborted> {
+        let _ = name;
+        self.compile_expr(node)
+    }
     /// Compiles expressions keeping their evaluation order (`ensureTransformOrder`): earlier values are bound to
     /// locals when a later one has prereqs.
     fn compile_in_order(&mut self, nodes: &[P<Node>]) -> Result<Vec<LuauExpr>, Aborted>;
@@ -136,12 +151,32 @@ pub trait CxBackend {
         self.report(PluginDiagnostic::error(call.node, "compile_call_with is not supported by this compiler backend"));
         Err(Aborted)
     }
-    /// Compiles an object literal node with edits; spreads, methods and computed keys are kept.
+    /// Compiles an object literal node with edits; spreads, methods and computed keys are kept. Edits with deferred
+    /// values (`ObjectEdits::replace_deferred`, `ObjectEdits::append_deferred`) need
+    /// [`CxBackend::compile_object_literal_with`] (here they are an internal error naming the plugin).
     fn compile_object_literal(
         &mut self,
         node: P<Node>,
         edits: ObjectEdits,
     ) -> Result<LuauExpr, Aborted>;
+    /// [`CxBackend::compile_object_literal`] with deferred values: `build(backend, index)` makes the value of each
+    /// `ObjectEdits::replace_deferred` / `ObjectEdits::append_deferred` entry with that index when the lowering
+    /// reaches its field, in the field's own prereq scope (what it emits goes with that field, ordered as the
+    /// statements of a written value are). The backend handed to `build` is the hook's, with that scope, as for
+    /// [`CxBackend::compile_call_with`]; it must not lower the literal or its members again. `build` returning `Err`
+    /// fails the call (`Err(Aborted)`); it must have recorded an error, as a hook's `Err` must.
+    ///
+    /// **Default:** an error naming the literal: a backend without it cannot build values mid-lowering.
+    fn compile_object_literal_with(
+        &mut self,
+        node: P<Node>,
+        edits: ObjectEdits,
+        build: &mut dyn FnMut(&mut dyn CxBackend, usize) -> Result<LuauExpr, Aborted>,
+    ) -> Result<LuauExpr, Aborted> {
+        let _ = (edits, build);
+        self.report(PluginDiagnostic::error(node, "compile_object_literal_with is not supported by this compiler backend"));
+        Err(Aborted)
+    }
     /// `left op right` on original operands, with roblox-ts's operator lowering (string `+` stays `..`).
     fn compile_binary(
         &mut self,
@@ -233,6 +268,14 @@ pub trait CxBackend {
     }
     /// The value of `export` from module `specifier`, imported once per file and placed with roblox-ts's imports
     /// (reusing a user import of the same export).
+    ///
+    /// **Reuse.** As Flamework's TS transformer (`addFileImport`), only a named import is reused: `import { export }`
+    /// or `import { export as local }` (not a type-only element), in a value import declaration (not `import type`)
+    /// of the file's leading run of import declarations, whose module specifier is `specifier` as written (another
+    /// spelling of the same module is not reused). A default import, `import * as M` and an import after another
+    /// statement get an import of their own beside them (`local export = …`, not `M.export`). A name the import
+    /// could not mean everywhere in the file (a parameter or local of the same name) is not reused either, where the
+    /// TS transformer's printed name would read that local (a stock bug fixed).
     ///
     /// **Placement.** Plugin imports go after the `--!` directives, the `-- Compiled with` line and
     /// `local TS = require(...)`, and after every leading comment of the file's first statement, ahead of the user's
@@ -500,6 +543,12 @@ impl<'a> Cx<'a> {
         self.backend.compile_expr(node).map_err(abort)
     }
 
+    /// Compiles an original expression as the initializer of a local named `name`: an optional chain's temporary is
+    /// named after it, as roblox-ts names it ([`CxBackend::compile_expr_named`]).
+    pub fn compile_expr_named(&mut self, node: P<Node>, name: &str) -> PResult<LuauExpr> {
+        self.backend.compile_expr_named(node, name).map_err(abort)
+    }
+
     /// Compiles expressions in evaluation order ([`CxBackend::compile_in_order`]).
     pub fn compile_in_order(&mut self, nodes: &[P<Node>]) -> PResult<Vec<LuauExpr>> {
         self.backend.compile_in_order(nodes).map_err(abort)
@@ -546,6 +595,23 @@ impl<'a> Cx<'a> {
         self.backend
             .compile_object_literal(node, edits)
             .map_err(abort)
+    }
+
+    /// An object literal with edits whose deferred values (`ObjectEdits::replace_deferred`,
+    /// `ObjectEdits::append_deferred`) are built by `build(cx, index)` when the lowering reaches their fields
+    /// ([`CxBackend::compile_object_literal_with`]): a TS transformer's rebuilt literal whose generated values have
+    /// statements of their own, run at their place in the emitted order.
+    pub fn compile_object_literal_with(
+        &mut self,
+        node: P<Node>,
+        edits: ObjectEdits,
+        mut build: impl FnMut(&mut Cx<'_>, usize) -> PResult<LuauExpr>,
+    ) -> PResult<LuauExpr> {
+        let mut build = |backend: &mut dyn CxBackend, index: usize| {
+            let mut cx = Cx::new(backend);
+            build(&mut cx, index).map_err(|_| Aborted)
+        };
+        self.backend.compile_object_literal_with(node, edits, &mut build).map_err(abort)
     }
 
     /// A binary operation on original operands ([`CxBackend::compile_binary`]).

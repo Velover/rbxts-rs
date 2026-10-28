@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformObjectLiteralExpression.ts`
 
-use rbxts_luau::{AnyIdentifier, AssignmentOperator, ElseBody, Expr, create, globals};
+use rbxts_luau::{AnyIdentifier, AssignmentOperator, ElseBody, Expr, Stmt, create, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -23,6 +23,7 @@ fn transform_property_assignment(
     name: P<Node>,
     initializer: P<Node>,
     edit: FieldEdit,
+    build: &mut Option<&mut BuildValue<'_>>,
 ) {
     let mut left_prereqs = Prereqs::new();
     let mut left = match edit.key {
@@ -31,7 +32,8 @@ fn transform_property_assignment(
     };
     let mut right_prereqs = Prereqs::new();
     let right = match edit.value {
-        Some(value) => value,
+        Some(EditValue::Ready(value)) => value,
+        Some(EditValue::Deferred(index)) => build_value(state, &mut right_prereqs, build, index),
         None => transform_expression(state, &mut right_prereqs, initializer),
     };
 
@@ -109,7 +111,7 @@ pub fn transform_object_literal_expression(
     prereqs: &mut Prereqs,
     node: P<Node>,
 ) -> Expr {
-    transform_object_literal_with(state, prereqs, node, &mut [], Vec::new())
+    transform_object_literal_with(state, prereqs, node, &mut [], Vec::new(), None)
 }
 
 /// A plugin's edit of one written field (rbxts-rs: `compile_object_literal`): the key emitted instead of the
@@ -119,7 +121,36 @@ pub struct FieldEdit {
     /// The key to emit instead of the written one.
     pub key: Option<Expr>,
     /// The value to use instead of the initializer.
-    pub value: Option<Expr>,
+    pub value: Option<EditValue>,
+    /// The member is left out: not lowered, not evaluated, not checked (`ObjectEdits::drop`).
+    pub dropped: bool,
+}
+
+/// A value a plugin's edit gives a field (rbxts-rs: `compile_object_literal`).
+#[derive(Clone, Debug)]
+pub enum EditValue {
+    /// A ready value.
+    Ready(Expr),
+    /// A value built when the lowering reaches its field, with the statements it needs
+    /// (`ObjectEdits::replace_deferred` / `append_deferred`), by the [`BuildValue`].
+    Deferred(usize),
+}
+
+/// Builds the deferred value with an index: the value and the statements that go before it.
+pub type BuildValue<'a> = dyn FnMut(&mut TransformState<'_>, usize) -> (Expr, Vec<Stmt>) + 'a;
+
+/// A deferred value, built now, its statements into `prereqs` (`nil` without a builder: the caller refuses deferred
+/// values before then).
+fn build_value(
+    state: &mut TransformState<'_>,
+    prereqs: &mut Prereqs,
+    build: &mut Option<&mut BuildValue<'_>>,
+    index: usize,
+) -> Expr {
+    let Some(build) = build.as_mut() else { return create::nil() };
+    let (value, statements) = build(state, index);
+    prereqs.push_list(statements);
+    value
 }
 
 /// `transformObjectLiteralExpression` with edits (rbxts-rs: `compile_object_literal`): `edits[i]` applies to
@@ -129,37 +160,57 @@ pub fn transform_object_literal_with(
     prereqs: &mut Prereqs,
     node: P<Node>,
     edits: &mut [FieldEdit],
-    append: Vec<(Expr, Expr)>,
+    append: Vec<(Expr, EditValue)>,
+    build: Option<&mut BuildValue<'_>>,
 ) -> Expr {
-    transform_object_literal_ordered(state, prereqs, node, edits, append, None)
+    transform_object_literal_ordered(state, prereqs, node, edits, append, None, build)
 }
 
 /// [`transform_object_literal_with`] over the members in `order` (rbxts-rs: `FieldOrder::Emitted`): entry `k` is
 /// written member `order[k]`, or appended field `order[k] - written` past the written ones, as roblox-ts lowers a
 /// literal a TS transformer rebuilt with its members in that order: they are evaluated and emitted in it. `None` is
-/// the written members, then the appended fields. The caller checks that `order` lists each entry once.
+/// the written members, then the appended fields. The caller checks that `order` lists each entry once, but for the
+/// dropped members (`FieldEdit::dropped`), which are skipped with or without an order. `build` makes the deferred
+/// values (`EditValue::Deferred`) when the lowering reaches their fields.
 pub fn transform_object_literal_ordered(
     state: &mut TransformState<'_>,
     prereqs: &mut Prereqs,
     node: P<Node>,
     edits: &mut [FieldEdit],
-    append: Vec<(Expr, Expr)>,
+    append: Vec<(Expr, EditValue)>,
     order: Option<&[u32]>,
+    mut build: Option<&mut BuildValue<'_>>,
 ) -> Expr {
-    let mut edit_of = |i: usize| edits.get_mut(i).map(std::mem::take).unwrap_or_default();
     // starts as a map, becomes a temporary identifier once `disable_map_inline` is called
     let mut ptr = create_map_pointer("object");
     let properties = node.properties();
     let written = properties.len();
-    let mut append: Vec<Option<(Expr, Expr)>> = append.into_iter().map(Some).collect();
+    let mut append: Vec<Option<(Expr, EditValue)>> = append.into_iter().map(Some).collect();
     let order: Vec<usize> = match order {
         Some(order) => order.iter().map(|&i| i as usize).collect(),
         None => (0..written + append.len()).collect(),
     };
     for i in order {
         if i >= written {
-            let (key, value) = append[i - written].take().expect("each appended field once");
-            assign_to_map_pointer(prereqs, &mut ptr, key, value);
+            match append[i - written].take().expect("each appended field once") {
+                (key, EditValue::Ready(value)) => assign_to_map_pointer(prereqs, &mut ptr, key, value),
+                // `transformPropertyAssignment` of the generated field: a value with statements moves the table into
+                // a local and binds the key first
+                (mut key, EditValue::Deferred(index)) => {
+                    let mut right_prereqs = Prereqs::new();
+                    let value = build_value(state, &mut right_prereqs, &mut build, index);
+                    if !right_prereqs.statements.is_empty() {
+                        disable_map_inline(prereqs, &mut ptr);
+                        key = prereqs.push_to_var(key, "left");
+                    }
+                    prereqs.push_list(right_prereqs.statements);
+                    assign_to_map_pointer(prereqs, &mut ptr, key, value);
+                }
+            }
+            continue;
+        }
+        let edit = edits.get_mut(i).map(std::mem::take).unwrap_or_default();
+        if edit.dropped {
             continue;
         }
         let property = properties[i];
@@ -172,11 +223,11 @@ pub fn transform_object_literal_ordered(
                     continue;
                 }
                 let initializer = property.initializer().expect("a property assignment has an initializer");
-                transform_property_assignment(state, prereqs, &mut ptr, name, initializer, edit_of(i));
+                transform_property_assignment(state, prereqs, &mut ptr, name, initializer, edit, &mut build);
             }
             Kind::ShorthandPropertyAssignment => {
                 let name = property.name().expect("a shorthand property assignment has a name");
-                transform_property_assignment(state, prereqs, &mut ptr, name, name, edit_of(i));
+                transform_property_assignment(state, prereqs, &mut ptr, name, name, edit, &mut build);
             }
             Kind::SpreadAssignment => transform_spread_assignment(state, prereqs, &mut ptr, property),
             Kind::MethodDeclaration => {

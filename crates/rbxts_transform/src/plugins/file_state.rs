@@ -266,6 +266,9 @@ pub struct PluginFileState {
     /// Receivers of non-method optional calls (`o.f?.()`) that `compile_receiver` bound to a local, by call node:
     /// the chain lowering declares the local before it reads the callee from it.
     pub optional_receivers: FxHashMap<P<Node>, (Expr, Stmt)>,
+    /// The names `compile_expr_named` gives the temporaries of the chains it compiles, by the chain's outermost node
+    /// (roblox-ts's `temp_name_for` of a chain that initializes a variable of that name).
+    pub chain_names: FxHashMap<P<Node>, String>,
     /// The `property_key` answers, by access node: one answer per access, however often it is lowered. `None` when
     /// every plugin declined (or a hook failed).
     pub key_answers: FxHashMap<P<Node>, Option<String>>,

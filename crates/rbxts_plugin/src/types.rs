@@ -327,6 +327,9 @@ pub enum FieldOrder {
     Source,
     /// Emitted field `i` is field `order[i]` of the written-then-appended list. Values are still evaluated in
     /// source order (the compiler binds them to locals first when the order differs and a value has effects).
+    ///
+    /// The list is the written members, then [`ObjectEdits::append`], then [`ObjectEdits::append_deferred`]; members
+    /// in [`ObjectEdits::drop`] keep their index but are not listed.
     Permuted(Vec<u32>),
     /// The literal a TS transformer rebuilt with its members in another order, lowered as roblox-ts lowers that
     /// literal: member `i` is entry `order[i]` of the written-then-appended list (spreads and methods are written
@@ -334,6 +337,11 @@ pub enum FieldOrder {
     /// it is `transformObjectLiteralExpression` on the rebuilt literal: a table built inline until a member needs
     /// statements, then a local filled by assignments (`_object[_left] = value`). An order that does not list each
     /// entry once is an internal error naming the plugin.
+    ///
+    /// The list is as for [`FieldOrder::Permuted`]: written members, `append`, `append_deferred`, dropped members
+    /// not listed. A deferred value ([`ObjectEdits::replace_deferred`], [`ObjectEdits::append_deferred`]) is built
+    /// at its member's place in this order, so its statements run after the members before it, as roblox-ts lowers
+    /// a value with statements of its own: `local _left = "key"`, the statements, then `_object[_left] = value`.
     Emitted(Vec<u32>),
 }
 
@@ -343,7 +351,8 @@ pub enum FieldOrder {
 /// A `rename` or `replace` naming a key the literal writes only as an accessor (`get k() {}`) reports roblox-ts's
 /// error for the accessor ("Getters and Setters are not supported!") and fails the call (an `Abort`), as lowering
 /// the literal would; a key the literal does not write at all, or writes more than once, or names a method, is an
-/// internal error naming the plugin.
+/// internal error naming the plugin. To replace an accessor the way a TS transformer that rebuilt the literal does,
+/// [`ObjectEdits::drop`] it and append the new field.
 #[derive(Clone, Debug, Default)]
 pub struct ObjectEdits {
     /// Written key → emitted key.
@@ -353,6 +362,23 @@ pub struct ObjectEdits {
     /// Extra fields after the written ones.
     pub append: Vec<(LuauKey, LuauExpr)>,
     pub order: FieldOrder,
+    /// Written members left out, by node (members of the literal's `properties()`): a field, a spread, a method
+    /// or an accessor. Neither lowered nor evaluated, and roblox-ts's errors for them (an accessor's "Getters and
+    /// Setters are not supported!", a method's checks) are not reported: the literal is lowered as a TS transformer
+    /// rebuilt it without them. An order lists only the members kept. A node that is not a member of the literal or
+    /// is dropped twice, and a `rename` / `replace` / `replace_deferred` naming a dropped member, are internal
+    /// errors naming the plugin.
+    pub drop: Vec<P<Node>>,
+    /// Written key → a value built when the lowering reaches the field: `build(cx, index)` of
+    /// [`crate::Cx::compile_object_literal_with`], in the field's own prereq scope. What the build emits goes with
+    /// the field, as the statements of a written value do (with [`FieldOrder::Emitted`], at the field's place in the
+    /// emitted order). The original value is not evaluated. The same rules as `replace` (which it excludes for the
+    /// same key).
+    pub replace_deferred: Vec<(String, usize)>,
+    /// Extra fields after the written ones and `append`'s, each value built when the lowering reaches it (as
+    /// `replace_deferred`). A value with statements is assigned as roblox-ts assigns a written one with
+    /// statements: `local _left = key`, the statements, `_object[_left] = value`.
+    pub append_deferred: Vec<(LuauKey, usize)>,
 }
 
 /// A diagnostic made by a plugin. Its location is the node's `getStart()` to its end, as roblox-ts's own.

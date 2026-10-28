@@ -10,7 +10,7 @@ use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::expressions::transform_object_literal_expression::{
-    FieldEdit, transform_object_literal_ordered, transform_object_literal_with,
+    BuildValue, EditValue, FieldEdit, transform_object_literal_ordered, transform_object_literal_with,
 };
 use crate::nodes::transform_logical::{flatten_logical_operands, transform_logical_operands};
 use crate::nodes::transform_property_name::transform_property_name;
@@ -173,24 +173,32 @@ fn written_key(property: P<Node>) -> Option<&'static str> {
 /// The property a written key names: exactly one, or an error. `Ok(None)` when the key names an accessor instead
 /// (`get k() {}`, `set k(v) {}`), which the user wrote and roblox-ts rejects: its error is reported at the accessor,
 /// as lowering the literal would (`errors.noGetterSetter`), and the plugin's call fails with it, not as a plugin bug.
+/// Dropped members (`ObjectEdits::drop`) are not written for this: naming one is an error.
 fn field_index(
     state: &mut TransformState<'_>,
     properties: &[P<Node>],
+    dropped: &[bool],
     key: &str,
     what: &str,
 ) -> Result<Option<usize>, String> {
-    let mut found = properties.iter().enumerate().filter(|(_, p)| written_key(**p) == Some(key)).map(|(i, _)| i);
+    let names_key = |p: P<Node>| {
+        p.name().is_some_and(|name| {
+            matches!(name.kind(), Kind::Identifier | Kind::StringLiteral | Kind::NumericLiteral) && name.text() == key
+        })
+    };
+    let mut found =
+        properties.iter().enumerate().filter(|&(i, p)| !dropped[i] && written_key(*p) == Some(key)).map(|(i, _)| i);
     let Some(first) = found.next() else {
-        let accessor = properties.iter().copied().find(|p| {
-            matches!(p.kind(), Kind::GetAccessor | Kind::SetAccessor)
-                && p.name().is_some_and(|name| {
-                    matches!(name.kind(), Kind::Identifier | Kind::StringLiteral | Kind::NumericLiteral)
-                        && name.text() == key
-                })
-        });
-        if let Some(accessor) = accessor {
+        let accessor = properties
+            .iter()
+            .enumerate()
+            .find(|&(i, p)| !dropped[i] && matches!(p.kind(), Kind::GetAccessor | Kind::SetAccessor) && names_key(*p));
+        if let Some((_, &accessor)) = accessor {
             state.add_diagnostic(errors::no_getter_setter(accessor));
             return Ok(None);
+        }
+        if properties.iter().enumerate().any(|(i, p)| dropped[i] && names_key(*p)) {
+            return Err(format!("compile_object_literal: {what} `{key}`, which names a dropped member"));
         }
         return Err(format!("compile_object_literal: {what} `{key}`, which is not a written key of the literal"));
     };
@@ -200,15 +208,38 @@ fn field_index(
     Ok(Some(first))
 }
 
+/// Checks that an order lists each entry of the written-then-appended list once, but the dropped members, which it
+/// must not list.
+fn check_order(order: &[u32], count: usize, dropped: &[bool], what: &str) -> Result<(), String> {
+    let kept = count - dropped.iter().filter(|&&d| d).count();
+    let mut seen = vec![false; count];
+    let bad = order.len() != kept
+        || order.iter().any(|&i| {
+            let i = i as usize;
+            i >= count || dropped.get(i).copied().unwrap_or(false) || std::mem::replace(&mut seen[i], true)
+        });
+    if !bad {
+        return Ok(());
+    }
+    let dropped_note = if kept == count { "" } else { " but the dropped ones" };
+    Err(format!(
+        "compile_object_literal: FieldOrder::{what} must list each of the {count} {} (written, then appended){dropped_note} \
+         once",
+        if what == "Emitted" { "members" } else { "fields" }
+    ))
+}
+
 /// `compile_object_literal`: the literal lowered as roblox-ts lowers object literals, with `edits` applied: renamed
-/// keys, replaced values (the written value is not evaluated), fields appended after the written ones, and an
-/// emitted order. Spreads, methods and computed keys are kept and lowered as usual; edits name fields by their
-/// written key (an identifier, string or numeric literal name).
+/// keys, replaced values (the written value is not evaluated), dropped members, fields appended after the written
+/// ones, and an emitted order. Spreads, methods and computed keys are kept and lowered as usual; edits name fields
+/// by their written key (an identifier, string or numeric literal name). `build` (`compile_object_literal_with`)
+/// makes the deferred values; without it, deferred values are refused.
 pub(crate) fn lower_object_literal(
     state: &mut TransformState<'_>,
     prereqs: &mut Prereqs,
     node: P<Node>,
     edits: ObjectEdits,
+    build: Option<&mut BuildValue<'_>>,
 ) -> Result<Expr, String> {
     if node.kind() != Kind::ObjectLiteralExpression {
         return Err(format!("compile_object_literal takes an ObjectLiteralExpression, not a {:?}", node.kind()));
@@ -216,10 +247,28 @@ pub(crate) fn lower_object_literal(
     if tsrs_ast::get_assignment_target(node).is_some() {
         return Err("compile_object_literal: this object literal is a destructuring assignment target".to_owned());
     }
+    if build.is_none() && (!edits.replace_deferred.is_empty() || !edits.append_deferred.is_empty()) {
+        return Err("compile_object_literal: deferred values (replace_deferred, append_deferred) need \
+             compile_object_literal_with, which builds them"
+            .to_owned());
+    }
     let properties = node.properties();
     let mut fields = vec![FieldEdit::default(); properties.len()];
+    let mut dropped = vec![false; properties.len()];
+    for member in edits.drop {
+        let Some(i) = properties.iter().position(|&p| p == member) else {
+            return Err(format!(
+                "compile_object_literal: drop names a {:?} that is not a member of the literal",
+                member.kind()
+            ));
+        };
+        if std::mem::replace(&mut dropped[i], true) {
+            return Err("compile_object_literal: a member is dropped twice".to_owned());
+        }
+        fields[i].dropped = true;
+    }
     for (key, emitted) in edits.rename {
-        let Some(i) = field_index(state, properties, &key, "rename names")? else { return Ok(Expr::None) };
+        let Some(i) = field_index(state, properties, &dropped, &key, "rename names")? else { return Ok(Expr::None) };
         if properties[i].kind() == Kind::MethodDeclaration {
             return Err(format!("compile_object_literal: rename names `{key}`, a method (only fields can be edited)"));
         }
@@ -227,8 +276,10 @@ pub(crate) fn lower_object_literal(
             return Err(format!("compile_object_literal: `{key}` is renamed twice"));
         }
     }
-    for (key, value) in edits.replace {
-        let Some(i) = field_index(state, properties, &key, "replace names")? else { return Ok(Expr::None) };
+    let replaced = edits.replace.into_iter().map(|(key, value)| (key, EditValue::Ready(value)));
+    let deferred = edits.replace_deferred.into_iter().map(|(key, index)| (key, EditValue::Deferred(index)));
+    for (key, value) in replaced.chain(deferred) {
+        let Some(i) = field_index(state, properties, &dropped, &key, "replace names")? else { return Ok(Expr::None) };
         if properties[i].kind() == Kind::MethodDeclaration {
             return Err(format!("compile_object_literal: replace names `{key}`, a method (only fields can be edited)"));
         }
@@ -236,21 +287,22 @@ pub(crate) fn lower_object_literal(
             return Err(format!("compile_object_literal: `{key}` is replaced twice"));
         }
     }
+    let append: Vec<(Expr, EditValue)> = edits
+        .append
+        .into_iter()
+        .map(|(key, value)| (key, EditValue::Ready(value)))
+        .chain(edits.append_deferred.into_iter().map(|(key, index)| (key, EditValue::Deferred(index))))
+        .collect();
+    let count = properties.len() + append.len();
     match edits.order {
-        FieldOrder::Source => Ok(transform_object_literal_with(state, prereqs, node, &mut fields, edits.append)),
-        FieldOrder::Permuted(order) => lower_permuted(state, prereqs, node, fields, edits.append, &order),
+        FieldOrder::Source => Ok(transform_object_literal_with(state, prereqs, node, &mut fields, append, build)),
+        FieldOrder::Permuted(order) => {
+            check_order(&order, count, &dropped, "Permuted")?;
+            lower_permuted(state, prereqs, node, fields, append, &order, build)
+        }
         FieldOrder::Emitted(order) => {
-            let count = properties.len() + edits.append.len();
-            let mut seen = vec![false; count];
-            if order.len() != count
-                || order.iter().any(|&i| (i as usize) >= count || std::mem::replace(&mut seen[i as usize], true))
-            {
-                return Err(format!(
-                    "compile_object_literal: FieldOrder::Emitted must list each of the {count} members (written, \
-                     then appended) once"
-                ));
-            }
-            Ok(transform_object_literal_ordered(state, prereqs, node, &mut fields, edits.append, Some(&order)))
+            check_order(&order, count, &dropped, "Emitted")?;
+            Ok(transform_object_literal_ordered(state, prereqs, node, &mut fields, append, Some(&order), build))
         }
     }
 }
@@ -264,23 +316,26 @@ fn lower_permuted(
     prereqs: &mut Prereqs,
     node: P<Node>,
     mut fields: Vec<FieldEdit>,
-    append: Vec<(Expr, Expr)>,
+    append: Vec<(Expr, EditValue)>,
     order: &[u32],
+    mut build: Option<&mut BuildValue<'_>>,
 ) -> Result<Expr, String> {
     let properties = node.properties();
     let count = properties.len() + append.len();
-    let mut seen = vec![false; count];
-    if order.len() != count
-        || order.iter().any(|&i| (i as usize) >= count || std::mem::replace(&mut seen[i as usize], true))
-    {
-        return Err(format!(
-            "compile_object_literal: FieldOrder::Permuted must list each of the {count} fields (written, then \
-             appended) once"
-        ));
-    }
+    // a deferred value, built now with its statements
+    let mut built = |state: &mut TransformState<'_>, index: usize| match build.as_mut() {
+        Some(build) => build(state, index),
+        None => (create::nil(), Vec::new()),
+    };
     // each slot: (value, its prerequisites); a field is two slots, key then value
     let mut slots: Vec<(Expr, Vec<Stmt>)> = Vec::with_capacity(count * 2);
     for (i, &property) in properties.iter().enumerate() {
+        if fields[i].dropped {
+            // a placeholder the order does not name, so the indices stay
+            slots.push((create::nil(), Vec::new()));
+            slots.push((create::nil(), Vec::new()));
+            continue;
+        }
         validate_method_assignment(state, property);
         let (name, initializer) = match property.kind() {
             Kind::PropertyAssignment => (
@@ -316,14 +371,22 @@ fn lower_permuted(
         slots.push((key, key_prereqs.statements));
         let mut value_prereqs = Prereqs::new();
         let value = match edit.value {
-            Some(value) => value,
+            Some(EditValue::Ready(value)) => value,
+            Some(EditValue::Deferred(index)) => {
+                let (value, statements) = built(state, index);
+                value_prereqs.push_list(statements);
+                value
+            }
             None => transform_expression(state, &mut value_prereqs, initializer),
         };
         slots.push((value, value_prereqs.statements));
     }
     for (key, value) in append {
         slots.push((key, Vec::new()));
-        slots.push((value, Vec::new()));
+        slots.push(match value {
+            EditValue::Ready(value) => (value, Vec::new()),
+            EditValue::Deferred(index) => built(state, index),
+        });
     }
     // bind each value that does not commute with everything evaluated after it in source order, every later value
     // included (unlike `ensureTransformOrder`, whose values stay in source order): the values left inline then

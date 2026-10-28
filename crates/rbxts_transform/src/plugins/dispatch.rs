@@ -24,9 +24,7 @@ use crate::classes::transform_state::TransformState;
 use crate::nodes::statements::transform_import_declaration::transform_import_declaration;
 use crate::nodes::statements::transform_import_equals_declaration::transform_import_equals_declaration;
 use crate::nodes::transform_optional_chain::{ChainItem, ChainItemKind, transform_chain_item};
-use crate::util::create_import_expression::{
-    create_import_expression_of_file, create_import_expression_of_path, get_source_file_from_module_specifier,
-};
+use crate::util::create_import_expression::{create_import_expression_of_file, create_import_expression_of_path};
 use crate::util::symbols::is_used_as_statement;
 use crate::util::traversal::{has_syntactic_modifier, skip_downwards, skip_upwards};
 use crate::util::wrap_expression_statement::wrap_expression_statement;
@@ -1900,34 +1898,27 @@ fn alias_shadowed(state: &mut TransformState<'_>, alias: P<Node>) -> bool {
     identifiers.into_iter().any(|id| state.checker.get_symbol_at_location_exported(id) != Some(alias_symbol))
 }
 
-/// A user import of `export` from `module_file` in this file: the alias declaration and the value to use.
-fn find_user_import(
-    state: &mut TransformState<'_>,
-    module_file: P<SourceFile>,
-    export: &str,
-) -> Option<(P<Node>, Expr)> {
+/// A user import of `export` from `specifier` in this file, the one Flamework's TS transformer reuses
+/// (`TransformState.addFileImport`): the alias declaration and the value to use. Only a named import is reused:
+/// `import { export }` or `import { export as local }` (not a type-only one), in a value import declaration (not
+/// `import type`) of the file's leading run of import declarations, whose module specifier is `specifier` as
+/// written (not another spelling of the same module). A default import and a namespace import are not reused: with
+/// `import * as M from specifier`, the plugin's import is a `local export = …` of its own, not `M.export`.
+fn find_user_import(state: &TransformState<'_>, specifier: &str, export: &str) -> Option<(P<Node>, Expr)> {
     for &statement in state.source_file.get().statements.nodes() {
+        // the leading run of import declarations only
         if statement.kind() != Kind::ImportDeclaration {
-            continue;
+            break;
         }
         let declaration = statement.as_import_declaration();
+        if declaration.module_specifier.kind() != Kind::StringLiteral {
+            continue;
+        }
         let Some(clause_node) = declaration.import_clause else { continue };
         let clause = clause_node.as_import_clause();
-        if clause.phase_modifier.get() == Kind::TypeKeyword {
+        let Some(bindings) = clause.named_bindings.filter(|b| b.kind() == Kind::NamedImports) else { continue };
+        if clause.phase_modifier.get() == Kind::TypeKeyword || declaration.module_specifier.text() != specifier {
             continue;
-        }
-        if get_source_file_from_module_specifier(state, declaration.module_specifier) != Some(module_file) {
-            continue;
-        }
-        if export == "default"
-            && let Some(name) = clause.name
-        {
-            return Some((clause_node, create::id(name.text())));
-        }
-        let Some(bindings) = clause.named_bindings else { continue };
-        if bindings.kind() == Kind::NamespaceImport {
-            let name = bindings.as_namespace_import().name.text();
-            return Some((bindings, create::property(create::id(name), export)));
         }
         for &element in bindings.elements() {
             if element.is_type_only() {
@@ -1943,8 +1934,8 @@ fn find_user_import(
     None
 }
 
-/// `import_named`: the value of `export` from `specifier`, imported once per file. A user import of the same
-/// export is reused (and kept alive); otherwise a `local <export> = TS.import(…).<export>` goes with the plugin
+/// `import_named`: the value of `export` from `specifier`, imported once per file. A user's named import of the same
+/// export from the same specifier is reused (and kept alive) by Flamework's rule ([`find_user_import`]); otherwise a `local <export> = TS.import(…).<export>` goes with the plugin
 /// imports at the top of the file, named after the export unless a name in the file could shadow it.
 ///
 /// `at` (`import_named_at`) orders the import as if it were asked for at that node's start instead of the hook's
@@ -1998,9 +1989,7 @@ pub(crate) fn import_named(
         ));
     }
 
-    let reusable = module_file
-        .and_then(|module_file| find_user_import(state, module_file, export))
-        .filter(|&(alias, _)| !alias_shadowed(state, alias));
+    let reusable = find_user_import(state, specifier, export).filter(|&(alias, _)| !alias_shadowed(state, alias));
     let value = if let Some((alias, value)) = reusable {
         state.plugin_file.forced_imports.insert(alias);
         value

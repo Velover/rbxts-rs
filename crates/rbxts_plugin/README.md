@@ -75,6 +75,9 @@ the compiler (`rbxts_transform`) implements the backend traits.
 | `obj[KEY](…)` built by the transformer | `cx.ordered_element_call(receiver, key, args, method)`; the order analysis itself is `rbxts_plugin::effects` |
 | rewriting `obj.m(…)` to `obj["k"](…)` | `PluginInstance::property_key_answer` with `KeyAnswer::element("k")` |
 | a literal rebuilt in another member order | `ObjectEdits { order: FieldOrder::Emitted(order), .. }` |
+| a generated value with statements of its own in a rebuilt literal (run at its place) | `cx.compile_object_literal_with(node, ObjectEdits { replace_deferred, append_deferred, .. }, \|cx, i\| …)` |
+| a written member (an accessor too) the rebuilt literal leaves out | `ObjectEdits { drop: vec![member], .. }` |
+| binding a node to `const name = <node>` for roblox-ts to compile (the chain temporary `_name`) | `cx.compile_expr_named(node, name)`, then `local name = value` |
 | the chain IIFE around a receiver | `cx.compile_receiver(call)` (nil-checked by the chain lowering) |
 | `typeToTypeNode` / casts so the re-check passes | gone: nothing is re-checked |
 | an import whose only value uses the rewrite removed (TS elided it after the rewrite) | `cx.request_import_elision(alias)`; `cx.mark_import_used(alias)` for the opposite |
@@ -96,6 +99,15 @@ the compiler (`rbxts_transform`) implements the backend traits.
 | a numeric diagnostic `code` (`1117`, shown `TS1117`) | `PluginDiagnostic::with_code(1117)` |
 | `getPreEmitDiagnostics(program, file)` forwarded through `context.addDiagnostic` (unless `noSemanticDiagnostics`) | `Plugin::forwards_checker_diagnostics(shared)`; the explained ones `PluginInstance::explain_checker_diagnostic` |
 | `process.exit(1)` | `Err(Fatal::new(msg))` from `setup` / `finish` |
+
+## Known differences from TS5 Flamework builds
+
+Deliberate, practical only (the user's decision):
+- **End-of-file comments** of a file a plugin saw: TS5 drops them (the TS transformer's printed file loses them);
+  rbxts-rs keeps them.
+- **`noSemanticDiagnostics` with a type error and a plugin error in the same file**: stock runs the transformers over
+  every file before checking, so it reports the plugin's error alone; rbxts-rs runs no plugin on a file that fails
+  checking, so it reports the type error. The build fails either way.
 
 ## Tests
 

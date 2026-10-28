@@ -256,7 +256,12 @@ pub(crate) fn transform_optional_call_value(
     Some(wrap_return_if_lua_tuple(state, item.node, create::call(call.function.clone(), args)))
 }
 
-fn temp_name_for(node: P<Node>) -> String {
+/// `tempNameFor` in `createOrSetTempId`: a chain that initializes a variable names its temporary after it. (rbxts-rs: so
+/// does a chain a plugin compiles with `compile_expr_named`, as the initializer of a variable of that name.)
+pub(crate) fn temp_name_for(state: &TransformState<'_>, node: P<Node>) -> String {
+    if let Some(name) = state.plugin_file.chain_names.get(&node) {
+        return name.clone();
+    }
     match node.parent() {
         Some(parent)
             if parent.kind() == Kind::VariableDeclaration
@@ -272,9 +277,15 @@ fn same_temp(a: &Expr, b: &Expr) -> bool {
     matches!((a, b), (Expr::TemporaryIdentifier(x), Expr::TemporaryIdentifier(y)) if x.id == y.id)
 }
 
-fn create_or_set_temp_id(prereqs: &mut Prereqs, temp_id: Option<Expr>, expression: Expr, node: P<Node>) -> Expr {
+fn create_or_set_temp_id(
+    state: &TransformState<'_>,
+    prereqs: &mut Prereqs,
+    temp_id: Option<Expr>,
+    expression: Expr,
+    node: P<Node>,
+) -> Expr {
     match temp_id {
-        None => prereqs.push_to_var(expression, &temp_name_for(node)),
+        None => prereqs.push_to_var(expression, &temp_name_for(state, node)),
         Some(temp_id) => {
             if !same_temp(&temp_id, &expression) {
                 prereqs.push(create::assignment(temp_id.clone(), AssignmentOperator::Assign, expression));
@@ -321,7 +332,7 @@ fn transform_optional_chain_inner(
             }
 
             if item.optional {
-                let temp = create_or_set_temp_id(prereqs, temp_id.take(), base_expression, last_node);
+                let temp = create_or_set_temp_id(state, prereqs, temp_id.take(), base_expression, last_node);
                 temp_id = Some(temp.clone());
                 base_expression = temp;
             }
@@ -375,9 +386,13 @@ fn transform_optional_chain_inner(
         let (temp, declared) = match &callee_read {
             Some(_) => match temp_id.take() {
                 Some(temp) => (temp, false),
-                None => (Expr::TemporaryIdentifier(crate::classes::prereqs::temp_id(temp_name_for(last_node))), true),
+                None => {
+                    (Expr::TemporaryIdentifier(crate::classes::prereqs::temp_id(temp_name_for(state, last_node))), true)
+                }
             },
-            None => (create_or_set_temp_id(&mut receiver_prereqs, temp_id.take(), base_expression, last_node), false),
+            None => {
+                (create_or_set_temp_id(state, &mut receiver_prereqs, temp_id.take(), base_expression, last_node), false)
+            }
         };
         temp_id = Some(temp.clone());
 

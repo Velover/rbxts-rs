@@ -1405,7 +1405,11 @@ fn fwapi_project(label: &str) -> Option<Project> {
 /// replacement and a send that reads the chain's base, runs the arguments, then reads the receiver again,
 /// `chainmore.ts`); `Cx::ordered_element_call` (`ordered.ts`);
 /// `import_named` of modules no program file imports, a package and a declaration file outside the source root
-/// (`notinprog.ts`).
+/// (`notinprog.ts`); `compile_object_literal_with` with deferred values at their places in the emitted order
+/// (`objmove.ts`) and `ObjectEdits::drop` of a written member, accessors included (`objdrop.ts`);
+/// `Cx::compile_expr_named` (`exprnamed.ts`); which user imports `import_named` reuses, as Flamework's
+/// `addFileImport`: named ones of the same specifier in the leading run of imports, not a namespace, default,
+/// type-only, later or differently spelled one (`reuse*.ts`).
 #[test]
 fn fwapi_fixture_matches_stock_typescript_5() {
     let Some(project) = fwapi_project("fwapi") else { return };
@@ -1492,4 +1496,41 @@ fn an_edit_of_an_accessor_key_is_roblox_ts_s_error() {
     let found = errors(&report);
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].contains("internal error: plugin `probe`: compile_object_literal: replace names `attributes`, which is not a written key"), "{found:?}");
+}
+
+/// `compile_object_literal(_with)` with `ObjectEdits::drop` and deferred values, and `compile_expr_named`, misused:
+/// each an internal error naming the plugin, nothing written.
+#[test]
+fn object_literal_drops_deferred_values_and_named_chains_refuse_misuse() {
+    let Some(project) = fwapi_project("objmisuse") else { return };
+    project.write(
+        "src/shared/misuses.d.ts",
+        "/** @probe objmisuse */\ndeclare function probeObjMisuse<T>(literal: T, mode: string): T;\n",
+    );
+    let cases = [
+        (
+            "nowith",
+            "compile_object_literal: deferred values (replace_deferred, append_deferred) need compile_object_literal",
+        ),
+        ("foreign", "compile_object_literal: drop names a CallExpression that is not a member of the literal"),
+        ("twice", "compile_object_literal: a member is dropped twice"),
+        ("replacedropped", "compile_object_literal: replace names `a`, which names a dropped member"),
+        (
+            "listsdropped",
+            "FieldOrder::Emitted must list each of the 2 members (written, then appended) but the dropped",
+        ),
+        ("badname", "compile_expr_named: `not valid` is not a valid Luau identifier"),
+    ];
+    for (mode, message) in cases {
+        let source = format!("export const x = probeObjMisuse({{ a: 1, b: 2 }}, \"{mode}\");\n");
+        project.write("src/shared/misuse.ts", &source);
+        let report = project.build(&["probe"], |_| {});
+        let found = errors(&report);
+        assert_eq!(found.len(), 1, "{mode}: {found:?}");
+        assert!(
+            found[0].contains("internal error: plugin `probe`: ") && found[0].contains(message),
+            "{mode}: {found:?}"
+        );
+        assert!(report.files.iter().all(|f| !f.written), "{mode}");
+    }
 }

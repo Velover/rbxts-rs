@@ -99,9 +99,9 @@
 //! **Compiling a hook's own node.** While a node's own offer runs, compiling it does not re-offer it to that kind;
 //! the other kinds still see it. An expression hook that compiles its own call lets the call plugins claim that
 //! call.
-//! - `compile_expr`, `compile_in_order` or an `Arg::Original` slot on the hook's own node lowers it as roblox-ts
-//!   does there, macros included. A call is lowered on the receiver or callee already compiled, so a single
-//!   self-compile evaluates nothing twice. A decorator's own node lowers the decorator's expression. An
+//! - `compile_expr` (or `compile_expr_named`), `compile_in_order` or an `Arg::Original` slot on the hook's own node
+//!   lowers it as roblox-ts does there, macros included. A call is lowered on the receiver or callee already
+//!   compiled, so a single self-compile evaluates nothing twice. A decorator's own node lowers the decorator's expression. An
 //!   expression-hook node offered inside a chain is lowered on its compiled base. An assignment, `++` / `--` or
 //!   logical assignment whose value is unused, which roblox-ts lowers as a statement, is lowered as that statement,
 //!   and the value is `nil` (return it as it is: it adds nothing).

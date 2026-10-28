@@ -60,6 +60,11 @@
 //! - `importatclass`: `import_named_at(path, export, <the enclosing class>)` of its two string literal arguments;
 //! - `objemitted`: `compile_object_literal` with `FieldOrder::Emitted`, the members reversed and `w = 4` appended
 //!   (first); `objaccessor`: a `replace` of `attributes`, which the literal writes as an accessor (roblox-ts's error);
+//! - `objmove`: `compile_object_literal_with` and `FieldOrder::Emitted`, the written `moved` moved last with a deferred
+//!   value (`replace_deferred`), after an appended `w` with one (`append_deferred`); `objdrop`: the written `attributes`
+//!   (an accessor too) dropped (`ObjectEdits::drop`) and `attributes` appended with a deferred value, then `w = 4`;
+//! - `exprnamed`: `compile_expr_named(node, name)`, then `local name = value` in the prereqs; the value is `name`;
+//!   `objmisuse`: misuses of `compile_object_literal(_with)` and `compile_expr_named` (each an internal error);
 //! - `latesynth`: `late_string_synthesized`, resolved in `finish` to `ünï "<plugin>"\t#<n>` (numbered with `late`'s);
 //! - `boom`: panics in [`Mode::Panic`]; `fail`: an error in [`Mode::Fail`]; `err`: `Err` with no new error in
 //!   [`Mode::ErrWithoutError`]; declined otherwise.
@@ -225,6 +230,10 @@ const OPS: &[&str] = &[
     "objaccessor",
     "diagsame",
     "diagdecl",
+    "objmove",
+    "objdrop",
+    "exprnamed",
+    "objmisuse",
 ];
 const RECEIVER: Tag = Tag(100);
 const CALLEE: Tag = Tag(101);
@@ -569,6 +578,7 @@ impl ProbeInstance {
                     replace: vec![("b".to_owned(), text_literal("replaced"))],
                     append: vec![(text_literal("e"), create::number(5.0))],
                     order: FieldOrder::Source,
+                    ..ObjectEdits::default()
                 };
                 let value = cx.compile_object_literal(arg(0).expect("an argument"), edits)?;
                 self.claimed(create::call(create::id("wrap"), vec![value]))
@@ -593,6 +603,95 @@ impl ProbeInstance {
                 };
                 let value = cx.compile_object_literal(literal, edits)?;
                 self.claimed(value)
+            }
+            "objmove" => {
+                // `probeObjMove(literal, value, extra)`: the literal a TS transformer rebuilt as `{ ...others, w: extra,
+                // moved: value }`: the written `moved` field moved last with the deferred value `value`, after an appended
+                // `w` with the deferred value `extra` (each built at its place, its statements after the fields before it)
+                let literal = arg(0).expect("three arguments");
+                let (value, extra) = (arg(1).expect("three arguments"), arg(2).expect("three arguments"));
+                let properties = literal.properties();
+                let written = properties.len() as u32;
+                let moved = properties
+                    .iter()
+                    .position(|p| p.name().is_some_and(|n| n.text() == "moved"))
+                    .expect("a written `moved`") as u32;
+                let mut order: Vec<u32> = (0..written).filter(|&i| i != moved).collect();
+                order.extend([written, moved]);
+                let edits = ObjectEdits {
+                    replace_deferred: vec![("moved".to_owned(), 0)],
+                    append_deferred: vec![(text_literal("w"), 1)],
+                    order: FieldOrder::Emitted(order),
+                    ..ObjectEdits::default()
+                };
+                let built = |cx: &mut Cx<'_>, index: usize| cx.compile_expr(if index == 0 { value } else { extra });
+                let value = cx.compile_object_literal_with(literal, edits, built)?;
+                self.claimed(value)
+            }
+            "objdrop" => {
+                // `probeObjDrop(literal, value)`: the literal rebuilt as `{ ...others, attributes: value, w: 4 }`, the first
+                // written member named `attributes` (a field, a method or an accessor) dropped, and `attributes` appended
+                // with the deferred value `value`
+                let literal = arg(0).expect("two arguments");
+                let value = arg(1).expect("two arguments");
+                let properties = literal.properties();
+                let written = properties.len() as u32;
+                let dropped = properties
+                    .iter()
+                    .position(|p| p.name().is_some_and(|n| n.text() == "attributes"))
+                    .expect("a written `attributes`");
+                let mut order: Vec<u32> = (0..written).filter(|&i| i != dropped as u32).collect();
+                // the list is written, `append` (`w`), then `append_deferred` (`attributes`)
+                order.extend([written + 1, written]);
+                let edits = ObjectEdits {
+                    drop: vec![properties[dropped]],
+                    append: vec![(text_literal("w"), create::number(4.0))],
+                    append_deferred: vec![(text_literal("attributes"), 0)],
+                    order: FieldOrder::Emitted(order),
+                    ..ObjectEdits::default()
+                };
+                let value = cx.compile_object_literal_with(literal, edits, |cx, _| cx.compile_expr(value))?;
+                self.claimed(value)
+            }
+            "objmisuse" => {
+                // `probeObjMisuse(literal, "mode")`: each mode an internal error naming the plugin
+                let literal = arg(0).expect("two arguments");
+                let first = literal.properties()[0];
+                let mut edits = ObjectEdits::default();
+                match arg(1).expect("two arguments").text() {
+                    // a deferred value without compile_object_literal_with
+                    "nowith" => {
+                        edits.replace_deferred.push(("a".to_owned(), 0));
+                        let value = cx.compile_object_literal(literal, edits)?;
+                        return self.claimed(value);
+                    }
+                    "foreign" => edits.drop.push(call.node),
+                    "twice" => edits.drop.extend([first, first]),
+                    "replacedropped" => {
+                        edits.drop.push(first);
+                        edits.replace.push(("a".to_owned(), create::nil()));
+                    }
+                    "listsdropped" => {
+                        edits.drop.push(first);
+                        edits.order = FieldOrder::Emitted((0..literal.properties().len() as u32).collect());
+                    }
+                    "badname" => {
+                        let value = cx.compile_expr_named(first, "not valid")?;
+                        return self.claimed(value);
+                    }
+                    _ => panic!("an unknown mode"),
+                }
+                let value = cx.compile_object_literal_with(literal, edits, |_, _| Ok(create::nil()))?;
+                self.claimed(value)
+            }
+            "exprnamed" => {
+                // `probeExprNamed(node, "name")`: as a TS transformer that bound the node to `const name = node` before
+                // the statement: `compile_expr_named`, then `local name = value`; the value is `name`
+                let node = arg(0).expect("two arguments");
+                let name = arg(1).expect("two arguments").text();
+                let value = cx.compile_expr_named(node, name)?;
+                cx.prereq(create::local(create::any_id(name), Some(value)));
+                self.claimed(create::id(name))
             }
             "objaccessor" => {
                 // a replace naming a key the literal writes only as an accessor: roblox-ts's error, not an internal one

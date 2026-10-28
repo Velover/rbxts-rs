@@ -321,3 +321,35 @@ fn seam_additions_fall_back_to_the_older_primitives() {
     assert_eq!(backend.hoisted.len(), 2, "the insertion and the hoist");
     assert!(backend.diagnostics.is_empty());
 }
+
+#[test]
+fn compile_expr_named_and_compile_object_literal_with_default() {
+    use rbxts_luau::{LateStrings, render_expr};
+    use rbxts_plugin::ObjectEdits;
+    use rbxts_plugin::ts::{Kind, Node, P};
+    let program = fixture();
+    let (index, file) = source(program, "main.ts");
+    // the first identifier of the file (`a` of `export const a = here();`)
+    fn first_identifier(node: P<Node>) -> Option<P<Node>> {
+        let mut found = None;
+        node.for_each_child(&mut |child| {
+            found = if child.kind() == Kind::Identifier { Some(child) } else { first_identifier(child) };
+            found.is_some()
+        });
+        found
+    }
+    let identifier = first_identifier(file.as_node()).expect("an identifier");
+    let mut backend = MockCx::new(program, index, file);
+    let mut cx = Cx::new(&mut backend);
+    // compile_expr_named: compile_expr, the name unused
+    let value = cx.compile_expr_named(identifier, "target").expect("compiled");
+    assert_eq!(render_expr(&value, &LateStrings::default()), identifier.text());
+    // compile_object_literal_with: an error naming the literal, the build never called
+    let mut called = false;
+    let result = cx.compile_object_literal_with(file.as_node(), ObjectEdits::default(), |_, _| {
+        called = true;
+        unreachable!()
+    });
+    assert!(result.is_err() && !called);
+    assert_eq!(backend.diagnostics.len(), 1, "{:?}", backend.diagnostics);
+}

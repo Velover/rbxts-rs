@@ -649,6 +649,28 @@ impl CxBackend for HookBackend<'_, '_> {
         self.lower_unchecked(|state, prereqs, context| compile_node(state, prereqs, context, node, own))
     }
 
+    fn compile_expr_named(&mut self, node: P<Node>, name: &str) -> Result<Expr, Aborted> {
+        if self.refused("compile_expr_named", Row::Lowering) {
+            return Err(Aborted);
+        }
+        if !rbxts_luau::is_valid_identifier(name) {
+            return Err(self.misuse(&format!("compile_expr_named: `{name}` is not a valid Luau identifier")));
+        }
+        self.check_self_compile(&[node])?;
+        let own = self.anchor;
+        let name = name.to_owned();
+        self.lower_unchecked(|state, prereqs, context| {
+            // the chain whose outermost node is `node` names its temporary after `name` (`temp_name_for`)
+            let previous = state.plugin_file.chain_names.insert(node, name);
+            let result = compile_node(state, prereqs, context, node, own);
+            match previous {
+                Some(previous) => state.plugin_file.chain_names.insert(node, previous),
+                None => state.plugin_file.chain_names.remove(&node),
+            };
+            result
+        })
+    }
+
     fn compile_in_order(&mut self, nodes: &[P<Node>]) -> Result<Vec<Expr>, Aborted> {
         if self.refused("compile_in_order", Row::Lowering) {
             return Err(Aborted);
@@ -757,7 +779,42 @@ impl CxBackend for HookBackend<'_, '_> {
             return Err(Aborted);
         }
         self.check_self_compile(&[node])?;
-        self.lower_unchecked(|state, prereqs, _| super::lowering::lower_object_literal(state, prereqs, node, edits))
+        self.lower_unchecked(|state, prereqs, _| {
+            super::lowering::lower_object_literal(state, prereqs, node, edits, None)
+        })
+    }
+
+    fn compile_object_literal_with(
+        &mut self,
+        node: P<Node>,
+        edits: ObjectEdits,
+        build: &mut dyn FnMut(&mut dyn CxBackend, usize) -> Result<Expr, Aborted>,
+    ) -> Result<Expr, Aborted> {
+        if self.refused("compile_object_literal_with", Row::Lowering) {
+            return Err(Aborted);
+        }
+        self.check_self_compile(&[node])?;
+        let mut deferred =
+            DeferredBuild { build, plugin: self.plugin, hook: self.hook, phase: self.phase, anchor: self.anchor };
+        self.lower_unchecked(|state, prereqs, _| {
+            let mut failed: Option<usize> = None;
+            let value = {
+                let mut run = |state: &mut TransformState<'_>, index: usize| {
+                    deferred.run(state, index).unwrap_or_else(|()| {
+                        failed.get_or_insert(index);
+                        (create::nil(), Vec::new())
+                    })
+                };
+                super::lowering::lower_object_literal(state, prereqs, node, edits, Some(&mut run))?
+            };
+            match failed {
+                Some(index) => Err(format!(
+                    "compile_object_literal_with: the build of deferred value {index} returned Err without reporting \
+                     an error"
+                )),
+                None => Ok(value),
+            }
+        })
     }
 
     fn compile_binary(&mut self, op: BinOp, left: P<Node>, right: P<Node>) -> Result<Expr, Aborted> {
@@ -1330,6 +1387,37 @@ pub(crate) struct DeferredBuild<'b> {
     anchor: P<Node>,
 }
 
+impl DeferredBuild<'_> {
+    /// The plugin's value with `index`, built now with its own prereq scope: the value and its statements. A build
+    /// that failed with a recorded error gives `nil` (the lowering fails with that error); `Err` when it failed
+    /// without one.
+    fn run(&mut self, state: &mut TransformState<'_>, index: usize) -> Result<(Expr, Vec<Stmt>), ()> {
+        let host = state.plugins.expect("the build has plugins");
+        let errors_before = state.diagnostics.diagnostics.len();
+        let mut slot = Prereqs::new();
+        let built = {
+            let mut backend = HookBackend {
+                state: &mut *state,
+                host,
+                prereqs: Some(&mut slot),
+                captures: Vec::new(),
+                call: None,
+                plugin: self.plugin,
+                hook: self.hook,
+                phase: self.phase,
+                anchor: self.anchor,
+            };
+            (self.build)(&mut backend, index)
+        };
+        match built {
+            Ok(value) => Ok((value, slot.statements)),
+            // the error is recorded: the lowering fails with it (`lower_unchecked` sees it)
+            Err(Aborted) if has_errors_since(state, errors_before) => Ok((create::nil(), slot.statements)),
+            Err(Aborted) => Err(()),
+        }
+    }
+}
+
 fn compile_slots(
     state: &mut TransformState<'_>,
     context: &mut CallContext,
@@ -1351,37 +1439,13 @@ fn compile_slots(
                 let Some(deferred) = deferred.as_mut() else {
                     return Err("compile_call: Arg::Deferred needs compile_call_with, which builds it".to_owned());
                 };
-                // the plugin's value, built now, with the slot's own prereq scope
-                let host = state.plugins.expect("the build has plugins");
-                let errors_before = state.diagnostics.diagnostics.len();
-                let mut slot = Prereqs::new();
-                let built = {
-                    let mut backend = HookBackend {
-                        state: &mut *state,
-                        host,
-                        prereqs: Some(&mut slot),
-                        captures: Vec::new(),
-                        call: None,
-                        plugin: deferred.plugin,
-                        hook: deferred.hook,
-                        phase: deferred.phase,
-                        anchor: deferred.anchor,
-                    };
-                    (deferred.build)(&mut backend, index)
-                };
-                match built {
-                    Ok(value) => infos.push((value, slot.statements, None)),
-                    // the error is recorded: the call fails with it (`lower_unchecked` sees it)
-                    Err(Aborted) if has_errors_since(state, errors_before) => {
-                        infos.push((create::nil(), slot.statements, None));
-                    }
-                    Err(Aborted) => {
-                        return Err(format!(
-                            "compile_call_with: the build of Arg::Deferred({index}) returned Err without reporting \
-                             an error"
-                        ));
-                    }
-                }
+                let (value, statements) = deferred.run(state, index).map_err(|()| {
+                    format!(
+                        "compile_call_with: the build of Arg::Deferred({index}) returned Err without reporting an \
+                         error"
+                    )
+                })?;
+                infos.push((value, statements, None));
             }
         }
     }
@@ -1670,15 +1734,7 @@ fn lower_chain_outer_call(
             (create::property(convert_to_indexable_expression(object.clone()), name), Some(object))
         }
     };
-    let name = match node.parent() {
-        Some(parent)
-            if parent.kind() == Kind::VariableDeclaration
-                && parent.name().is_some_and(|n| n.kind() == Kind::Identifier) =>
-        {
-            parent.name().expect("checked").text().to_owned()
-        }
-        _ => "result".to_owned(),
-    };
+    let name = crate::nodes::transform_optional_chain::temp_name_for(state, node);
     let temp = prereqs.push_to_var(function, &name);
     let mut inside = Prereqs::new();
     context.chain_outer = None;

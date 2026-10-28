@@ -45,3 +45,12 @@ declare const Send: { impl: (...values: Array<unknown>) => unknown };
 
 /** @probe orderedcall */
 declare function probeOrderedCall(receiver: object, key: string, ...args: Array<number>): number;
+
+/** @probe objmove */
+declare function probeObjMove<T>(literal: T, value: unknown, extra: unknown): unknown;
+
+/** @probe objdrop */
+declare function probeObjDrop<T>(literal: T, value: unknown): unknown;
+
+/** @probe exprnamed */
+declare function probeExprNamed<T>(node: T, name: string): T;
