@@ -218,7 +218,7 @@ both.
 
 `rbxts-bench build --plugin <name>` registers the test
 plugins of `crates/rbxts_test_plugins` (the `rbxts_plugin` crate's `stamp`, and `probe`, which reaches every compiler
-primitive), with `--timings` for per-plugin hook times and `--claims-all` (or `RBXTS_PLUGIN_CLAIMS=all`) to report
+primitive), with `--timings` for per-plugin hook times (and, in `rbxtsc`, the build's phase times) and `--claims-all` (or `RBXTS_PLUGIN_CLAIMS=all`) to report
 double claims. `cargo test -p rbxts_transform --test plugins` builds `tests/plugin_fixtures/probe` with them against
 hand-checked `expected/` Luau, and runs their failure modes.
 
@@ -275,8 +275,10 @@ resolution sees packages installed or upgraded since the last build.
   (entries created since the build started, the directory's own modification time, reads the disk now contradicts,
   program files' times and sizes). Plugins' recorded inputs are watched too (globs' roots recursively, what
   `finish` listed, tested or read): an event only they care about starts a rebuild when an answer changed (a file's
-  glob transforms that file, a setup glob runs setup, a `finish` read runs `finish`). A trailing 100 ms debounce, `--usePolling`, `--events json` (`build-start` and
-  `build-end` lines). A rebuild reuses the last program load (tsrs `reuse_program`, the edited files parsed again,
+  glob transforms that file, a setup glob runs setup, a `finish` read runs `finish`). A trailing 100 ms debounce (as
+  roblox-ts's; stock also waits for chokidar's 50 ms `awaitWriteFinish`), `--usePolling`, `--events json` (`build-start`
+  and `build-end` lines), `--timings` (the build's phases and the watcher's own times: debounce, watch set, update and
+  scan), `RBXTS_WATCH_DEBUG` (watched directories, raw events, what a rebuild reused or asked again). A rebuild reuses the last program load (tsrs `reuse_program`, the edited files parsed again,
   the project setup kept) when everything that load read, the setup's reads included, reads the same now, and loads
   again otherwise. Each rebuild frees the program it replaced; a restart of the watcher process past
   `RBXTS_WATCH_MEMORY_LIMIT_MB` (default 2048; 0 turns it off) stays as a safety net. A crashed rebuild is reported and the next one starts clean. The status lines carry the local time as
