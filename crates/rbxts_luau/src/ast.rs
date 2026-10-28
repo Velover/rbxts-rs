@@ -46,7 +46,8 @@ pub enum Expr {
     /// A string literal.
     String(StringLiteral),
     /// A string literal whose value is looked up by key in the [`crate::LateStrings`] given to the renderer
-    /// (DESIGN §4 step 5). It renders and behaves exactly like a [`StringLiteral`] with that value and no quote.
+    /// (DESIGN §4 step 5). It renders and behaves exactly like a [`StringLiteral`] with that value and no quote (a
+    /// [`LateString::synthesized`] one: with the synthesized value and a double quote).
     LateString(LateString),
     /// `...`
     VarArgs,
@@ -182,6 +183,10 @@ impl Quote {
 pub struct LateString {
     /// The key of the value in [`crate::LateStrings`].
     pub key: String,
+    /// Rendered with the key's synthesized spelling ([`crate::LateStrings::insert_synthesized`]) between double
+    /// quotes, as a `StringLiteral` with `quote: Some(Quote::Double)` renders; with the plain value and no quote
+    /// otherwise.
+    pub synthesized: bool,
 }
 
 /// `function(parameters) statements end`

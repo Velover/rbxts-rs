@@ -52,6 +52,13 @@ pub fn text_literal(text: &str) -> LuauExpr {
 /// So `"^é.*✓$"` is `"^\u{00E9}.*\u{2713}$"`. [`text_literal`] gives a literal with the same value in a shorter
 /// spelling; use this one where the output must match what Flamework's TS transformer gave.
 pub fn synthesized_string(text: &str) -> LuauExpr {
+    rbxts_luau::create::string_quoted(synthesized_spelling(text), rbxts_luau::Quote::Double)
+}
+
+/// The text between the double quotes of [`synthesized_string`]: `text` escaped as roblox-ts spells a string literal
+/// a TS transformer made with `factory.createStringLiteral(text)`. A synthesized late string's spelling
+/// ([`crate::FinishBackend::resolve_late_text`]).
+pub fn synthesized_spelling(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
@@ -73,7 +80,7 @@ pub fn synthesized_string(text: &str) -> LuauExpr {
             c => out.push_str(&format!("\\u{{{:04X}}}", c as u32)),
         }
     }
-    rbxts_luau::create::string_quoted(out, rbxts_luau::Quote::Double)
+    out
 }
 
 #[cfg(test)]

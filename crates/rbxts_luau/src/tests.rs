@@ -433,6 +433,34 @@ fn late_strings() {
 }
 
 #[test]
+fn synthesized_late_strings_use_their_own_spelling_between_double_quotes() {
+    // the plain and synthesized spellings of `ünï "q"` (rbxts_plugin's `escape_luau_string` and `synthesized_string`)
+    let mut late = LateStrings::new();
+    late.insert("id", "ünï \"q\"");
+    late.insert_synthesized("id", "\\u{00FC}n\\u{00EF} \\\"q\\\"");
+    late.insert("plain", "ok_id");
+    late.insert_synthesized("plain", "ok_id");
+    let statements = vec![
+        local(any_id("a"), Some(late_string("id"))),
+        local(any_id("b"), Some(late_string_synthesized("id"))),
+        print(vec![map([(late_string_synthesized("plain"), late_string_synthesized("id"))])]),
+        print(vec![computed_index(id("t"), late_string_synthesized("plain"))]),
+    ];
+    assert_eq!(
+        render(&statements, &late),
+        "local a = 'ünï \"q\"'\nlocal b = \"\\u{00FC}n\\u{00EF} \\\"q\\\"\"\nprint({\n\tok_id = \"\\u{00FC}n\\u{00EF} \\\"q\\\"\",\n})\nprint(t.ok_id)\n"
+    );
+}
+
+#[test]
+#[should_panic(expected = "late string `missing` has no synthesized spelling")]
+fn missing_synthesized_late_string_panics() {
+    let mut late = LateStrings::new();
+    late.insert("missing", "x");
+    render(&[local(any_id("x"), Some(late_string_synthesized("missing")))], &late);
+}
+
+#[test]
 #[should_panic(expected = "late string `missing` has no value")]
 fn missing_late_string_panics() {
     render_ast(&[local(any_id("x"), Some(late_string("missing")))]);

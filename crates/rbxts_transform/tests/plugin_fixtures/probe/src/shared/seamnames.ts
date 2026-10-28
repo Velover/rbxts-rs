@@ -2,7 +2,7 @@
  * A header comment with a blank line after it: TypeScript's printer keeps it above the plugin imports.
  */
 
-// the first statement's own comment stays with it
+// the first statement's own comment goes above the plugin imports too (ts.copyComments)
 const impl = 1;
 const constant_22 = 2;
 

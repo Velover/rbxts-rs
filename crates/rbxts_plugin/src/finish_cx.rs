@@ -35,6 +35,16 @@ pub trait FinishBackend {
     /// uses are ignored. A cached file whose values changed is re-rendered (contract on
     /// [`crate::CxBackend::late_string`]).
     fn resolve_late(&mut self, key: &str, escaped: String);
+    /// Sets the value of a late string of this plugin from its plain `text`: what [`FinishCx::resolve_late`] calls.
+    /// It sets both spellings of the value: [`escape_luau_string`] for [`crate::Cx::late_string`] uses, and
+    /// [`crate::synthesized_spelling`] for [`crate::Cx::late_string_synthesized`] uses (rendered between double quotes,
+    /// as [`crate::synthesized_string`] is). The rules of [`FinishBackend::resolve_late`] apply.
+    ///
+    /// **Default:** [`FinishBackend::resolve_late`] with the escaped text only; a backend that keeps no synthesized
+    /// spelling cannot render a synthesized use (the compiler's renderer panics on one without its spelling).
+    fn resolve_late_text(&mut self, key: &str, text: &str) {
+        self.resolve_late(key, escape_luau_string(text));
+    }
     /// Queues an artifact, written in commit step 2 (after the Luau outputs) only if its bytes changed. The
     /// compiler remembers the artifact set: an artifact written last build but not this one is deleted in step 3.
     fn write_artifact(&mut self, path: &Path, bytes: Vec<u8>);
@@ -267,9 +277,11 @@ impl<'a> FinishCx<'a> {
     }
 
     /// Gives the late string `key` (see [`crate::Cx::late_string`]) its value: `text` is plain text, which this
-    /// method escapes for Luau. Every key used by a current file must be resolved ([`FinishBackend::resolve_late`]).
+    /// method escapes for Luau, in both spellings: plain for [`crate::Cx::late_string`] uses, synthesized for
+    /// [`crate::Cx::late_string_synthesized`] uses ([`FinishBackend::resolve_late_text`]). Every key used by a
+    /// current file must be resolved ([`FinishBackend::resolve_late`]).
     pub fn resolve_late(&mut self, key: &str, text: &str) {
-        self.backend.resolve_late(key, escape_luau_string(text));
+        self.backend.resolve_late_text(key, text);
     }
 
     /// Queues an artifact ([`FinishBackend::write_artifact`]).

@@ -181,7 +181,7 @@ mod setup_cx;
 mod types;
 
 pub use cx::{Aborted, Cx, CxBackend};
-pub use escape::{escape_luau_string, synthesized_string, text_literal};
+pub use escape::{escape_luau_string, synthesized_spelling, synthesized_string, text_literal};
 pub use finish_cx::{DirEntry, EntryKind, FinishBackend, FinishCx};
 pub use glob::GlobMatcher;
 pub use identifiers::ts5_file_identifiers;

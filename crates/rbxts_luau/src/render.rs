@@ -25,6 +25,8 @@ use crate::util::{
 #[derive(Clone, Debug, Default)]
 pub struct LateStrings {
     values: HashMap<String, String>,
+    /// The synthesized spellings, for [`LateString::synthesized`] uses.
+    synthesized: HashMap<String, String>,
 }
 
 impl LateStrings {
@@ -38,9 +40,21 @@ impl LateStrings {
         self.values.insert(key.into(), value.into());
     }
 
+    /// Sets the synthesized spelling of `key`, replacing an earlier one: the escaped text a
+    /// [`LateString::synthesized`] use renders between double quotes (escaped for `"`, so it never needs another
+    /// delimiter). It spells the same text as the value set with [`LateStrings::insert`]; the two are set together.
+    pub fn insert_synthesized(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.synthesized.insert(key.into(), value.into());
+    }
+
     /// The value of `key`, if set.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.values.get(key).map(String::as_str)
+    }
+
+    /// The synthesized spelling of `key`, if set ([`LateStrings::insert_synthesized`]).
+    pub fn get_synthesized(&self, key: &str) -> Option<&str> {
+        self.synthesized.get(key).map(String::as_str)
     }
 
     /// The number of keys set.
@@ -521,7 +535,10 @@ impl Renderer<'_> {
                 }
             }
             Expr::String(s) => string_literal(self.out, &s.value, s.quote, matches!(ctx, Ctx::Brackets)),
-            Expr::LateString(s) => string_literal(self.out, late_value(late, s), None, matches!(ctx, Ctx::Brackets)),
+            Expr::LateString(s) => {
+                let quote = s.synthesized.then_some(Quote::Double);
+                string_literal(self.out, late_value(late, s), quote, matches!(ctx, Ctx::Brackets))
+            }
             Expr::VarArgs => self.out.push_str("..."),
             Expr::Function(node) => {
                 self.out.push_str("function");
@@ -712,7 +729,13 @@ fn string_value<'e>(late_strings: &'e LateStrings, e: &'e Expr) -> Option<&'e st
 }
 
 fn late_value<'e>(late_strings: &'e LateStrings, s: &LateString) -> &'e str {
-    late_strings.get(&s.key).unwrap_or_else(|| panic!("late string `{}` has no value", s.key))
+    if s.synthesized {
+        late_strings
+            .get_synthesized(&s.key)
+            .unwrap_or_else(|| panic!("late string `{}` has no synthesized spelling", s.key))
+    } else {
+        late_strings.get(&s.key).unwrap_or_else(|| panic!("late string `{}` has no value", s.key))
+    }
 }
 
 /// `renderStringLiteral`:`"…"`, else `'…'`, else a long bracket `[=[…]=]` (with spaces inside `[ ]`).

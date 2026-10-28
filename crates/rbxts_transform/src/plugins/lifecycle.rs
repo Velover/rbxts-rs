@@ -690,6 +690,11 @@ impl FinishBackend for Finish<'_> {
         self.late.insert(key, escaped);
     }
 
+    fn resolve_late_text(&mut self, key: &str, text: &str) {
+        self.resolve_late(key, rbxts_plugin::escape_luau_string(text));
+        self.late.insert_synthesized(late_key(self.plugin, key), rbxts_plugin::synthesized_spelling(text));
+    }
+
     fn write_artifact(&mut self, path: &Path, bytes: Vec<u8>) {
         if let Some(path) = self.checked_path(path, "artifact") {
             self.queue.artifacts.retain(|(_, p, _)| *p != path);

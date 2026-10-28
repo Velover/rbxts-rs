@@ -1,8 +1,8 @@
 -- Compiled with roblox-ts v3.0.0
 local TS = require(game:GetService("ReplicatedStorage"):WaitForChild("include"):WaitForChild("RuntimeLib"))
 -- A header comment with a blank line after it: TypeScript's printer keeps it above the plugin imports.
+-- the first statement's own comment goes above the plugin imports too (ts.copyComments)
 local impl_1 = TS.import(script, game:GetService("ReplicatedStorage"), "shared", "runtime").impl
--- the first statement's own comment stays with it
 local impl = 1
 local constant_22 = 2
 --[[

@@ -41,7 +41,7 @@ pub struct Aborted;
 /// | --- | --- | --- | --- | --- |
 /// | program, file, checker, project, module and package queries, source facts (`file_identifier_texts` included) | yes | yes | yes | yes |
 /// | lowering: `compile_*`, `compile_receiver`, `prereq`, `push_to_var`, capture, `insert_before_root_statement`, `insert_before_statement`, `hoist`, `hoist_spillable`, `hoist_spillable_named`, `comment` | yes | refused | refused | refused |
-/// | file-level: `header`, `import_named`, `mark_import_used`, `request_import_elision`, `runtime_member`, `temp_id`, `late_string` | yes | yes | refused | refused |
+/// | file-level: `header`, `import_named`, `mark_import_used`, `request_import_elision`, `runtime_member`, `temp_id`, `late_string`, `late_string_synthesized` | yes | yes | refused | refused |
 /// | `report` (and `Cx::error` / `warning`) | yes | yes | refused | yes |
 /// | `is_usable_local_name`, `locals` | yes | yes | yes | yes |
 /// | build inputs: `env`, `record_glob` | yes | yes | refused | yes |
@@ -216,8 +216,10 @@ pub trait CxBackend {
     /// (reusing a user import of the same export).
     ///
     /// **Placement.** Plugin imports go after the `--!` directives, the `-- Compiled with` line and
-    /// `local TS = require(...)`, and after a header comment the file starts with (a run of comments with a blank
-    /// line after it, which TypeScript's printer keeps at the top of the file), ahead of the user's own imports.
+    /// `local TS = require(...)`, and after every leading comment of the file's first statement, ahead of the user's
+    /// own imports: Flamework's TS transformer moves those comments onto its first import declaration
+    /// (`ts.copyComments`), so they also go above the first statement's root insertions, `insert_before_statement`
+    /// statements and plugin comments. Without plugin imports the comments stay where roblox-ts puts them.
     /// They are placed as Flamework's TS transformer adds its import declarations while it walks the file: one per
     /// path, the paths in the order their first import was asked for, each listing its imports in the order they
     /// were asked for. That order is the source position of the node whose hook asked (the file for
@@ -289,6 +291,15 @@ pub trait CxBackend {
     /// still keep the values of committed keys stable where they can (Flamework appends new ids from its
     /// persistent table), so this rarely fires.
     fn late_string(&mut self, key: &str) -> LuauExpr;
+    /// As [`CxBackend::late_string`], spelled as [`crate::synthesized_string`] spells the value: the literal a TS
+    /// transformer made with `factory.createStringLiteral(value)` (`"\u{00FC}n…"`, always double quotes, `\"`). The
+    /// spelling is the requester's: the same key may be used both ways, and both spell the one value `finish`
+    /// gives ([`crate::FinishBackend::resolve_late_text`]).
+    ///
+    /// **Default:** [`CxBackend::late_string`], the plain spelling.
+    fn late_string_synthesized(&mut self, key: &str) -> LuauExpr {
+        self.late_string(key)
+    }
     /// A Luau comment before the next statement emitted.
     ///
     /// When it is the first thing the nearest TS statement around the node emits (a statement, see
@@ -609,6 +620,13 @@ impl<'a> Cx<'a> {
     /// builds (cached files using it are re-rendered); see the contract on [`CxBackend::late_string`].
     pub fn late_string(&mut self, key: &str) -> LuauExpr {
         self.backend.late_string(key)
+    }
+
+    /// A late string spelled as [`Cx::synthesized_string`] spells its value, for a value Flamework's TS transformer
+    /// made with `factory.createStringLiteral` ([`CxBackend::late_string_synthesized`]). The same key and contract
+    /// as [`Cx::late_string`]: only the spelling differs.
+    pub fn late_string_synthesized(&mut self, key: &str) -> LuauExpr {
+        self.backend.late_string_synthesized(key)
     }
 
     /// A Luau comment before the next statement ([`CxBackend::comment`]).

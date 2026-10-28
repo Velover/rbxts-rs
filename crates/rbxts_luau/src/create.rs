@@ -98,7 +98,13 @@ pub fn string_quoted(value: impl Into<String>, quote: Quote) -> Expr {
 
 /// A string literal whose value is filled in at render time from [`crate::LateStrings`].
 pub fn late_string(key: impl Into<String>) -> Expr {
-    Expr::LateString(LateString { key: key.into() })
+    Expr::LateString(LateString { key: key.into(), synthesized: false })
+}
+
+/// A late string rendered with its key's synthesized spelling, between double quotes
+/// ([`crate::LateStrings::insert_synthesized`]).
+pub fn late_string_synthesized(key: impl Into<String>) -> Expr {
+    Expr::LateString(LateString { key: key.into(), synthesized: true })
 }
 
 /// `luau.comment`

@@ -222,6 +222,10 @@ pub struct PluginFileState {
     /// The number of Luau comments of the file's header comment (TypeScript's detached comments), which the first
     /// top-level statement emitted ahead of its root insertions; plugin imports go after them.
     pub detached_comments: usize,
+    /// Where the first top-level statement's other leading comments (after the header comment) start in the file's
+    /// list, and how many there are. With plugin imports they go above the imports, as Flamework's TS transformer's
+    /// `ts.copyComments` moves every leading comment of the first statement onto its first import declaration.
+    pub first_leading_comments: (usize, usize),
     pub(crate) import_cache: FxHashMap<(String, String), Expr>,
     /// Statements for before the current top-level statement (`insert_before_root_statement`, `hoist`).
     pub root_inserts: Vec<Stmt>,

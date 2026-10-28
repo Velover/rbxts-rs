@@ -1,2 +1,2 @@
-// a leading comment with no blank line after it stays with its statement, below the plugin imports
+// a leading comment of the first statement goes above the plugin imports (Flamework: ts.copyComments)
 export const after = probeImportAfter(probeSwap(2, "b"));

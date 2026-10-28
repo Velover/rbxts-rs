@@ -1421,8 +1421,9 @@ fn before_statement_slow(
     leading: &mut Vec<Stmt>,
     transformed: &mut Vec<Stmt>,
 ) {
+    let first = root && state.plugin_file.root_ranges.is_empty();
     if root {
-        if state.plugin_file.root_ranges.is_empty() && !leading.is_empty() {
+        if first && !leading.is_empty() {
             let detached = detached_comment_count(state, statement).min(leading.len());
             state.plugin_file.detached_comments = detached;
             result.extend(leading.drain(..detached));
@@ -1445,6 +1446,10 @@ fn before_statement_slow(
             next = texts.next();
         }
         result.extend(transformed.drain(..moved));
+    }
+    if first {
+        // the caller appends what is left of `leading` next
+        state.plugin_file.first_leading_comments = (result.len(), leading.len());
     }
 }
 
@@ -1684,8 +1689,18 @@ fn place_imports_and_header(state: &mut TransformState<'_>, statements: &mut Vec
             _ => break,
         }
     }
-    // after the file's header comment, which TypeScript's printer keeps above every statement
-    let imports_at = directives.max(state.plugin_file.detached_comments);
+    // after the file's header comment, which TypeScript's printer keeps above every statement, and, when there are
+    // imports, after every other leading comment of the first statement too: Flamework's TS transformer copies them
+    // onto its first import declaration (`ts.copyComments`) and removes them from the statement, so they go above
+    // the first statement's root insertions, `insert_before_statement` statements and plugin comments
+    // (`--!` directives are leading comments of the first statement too, so they stay first)
+    let mut imports_at = state.plugin_file.detached_comments;
+    let (leading_at, leading) = state.plugin_file.first_leading_comments;
+    if !imports.is_empty() && leading > 0 && leading_at >= imports_at && leading_at + leading <= statements.len() {
+        statements[imports_at..leading_at + leading].rotate_right(leading);
+        imports_at += leading;
+    }
+    let imports_at = directives.max(imports_at);
     let header_at = after_imports.max(imports_at) + imports.len();
     state.plugin_file.front_inserts.push((imports_at, imports.len()));
     state.plugin_file.front_inserts.push((header_at, header.len()));

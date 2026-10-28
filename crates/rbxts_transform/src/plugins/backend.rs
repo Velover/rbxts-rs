@@ -336,6 +336,19 @@ impl HookBackend<'_, '_> {
         note_effect(self.state, what);
     }
 
+    /// `late_string` and `late_string_synthesized`: the same key, recorded the same way; only the spelling differs.
+    fn late_string_spelled(&mut self, key: &str, synthesized: bool) -> Expr {
+        let primitive = if synthesized { "late_string_synthesized" } else { "late_string" };
+        if self.refused(primitive, Row::FileLevel) {
+            return create::nil();
+        }
+        self.note_effect(if synthesized { "calling late_string_synthesized" } else { "calling late_string" });
+        self.touch();
+        let key = super::lifecycle::late_key(self.name(), key);
+        self.state.plugin_file.use_late_key(self.plugin, key.clone());
+        if synthesized { create::late_string_synthesized(key) } else { create::late_string(key) }
+    }
+
     /// A primitive that changes compiler state ran (see [`HookFrame::touched`]).
     fn touch(&mut self) {
         self.state.plugin_file.emitted = true;
@@ -880,14 +893,11 @@ impl CxBackend for HookBackend<'_, '_> {
     }
 
     fn late_string(&mut self, key: &str) -> Expr {
-        if self.refused("late_string", Row::FileLevel) {
-            return create::nil();
-        }
-        self.note_effect("calling late_string");
-        self.touch();
-        let key = super::lifecycle::late_key(self.name(), key);
-        self.state.plugin_file.use_late_key(self.plugin, key.clone());
-        create::late_string(key)
+        self.late_string_spelled(key, false)
+    }
+
+    fn late_string_synthesized(&mut self, key: &str) -> Expr {
+        self.late_string_spelled(key, true)
     }
 
     fn comment(&mut self, text: &str) {
