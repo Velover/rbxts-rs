@@ -1379,14 +1379,15 @@ fn fwapi_project(label: &str) -> Option<Project> {
     Project::copy_of(&fixture_dir_of("fwapi"), &names, label)
 }
 
-/// The `fwapi` round's API additions against stock TypeScript 5 (`plugin_fixtures/fwapi`): its `expected/` Luau is
-/// what stock roblox-ts gives with a JS transformer doing what each probe op does (as Flamework's TS transformer
-/// does it), so this fixture, unlike `probe`, has a stock reference. Covered: plugin imports after every leading
-/// comment of the first statement (`ts.copyComments`, `cmt*.ts`); synthesized late strings (`late.ts`); a call in a parenthesized decorator
-/// expression offered as an ordinary call (`deco.ts`); `FieldOrder::Emitted` (`objemitted.ts`); `import_named_at`
-/// (`importat.ts`); `KeyAnswer::as_element_access` (`elemkey.ts`); `compile_call_with` and
-/// `Arg::Deferred` (`deferred.ts`); `calls_chain_outer` (`chainouter.ts`); `Cx::ordered_element_call` (`ordered.ts`); `import_named` of modules
-/// no program file imports, a package and a declaration file outside the source root (`notinprog.ts`).
+/// The `fwapi` round's API additions against stock TypeScript 5 (`plugin_fixtures/fwapi`): its `expected/` Luau is what
+/// stock roblox-ts gives with a JS transformer doing what each probe op does (as Flamework's TS transformer does it),
+/// so this fixture, unlike `probe`, has a stock reference. Covered: plugin imports after every leading comment of the
+/// first statement (`ts.copyComments`, `cmt*.ts`); synthesized late strings (`late.ts`); a call in a parenthesized
+/// decorator expression offered as an ordinary call (`deco.ts`); `FieldOrder::Emitted` (`objemitted.ts`);
+/// `import_named_at` (`importat.ts`); `KeyAnswer::as_element_access` (`elemkey.ts`); `compile_call_with` and
+/// `Arg::Deferred` (`deferred.ts`); `calls_chain_outer` (`chainouter.ts`); `Cx::ordered_element_call` (`ordered.ts`);
+/// `import_named` of modules no program file imports, a package and a declaration file outside the source root
+/// (`notinprog.ts`).
 #[test]
 fn fwapi_fixture_matches_stock_typescript_5() {
     let Some(project) = fwapi_project("fwapi") else { return };
@@ -1431,7 +1432,8 @@ fn incremental_state_path_names_the_compilers_state_file() {
 
     // the same path for builds that write no state: --noWrite, write-partial, an outDir override
     let elsewhere = project.root.join("elsewhere").to_string_lossy().into_owned();
-    let changes: [(&str, Box<dyn Fn(&mut CompileOptions) + Send + Sync>); 3] = [
+    type Change = Box<dyn Fn(&mut CompileOptions) + Send + Sync>;
+    let changes: [(&str, Change); 3] = [
         ("no-write", Box::new(|o| o.no_write = true)),
         ("write-partial", Box::new(|o| o.write_partial = true)),
         ("out-dir override", Box::new(move |o| o.out_dir_override = Some(elsewhere.clone()))),

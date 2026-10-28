@@ -770,9 +770,8 @@ impl<'a> Cx<'a> {
         let mut callee = rbxts_luau::create::computed_index(indexable(base.clone()), key.clone());
         let lookup_effects = effects_of(&callee);
         let capture_callee = !effects_commute(&lookup_effects, &prereq_effects);
-        if method
-            && (!base.is_simple() || !effects_commute(&effects_of(&base), &join_effects(lookup_effects, &prereq_effects)))
-        {
+        let receiver_moves = !effects_commute(&effects_of(&base), &join_effects(lookup_effects, &prereq_effects));
+        if method && (!base.is_simple() || receiver_moves) {
             base = self.push_to_var(base, "self");
             callee = rbxts_luau::create::computed_index(indexable(base.clone()), key);
         }

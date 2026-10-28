@@ -70,6 +70,11 @@ the compiler (`rbxts_transform`) implements the backend traits.
 | visiting every node of a kind | `Interest::expressions(kind, tag)` / `statements(kind, tag)` (slow path) |
 | emitting TS for roblox-ts to compile | return Luau; lower user code with `cx.compile_expr` / `compile_in_order` / `compile_call` / `compile_object_literal` / `compile_binary` |
 | `factory.updateCallExpression(…, args)` | `cx.compile_call(call, Callee::Original, vec![Arg::Original(n), Arg::Luau(e), Arg::Nil])` |
+| a generated argument among written ones (built while visiting them) | `cx.compile_call_with(call, callee, vec![Arg::Original(a), Arg::Deferred(0)], \|cx, i\| …)` |
+| replacing a call node inside `a?.b.m()` (the chain goes) | `Interest::calls_chain_outer`: the chain's outer call offered first (`CallSite::chain_outer`) |
+| `obj[KEY](…)` built by the transformer | `cx.ordered_element_call(receiver, key, args, method)`; the order analysis itself is `rbxts_plugin::effects` |
+| rewriting `obj.m(…)` to `obj["k"](…)` | `PluginInstance::property_key_answer` with `KeyAnswer::element("k")` |
+| a literal rebuilt in another member order | `ObjectEdits { order: FieldOrder::Emitted(order), .. }` |
 | the chain IIFE around a receiver | `cx.compile_receiver(call)` (nil-checked by the chain lowering) |
 | `typeToTypeNode` / casts so the re-check passes | gone: nothing is re-checked |
 | an import whose only value uses the rewrite removed (TS elided it after the rewrite) | `cx.request_import_elision(alias)`; `cx.mark_import_used(alias)` for the opposite |
@@ -78,7 +83,9 @@ the compiler (`rbxts_transform`) implements the backend traits.
 | `factory.expr.identifier(n, true)` | `cx.temp_id(hint)` |
 | `getJSDocTags` | `cx.jsdoc_tags(declaration)` / `cx.symbol_jsdoc_tags(symbol)` (`{@link}` symbols resolved) |
 | `node.getStart()` / `getText()` / `getLineAndCharacterOfPosition` | `cx.utf16_pos(node)` / `cx.source_text(node)` / `cx.utf16_width(node)` |
-| ids decided at transform time from shared mutable state | `cx.late_string(key)` now, `FinishCx::resolve_late(key, text)` in `finish` |
+| ids decided at transform time from shared mutable state | `cx.late_string(key)` now, `FinishCx::resolve_late(key, text)` in `finish` (`cx.late_string_synthesized(key)` for an id made with `factory.createStringLiteral`) |
+| imports added while visiting out of source order (members before decorators) | `cx.import_named_at(module, export, at)` |
+| naming the compiler's incremental state in a remedy | `SetupCx::incremental_state_path()` |
 | `setTimeout(saveArtifacts)`, `fs.writeFileSync` | `FinishCx::write_artifact` / `write_state_file` (one write phase) |
 | reading config with `fs` / `process.env` | `SetupCx::read_input` / `env` (recorded as build inputs) |
 | `process.env` at transform time | `cx.env(name)` (recorded as an input of the file) |
@@ -86,6 +93,7 @@ the compiler (`rbxts_transform`) implements the backend traits.
 | `fs.rmdirSync(folder)` of an emptied artifact folder | `FinishCx::remove_empty_dir(folder)?` (the compiler removes folders its artifact diff empties by itself) |
 | `fs.existsSync` / `readdirSync` / `readFileSync` while writing artifacts | `FinishCx::exists` / `read_dir` / `read_file` (recorded: watch re-runs `finish` when an answer changes) |
 | a diagnostic `code` such as `" @scope/transformer"` | `Plugin::diagnostic_source` (per diagnostic: `PluginDiagnostic::with_source`) |
+| a numeric diagnostic `code` (`1117`, shown `TS1117`) | `PluginDiagnostic::with_code(1117)` |
 | `process.exit(1)` | `Err(Fatal::new(msg))` from `setup` / `finish` |
 
 ## Tests

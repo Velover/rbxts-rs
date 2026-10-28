@@ -47,6 +47,11 @@
 //!   value: roblox-ts calls `super.m(self, …)`. [`Cx::compile_receiver`] on such a call is an internal error naming the
 //!   plugin; `compile_expr` of the call and `compile_call(call, Callee::Original, …)` lower it as roblox-ts does, with
 //!   `self` first. Their callee key reaches `property_key` like any method callee's.
+//! - The outermost call of an optional chain (`a?.b.m()`, `o.m?.()`) is offered a second time, first, before anything of
+//!   the chain is compiled, to the plugins that registered [`Interest::calls_chain_outer`] ([`CallSite::chain_outer`]):
+//!   as a TS transformer sees the chain's outer `CallExpression`, a value taken there replaces the whole chain.
+//! - A call inside a parenthesized decorator expression (`@(d())`) is an ordinary call; only `@d(…)` is a decorator
+//!   call.
 //! - `new` is offered before constructor macros. Decorators are offered as [`CallKind::Decorator`] before their
 //!   expression is compiled; the returned value replaces the decorator expression, which is then applied
 //!   (`Class = value(Class) or Class`). The call inside `@D(…)` is offered as the decorator, not again as a call.
