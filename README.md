@@ -5,8 +5,8 @@ Flamework as an in-process plugin. Private and local: never pushed or published.
 
 - Design: `E:\Projects\TS\Flamework\scratchpad\batch\rbxts-rs\DESIGN.md`.
 - Measurements: `bench/RESULTS.md`.
-- tsrs: a fork branch `rbxts-fork` in `E:\Projects\TS\Flamework\worktrees\tsrs-rbxts-fork`, used through path
-  dependencies (see `Cargo.toml`).
+- tsrs: the fork branch `rbxts-fork-0.20` (tsrs v0.20.0 plus visibility flips), a git dependency pinned by rev (see
+  `Cargo.toml` and `docs/tsrs.md`, "The fork").
 
 ## Build and measure
 

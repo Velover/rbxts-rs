@@ -928,6 +928,7 @@ dependencies = [
 [[package]]
 name = "tsrs_ast"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "bitflags",
  "hashbrown",
@@ -941,6 +942,7 @@ dependencies = [
 [[package]]
 name = "tsrs_astnav"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "tsrs_ast",
  "tsrs_core",
@@ -950,6 +952,7 @@ dependencies = [
 [[package]]
 name = "tsrs_binder"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "bitflags",
  "rustc-hash",
@@ -962,6 +965,7 @@ dependencies = [
 [[package]]
 name = "tsrs_checker"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "bitflags",
  "hashbrown",
@@ -985,6 +989,7 @@ dependencies = [
 [[package]]
 name = "tsrs_compiler"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "rayon",
  "rustc-hash",
@@ -1010,6 +1015,7 @@ dependencies = [
 [[package]]
 name = "tsrs_contentmapper"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "rustc-hash",
  "tsrs_ast",
@@ -1025,6 +1031,7 @@ dependencies = [
 [[package]]
 name = "tsrs_core"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "dragonbox_ecma",
  "hashbrown",
@@ -1042,6 +1049,7 @@ dependencies = [
 [[package]]
 name = "tsrs_declarations"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "rustc-hash",
  "tsrs_ast",
@@ -1058,6 +1066,7 @@ dependencies = [
 [[package]]
 name = "tsrs_diagnostics"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "rustc-hash",
 ]
@@ -1065,6 +1074,7 @@ dependencies = [
 [[package]]
 name = "tsrs_ipc"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "rustc-hash",
  "tsrs_core",
@@ -1073,6 +1083,7 @@ dependencies = [
 [[package]]
 name = "tsrs_module"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "bitflags",
  "hashbrown",
@@ -1086,6 +1097,7 @@ dependencies = [
 [[package]]
 name = "tsrs_modulespecifiers"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "regex",
  "rustc-hash",
@@ -1098,6 +1110,7 @@ dependencies = [
 [[package]]
 name = "tsrs_parser"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "bitflags",
  "rustc-hash",
@@ -1110,6 +1123,7 @@ dependencies = [
 [[package]]
 name = "tsrs_printer"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "bitflags",
  "rustc-hash",
@@ -1122,6 +1136,7 @@ dependencies = [
 [[package]]
 name = "tsrs_pseudochecker"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "tsrs_ast",
  "tsrs_core",
@@ -1130,6 +1145,7 @@ dependencies = [
 [[package]]
 name = "tsrs_scanner"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "bitflags",
  "memchr",
@@ -1142,6 +1158,7 @@ dependencies = [
 [[package]]
 name = "tsrs_sourcemap"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "rustc-hash",
  "tsrs_ast",
@@ -1152,6 +1169,7 @@ dependencies = [
 [[package]]
 name = "tsrs_spanmap"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "bitflags",
  "tsrs_core",
@@ -1160,6 +1178,7 @@ dependencies = [
 [[package]]
 name = "tsrs_transformers"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "bitflags",
  "rustc-hash",
@@ -1175,6 +1194,7 @@ dependencies = [
 [[package]]
 name = "tsrs_tsoptions"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "rustc-hash",
  "tsrs_ast",
@@ -1190,6 +1210,7 @@ dependencies = [
 [[package]]
 name = "tsrs_vfs"
 version = "0.20.0"
+source = "git+file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs?rev=92248ec55e1335c7c52e7de213666dbfff75c2e3#92248ec55e1335c7c52e7de213666dbfff75c2e3"
 dependencies = [
  "bitflags",
  "rayon",

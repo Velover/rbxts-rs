@@ -5,8 +5,14 @@ no IPC and no patched tsrs code. Everything roblox-ts-specific lives in rbxts-rs
 emulate TypeScript 5 behaviour that TypeScript 7 changed.
 
 ## The fork
-- **Where:** a worktree of the tsrs clone at `E:\Projects\TS\Flamework\worktrees\tsrs-rbxts-fork-020`, on branch
-  `rbxts-fork-0.20`. `Cargo.toml` points at its crates by absolute path, so every rbxts-rs worktree uses the same tsrs.
+- **Where:** branch `rbxts-fork-0.20` of the tsrs clone (`E:\Projects\TS\Flamework\roblox-ts-test\tsrs`; worktree
+  `E:\Projects\TS\Flamework\worktrees\tsrs-rbxts-fork-020`).
+  - `Cargo.toml` takes the fork's crates as a git dependency pinned by rev (`git = "file:///…/tsrs"`, `rev = …`).
+    That way rbxts-rs and a workspace that depends on it (flamework-rs) build the same tsrs.
+  - A crate that names tsrs crates itself must use the identical URL and rev.
+  - To try a local change to the fork, override it with `[patch."file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs"]`
+    path entries in an uncommitted `.cargo/config.toml`.
+  - The URL becomes the published fork's when the repos go public.
   The previous branch, `rbxts-fork` (tsrs v0.18.0, worktree `worktrees\tsrs-rbxts-fork`), is kept for rolling back.
 - **What:** tsrs **v0.20.0** (`d197eeea`, TypeScript 7.1 beta) plus commits that change only visibility, private or
   `pub(crate)` → `pub`. That is 49 lines in 15 files. The first six commits are `rbxts-fork`'s, cherry-picked (its
@@ -189,7 +195,8 @@ rbxts-rs type checked the real project (`rbxts-bench load`) 17-22% slower than o
 So rbxts-rs turns the preset on (user decision, 2026-10-28): `rbxts_project::use_tsrs_fast_preset`, called first by
 rbxtsc and rbxtsc-fw (`Cli::run_with`), rbxts-bench and rbxts-probe, and again by `load_cached` before it makes a
 program (the tests and any other caller). It must run before a checker exists, as tsrs reads the preset once.
-`TSRS_FAST=0` turns it off, for debugging against tsrs's reference settings. How each part of the preset meets
+`TSRS_FAST=0` turns it off, for debugging against tsrs's reference settings. Only the exact value `0` does; any
+other value, or none, leaves it on. How each part of the preset meets
 rbxts-rs:
 - **Lazy type members, the canonical history and its caches (union-front, indexed-access, inference-walk):** on.
   Checker internals; tsrs 0.18 had the first two by default, the settings rbxts-rs was validated with. Everything
@@ -207,7 +214,8 @@ rbxts-rs:
   (`get_semantic_diagnostics`, `allow_steal`). rbxts-rs checks with `for_each_checker_group`, which keeps every file on
   its owner and visits them in order, and its transform takes the same owners.
 - **Lazy declaration parsing (`TSRS_LAZY_DTS`) and leaf freeing:** off. tsrs switches them on only when its caller
-  asks (`enable_lazy_dts`; `ProgramOptions::leaf_files`): rbxts-rs asks only for `rbxts-bench load --lazy-dts`, so the
+  asks (`enable_lazy_dts`; `ProgramOptions::leaf_files`): rbxts-rs asks only in the one-shot `rbxts-bench load --lazy-dts` and `rbxts-bench project-parity`
+  (with `TSRS_FAST=0` those lose it too), so the
   declaration files rbxts-rs and Flamework read are parsed in full, as before.
 
 ## TypeScript 5 behaviour rbxts-rs does not reproduce

@@ -264,7 +264,9 @@ fn emulate_base_url(parsed: &mut ParsedCommandLine) -> bool {
 /// checkers (static, a function of the program). The others never apply: the checker count is always given
 /// (`--checkers`), work stealing and file splitting are only in tsrs's own type-check pass (rbxts-rs checks with
 /// `for_each_checker_group`, which keeps every file on its owner), and lazy declaration parsing and leaf freeing are
-/// only switched on by their callers (rbxts-rs: `LoadOptions::lazy_dts`, which no build sets). It must run before any
+/// only switched on by their callers (rbxts-rs: `LoadOptions::lazy_dts`, which no build sets; only the one-shot
+/// `rbxts-bench load --lazy-dts` and `rbxts-bench project-parity` do; with `TSRS_FAST=0` those lose it too). Only the
+/// exact value `0` turns the preset off; any other value, or none, leaves it on. It must run before any
 /// checker exists: tsrs reads the preset once, when a checker or a pool first asks for it.
 pub fn use_tsrs_fast_preset() {
     static ONCE: std::sync::Once = std::sync::Once::new();
