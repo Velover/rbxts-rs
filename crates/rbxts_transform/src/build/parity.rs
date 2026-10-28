@@ -416,7 +416,7 @@ pub fn error_texts(report: &CompileReport, root: &Path) -> Vec<String> {
         .map(|&d| {
             let file = d.file().map(|f| f.get().file_name().to_lowercase()).unwrap_or_default();
             let file = file.strip_prefix(&root).unwrap_or(&file).to_owned();
-            format!("{file}:{} TS{}: {}", d.pos().unwrap_or(0), d.code(), flatten_diagnostic_message(d, "\n"))
+            format!("{file}:{} TS{}: {}", d.pos().unwrap_or(0), code_slot(d), flatten_diagnostic_message(d, "\n"))
         })
         .chain(report.fatal.iter().map(|f| f.replace('\\', "/").to_lowercase().replace(&root, "")))
         .collect();
@@ -443,7 +443,7 @@ pub fn diagnostic_texts(report: &CompileReport, root: &Path) -> Vec<String> {
                 .map(|r| format!(" [related {}: {}]", r.pos().unwrap_or(0), flatten_diagnostic_message(*r, "\n")))
                 .collect();
             let message = flatten_diagnostic_message(d, "\n");
-            format!("{category} {file}:{} TS{}: {message}{related}", d.pos().unwrap_or(0), d.code())
+            format!("{category} {file}:{} TS{}: {message}{related}", d.pos().unwrap_or(0), code_slot(d))
         })
         .chain(report.warnings.iter().map(|w| format!("warning {}", w.replace('\\', "/").to_lowercase().replace(&root, ""))))
         .collect();
@@ -451,6 +451,13 @@ pub fn diagnostic_texts(report: &CompileReport, root: &Path) -> Vec<String> {
     out
 }
 
+
+/// A diagnostic's code slot as the reporter shows it: a plugin diagnostic's code or source (`TS1117`,
+/// `TS @flamework-experimental/transformer`), so a rebuild that lost either differs from a clean build; else the
+/// diagnostic's code (`-1` for roblox-ts's own and a plugin's without either).
+fn code_slot(d: tsrs_core::P<tsrs_ast::Diagnostic>) -> String {
+    crate::plugins::diagnostic_code_slot(d).unwrap_or_else(|| d.code().to_string())
+}
 
 /// `path` made absolute (against the working directory), with its `.` and `..` components resolved.
 fn normalized_absolute(path: &Path) -> Result<PathBuf, String> {

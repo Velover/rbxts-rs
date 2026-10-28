@@ -119,6 +119,14 @@ fn file_parts_are_not_persistable_by_default() {
     assert!(erased.decode_file_part(&[]).is_none());
 }
 
+#[test]
+fn checker_diagnostics_are_not_forwarded_by_default() {
+    let shared = support::stamp::StampShared { prefix: String::new() };
+    assert!(!Stamp.forwards_checker_diagnostics(&shared));
+    let erased: rbxts_plugin::erased::ErasedShared = Arc::new(support::stamp::StampShared { prefix: String::new() });
+    assert!(!erase(Stamp).forwards_checker_diagnostics(&erased));
+}
+
 // --- remove_empty_dir through the trait, with real project services ---
 
 /// A finish backend with real project services and the defaults for everything this test calls.

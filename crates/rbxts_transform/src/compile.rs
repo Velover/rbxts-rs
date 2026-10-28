@@ -366,14 +366,17 @@ impl ErrorCut {
 /// been reported, so the transform diagnostics of the files after the first with an error are not. `files` are the
 /// files transformed now, `orders` their transform orders, `plugin` their plugins' side (what plugins reported and the
 /// internal errors of their misuse of the seam, a failing transformer's errors); `plugin_error` is a plugin error
-/// reported elsewhere. Cuts `files` and returns the cut, which the caller applies to the cached lists of the files not
-/// transformed again (their last transform's, which hold no error) and, for [`ErrorCut::Plugin`], to the checker
-/// diagnostics. The plugins' side stays, as the transformers saw every file.
+/// reported elsewhere (or checker diagnostics a plugin forwards); `check_first` is the transform order of the first
+/// file that failed checking, which no plugin transforms and from which roblox-ts transforms nothing. Cuts `files` and
+/// returns the cut, which the caller applies to the cached lists of the files not transformed again (their last
+/// transform's, which hold no error) and, for [`ErrorCut::Plugin`], to the checker diagnostics. The plugins' side
+/// stays, as the transformers saw every file.
 pub(crate) fn first_error_cut(
     files: &mut [FileOutcome],
     orders: &[u32],
     plugin: &[Vec<P<Diagnostic>>],
     plugin_error: bool,
+    check_first: Option<u32>,
 ) -> ErrorCut {
     let is_error = |d: &P<Diagnostic>| d.category() == Category::Error;
     let plugin_sets: Vec<FxHashSet<P<Diagnostic>>> = plugin.iter().map(|p| p.iter().copied().collect()).collect();
@@ -386,6 +389,7 @@ pub(crate) fn first_error_cut(
             .zip(orders)
             .filter(|((f, p), _)| f.diagnostics.iter().any(|d| is_error(d) && !p.contains(d)))
             .map(|(_, &order)| order)
+            .chain(check_first)
             .min();
         match first {
             Some(first) => ErrorCut::After(first),
@@ -393,7 +397,8 @@ pub(crate) fn first_error_cut(
         }
     };
     for ((file, plugin), &order) in files.iter_mut().zip(&plugin_sets).zip(orders) {
-        if !cut.keeps(order) {
+        // a file that failed only roblox-ts's own check (a comment directive) is transformed for the plugins alone
+        if !cut.keeps(order) || check_first == Some(order) {
             file.diagnostics.retain(|d| plugin.contains(d));
         }
     }
@@ -583,8 +588,10 @@ pub(crate) fn transform_file(
     }
 }
 
-/// The check failed: each plugin may explain the checker diagnostics of the failing files
-/// (`explain_checker_diagnostic`); an explanation replaces the diagnostic. `env` is the build's environment snapshot.
+/// The check failed: each plugin that forwards checker diagnostics (`forwards`) may explain those of the failing files
+/// `failing` (`explain_checker_diagnostic`), but for the ones in `skip` (roblox-ts's own, which no TypeScript
+/// transformer sees); an explanation replaces the diagnostic. `env` is the build's environment snapshot. Returns the
+/// explanations.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn explain_failures(
     report: &mut CompileReport,
@@ -592,22 +599,15 @@ pub(crate) fn explain_failures(
     services: &ProjectServices,
     active: &[ActivePlugin<'_>],
     shared: &[ErasedShared],
+    forwards: &[bool],
+    failing: &[P<SourceFile>],
+    skip: &FxHashSet<P<Diagnostic>>,
     times: &[[HookTime; HookKind::ALL.len()]],
     ctx: &Context,
     env: &std::sync::Arc<crate::build::plugin_inputs::EnvSnapshot>,
-) {
-    let failing: Vec<P<SourceFile>> = {
-        let mut seen = FxHashSet::default();
-        report
-            .diagnostics
-            .iter()
-            .filter(|d| d.category() == Category::Error)
-            .filter_map(|d| d.file())
-            .filter(|f| seen.insert(*f))
-            .collect()
-    };
+) -> FxHashSet<P<Diagnostic>> {
     if failing.is_empty() {
-        return;
+        return FxHashSet::default();
     }
     // each file on the checker that checked it, one checker at a time on this thread (a failing build is not timed);
     // what each file adds is kept in the failing files' order, so the report does not depend on the checker count
@@ -646,13 +646,13 @@ pub(crate) fn explain_failures(
         host.env = std::sync::Arc::clone(env);
         for (i, file) in files {
             let diagnostics: Vec<P<Diagnostic>> =
-                report.diagnostics.iter().copied().filter(|d| d.file() == Some(file)).collect();
+                report.diagnostics.iter().copied().filter(|d| d.file() == Some(file) && !skip.contains(d)).collect();
             let mut state = TransformState::new(project, &mut checker, services, &macro_manager, &mut multi, file);
             state.plugins = Some(&host);
             state.plugin_file = PluginFileState::new(file_info(services, &host, file), host.len());
             let root = file.as_node();
             for diagnostic in diagnostics {
-                for plugin in 0..host.len() {
+                for plugin in (0..host.len()).filter(|&plugin| forwards[plugin]) {
                     let explained = catch_unwind(AssertUnwindSafe(|| {
                         run_hook(&mut state, None, None, plugin, HookKind::Explain, root, |instance, cx| {
                             Ok(instance.explain_checker_diagnostic(cx, diagnostic))
@@ -693,6 +693,7 @@ pub(crate) fn explain_failures(
     }
     report.diagnostics.extend(extra.into_iter().flatten());
     record_timings(report, active, times, Some(&hook_times));
+    replacements.into_values().collect()
 }
 
 pub(crate) fn record_timings(

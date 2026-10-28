@@ -993,35 +993,51 @@ fn artifacts_cannot_escape_through_links_or_alias_a_luau_output() {
     let _ = std::fs::remove_dir_all(&outside);
 }
 
+/// A plugin that forwards checker diagnostics (as Flamework's TS transformer) may explain them; one that does not is
+/// never asked. The forwarding build transforms every file that passes the check (for the plugins' diagnostics) and
+/// none that fails it.
 #[test]
-fn checker_errors_are_explained_by_plugins() {
+fn checker_errors_are_explained_by_forwarding_plugins() {
     let Some(project) = Project::new("explain") else { return };
     project.write("src/shared/broken.ts", "export const z = probeBrokenName();\n");
-    let report = project.build(&["stamp", "probe"], |_| {});
-    let messages: Vec<String> = report.diagnostics.iter().map(|d| flatten_diagnostic_message(*d, "\n")).collect();
-    assert_eq!(messages, vec!["probe explained: Cannot find name 'probeBrokenName'.\nDeclare probeBroken first."]);
-    // as stock roblox-ts, the files before the first with a checker error are transformed (nothing is written), the
-    // rest are not
+    let report = project.build(&["stamp", "probe-forward"], |_| {});
+    let explained = "error broken.ts: probe explained: Cannot find name 'probeBrokenName'.\nDeclare probeBroken first.";
+    assert_eq!(errors(&report), vec![explained]);
     let transformed: Vec<&str> =
         report.files.iter().map(|f| f.file_name.rsplit('/').next().unwrap_or_default()).collect();
-    assert_eq!(transformed, vec!["approved.ts", "approvedAfter.ts"], "only the files before broken.ts are transformed");
+    assert!(!transformed.contains(&"broken.ts"), "{transformed:?}");
+    assert!(transformed.contains(&"approved.ts") && transformed.contains(&"seamdiag2.ts"), "{transformed:?}");
     assert!(!project.out_exists());
+    // without forwarding: the checker's diagnostic, unexplained
+    let report = project.build(&["stamp", "probe"], |_| {});
+    assert_eq!(errors(&report), vec!["error broken.ts: Cannot find name 'probeBrokenName'."]);
 }
 
-/// A plugin error raised while explaining a checker diagnostic is a plugin error as any other (stock's transformers
-/// run before the check): only the plugins' diagnostics are reported, whether the failing file is the first in
-/// transform order (nothing is transformed) or files come before it (they are transformed).
+/// A plugin error raised while explaining a checker diagnostic is a plugin error as any other: the build reports the
+/// plugins' diagnostics, which, for a forwarding plugin, are the checker diagnostics it forwards too (the one it failed
+/// to explain as it is), whether the failing file is the first in transform order or files come before it (stock with
+/// a forwarding transformer: `rbxts_cli` `tests/fixtures/forwarding`, case c10).
 #[test]
-fn a_plugin_error_while_explaining_reports_only_the_plugins_diagnostics() {
+fn a_plugin_error_while_explaining_keeps_the_forwarded_diagnostics() {
     for (name, label) in [("aaloud.ts", "explain-loud-first"), ("approvedLoud.ts", "explain-loud-later")] {
         let Some(project) = Project::new(label) else { return };
         project.write(&format!("src/shared/{name}"), "export const z = probeLoudName();
 ");
         project.write("src/shared/zzcheck.ts", "export const bad: number = \"x\";
 ");
-        let report = project.build(&["stamp", "probe"], |_| {});
+        let report = project.build(&["stamp", "probe-forward"], |_| {});
         assert!(report.fatal.is_empty(), "{name}: {:?}", report.fatal);
-        assert_eq!(errors(&report), vec![format!("error {name}: probe: an error while explaining")], "{name}");
+        let mut errors = errors(&report);
+        errors.sort();
+        assert_eq!(
+            errors,
+            vec![
+                format!("error {name}: Cannot find name 'probeLoudName'. Did you mean 'probeNamed'?"),
+                format!("error {name}: probe: an error while explaining"),
+                "error zzcheck.ts: Type 'string' is not assignable to type 'number'.".to_owned(),
+            ],
+            "{name}"
+        );
         assert!(!project.out_exists());
     }
 }
@@ -1385,7 +1401,9 @@ fn fwapi_project(label: &str) -> Option<Project> {
 /// first statement (`ts.copyComments`, `cmt*.ts`); synthesized late strings (`late.ts`); a call in a parenthesized
 /// decorator expression offered as an ordinary call (`deco.ts`); `FieldOrder::Emitted` (`objemitted.ts`);
 /// `import_named_at` (`importat.ts`); `KeyAnswer::as_element_access` (`elemkey.ts`); `compile_call_with` and
-/// `Arg::Deferred` (`deferred.ts`); `calls_chain_outer` (`chainouter.ts`); `Cx::ordered_element_call` (`ordered.ts`);
+/// `Arg::Deferred` (`deferred.ts`); `calls_chain_outer` (`chainouter.ts`; through a `!`, a `Callee::Method`
+/// replacement and a send that reads the chain's base, runs the arguments, then reads the receiver again,
+/// `chainmore.ts`); `Cx::ordered_element_call` (`ordered.ts`);
 /// `import_named` of modules no program file imports, a package and a declaration file outside the source root
 /// (`notinprog.ts`).
 #[test]

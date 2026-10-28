@@ -34,10 +34,14 @@ interface ChainTarget {
 	inline(): string;
 	rewrite(value: number): unknown;
 	other(value: number): number;
+	methodop(value: number): unknown;
+	resend(value: number): unknown;
 	inner: ChainTarget;
 }
 
 declare const Rewrite: { impl: (value: number) => unknown };
+declare const Probed: { impl(value: number): unknown };
+declare const Send: { impl: (...values: Array<unknown>) => unknown };
 
 /** @probe orderedcall */
 declare function probeOrderedCall(receiver: object, key: string, ...args: Array<number>): number;

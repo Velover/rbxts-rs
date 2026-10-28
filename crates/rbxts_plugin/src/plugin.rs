@@ -211,6 +211,30 @@ pub trait Plugin: Send + Sync + 'static {
         None
     }
 
+    /// Whether this plugin, as a TypeScript transformer, forwards the checker diagnostics of a file that fails
+    /// checking, as Flamework's TS transformer does (`transformer.ts`: for a file whose `getPreEmitDiagnostics` holds
+    /// an error, it reports each located one through `context.addDiagnostic`, explained, and leaves the file
+    /// untransformed), unless its `noSemanticDiagnostics` is set. Asked once per build, after `setup` or
+    /// `rebuild_start` (so it may follow the config `Shared` holds).
+    ///
+    /// **What the compiler does with it** (roblox-ts's `compileFiles` runs its transformers over every file before it
+    /// checks any, and stops with the transformers' diagnostics alone when one is an error). When the check finds an
+    /// error in some file:
+    /// - with a forwarding plugin, the build reports what such a transformer gives: the checker diagnostics of each
+    ///   failing file (as [`PluginInstance::explain_checker_diagnostic`] replaced them), with what the plugins report
+    ///   on every other file, which is transformed for it, and nothing of roblox-ts's own (its transform diagnostics,
+    ///   the comment-directive errors);
+    /// - otherwise (a plain transformer), the plugins transform every file that passes the check too, and an error
+    ///   one of them reports there is reported alone; without one, the build reports the checker diagnostics and the
+    ///   plugins' warnings, cut at the first error as roblox-ts cuts its own. A plugin never transforms a file that
+    ///   fails checking, so what a plain transformer would report on such a file is not reported.
+    ///
+    /// Default: `false`.
+    fn forwards_checker_diagnostics(&self, shared: &Self::Shared) -> bool {
+        let _ = shared;
+        false
+    }
+
     /// Builds the build's `Shared` state. Runs once per build that has no `Shared` to keep, single-threaded,
     /// after the check and before any transform. Read files and env only through `cx` (they become build inputs,
     /// watched and hashed). `state` is the working copy of the persistent state (see [`SetupCx::state_origin`]);
@@ -428,7 +452,8 @@ pub trait PluginInstance: 'static {
     /// refused; `header`, `import_named` and `late_string` work.
     fn end_file(&self, cx: &mut Cx<'_>) -> PResult<Self::FilePart>;
 
-    /// Only for files that failed checking (and so are not transformed): may replace a checker diagnostic with a
+    /// Only for files that failed checking (and so are not transformed), and only when the plugin forwards their
+    /// checker diagnostics ([`Plugin::forwards_checker_diagnostics`]): may replace a checker diagnostic with a
     /// clearer one. The program, file, checker and source facts, `report` (and `Cx::error` / `warning`),
     /// `is_usable_local_name` and `locals` are available here; the lowering and file-level primitives are refused
     /// (the phase table on [`crate::CxBackend`]).

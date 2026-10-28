@@ -94,6 +94,7 @@ the compiler (`rbxts_transform`) implements the backend traits.
 | `fs.existsSync` / `readdirSync` / `readFileSync` while writing artifacts | `FinishCx::exists` / `read_dir` / `read_file` (recorded: watch re-runs `finish` when an answer changes) |
 | a diagnostic `code` such as `" @scope/transformer"` | `Plugin::diagnostic_source` (per diagnostic: `PluginDiagnostic::with_source`) |
 | a numeric diagnostic `code` (`1117`, shown `TS1117`) | `PluginDiagnostic::with_code(1117)` |
+| `getPreEmitDiagnostics(program, file)` forwarded through `context.addDiagnostic` (unless `noSemanticDiagnostics`) | `Plugin::forwards_checker_diagnostics(shared)`; the explained ones `PluginInstance::explain_checker_diagnostic` |
 | `process.exit(1)` | `Err(Fatal::new(msg))` from `setup` / `finish` |
 
 ## Tests

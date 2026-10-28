@@ -88,6 +88,8 @@ pub trait DynPlugin: Send + Sync {
         state: &ErasedState,
         changes: &ChangeSet,
     ) -> RebuildPlan;
+    /// [`Plugin::forwards_checker_diagnostics`].
+    fn forwards_checker_diagnostics(&self, shared: &ErasedShared) -> bool;
     /// [`Plugin::instance`].
     fn instance(&self, shared: &ErasedShared, checker: CheckerInfo) -> Box<dyn DynInstance>;
     /// [`Plugin::finish`]; `parts` sorted by [`FileIndex`], each made by this plugin's instances.
@@ -195,6 +197,10 @@ impl<T: Plugin> DynPlugin for ErasedPlugin<T> {
             .downcast_ref::<T::State>()
             .unwrap_or_else(|| mismatch(&self.0, "state"));
         self.0.rebuild_start(&shared, state, changes)
+    }
+
+    fn forwards_checker_diagnostics(&self, shared: &ErasedShared) -> bool {
+        self.0.forwards_checker_diagnostics(&shared_of(&self.0, shared))
     }
 
     fn instance(&self, shared: &ErasedShared, checker: CheckerInfo) -> Box<dyn DynInstance> {

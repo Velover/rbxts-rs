@@ -121,16 +121,23 @@ gets (`FileIndex`), so TS5 Flamework's id allocation and `flamework.build` table
 incremental builds use the clean build's order too, where roblox-ts follows its changed files. `rbxtsc` prints the
 diagnostics sorted and deduplicated, as roblox-ts does.
 
-**The first error** (`compile::first_error_cut`). As roblox-ts's `compileFiles`: when a plugin reports an error (its
-own, or an internal error of its misuse of the seam), only the plugins' diagnostics are reported, as stock runs its
-TypeScript transformers before checking anything; otherwise each file is checked and, while no error has been
-reported, transformed in transform order, so the transform diagnostics of the files after the first with an error
-are not reported (their plugins' diagnostics are). Watch and incremental rebuilds cut the cached lists of the files
-they do not transform again the same way. One deviation: when the check fails, rbxts-rs transforms only the files
-before the first failing one, so plugins see only those files, where stock's transformers see every file (a plugin
-error in a later file is not reported; stock would report it alone). A plugin error raised while a plugin explains a
-checker diagnostic (`explain_checker_diagnostic`) is a plugin error like any other: the checker diagnostics go, and
-with them the explanations that replaced some of them, whether or not files come before the first failing one.
+**The first error** (`compile::first_error_cut`). As roblox-ts's `compileFiles` (`Project/functions/compileFiles.ts`):
+its TypeScript transformers (the plugins here) run over every file before anything is checked (lines 125-166), and
+when one reports an error, only the transformers' diagnostics are reported (line 168): no checker diagnostic, no
+roblox-ts diagnostic; otherwise each file is checked and, while no error has been reported, transformed in transform
+order (lines 174-218), so the transform diagnostics of the files after the first with an error are not reported (their
+plugins' diagnostics are). So when the check fails, the plugins still transform every file that passes it, and a
+plugin error in any of them is reported alone. A plugin that forwards checker diagnostics
+(`Plugin::forwards_checker_diagnostics`), as Flamework's TS transformer does unless `noSemanticDiagnostics` is set
+(it reports each failing file's located `getPreEmitDiagnostics` through `context.addDiagnostic`, explained, and
+leaves the file untransformed), turns a failed check into a plugin error: the build reports the failing files'
+checker diagnostics (as `explain_checker_diagnostic` replaced them) with the plugins' diagnostics of every other file,
+and nothing of roblox-ts's own (its transform diagnostics, the comment-directive errors). Only a forwarding plugin is
+asked to explain. A plugin error raised while explaining is a plugin error like any other. Watch and incremental
+rebuilds cut the cached lists of the files they do not transform again the same way. One deviation: no plugin
+transforms a file that fails checking, where stock's transformers see every file, so what a plain (not forwarding)
+plugin would report on such a file is not reported (an error there would be reported alone in stock;
+`crates/rbxts_cli/tests/forwarding.rs` has the stock captures of both kinds).
 **The MacroManager** comes after the plugins, as stock makes it (`createTransformServices`) after running its
 transformers: when compiler types are missing (`"types": []`, an outdated `@rbxts/compiler-types`), the build reports
 the MacroManager's error alone, unless a plugin reports an error, whose diagnostics are reported instead. For that,

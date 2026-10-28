@@ -1,0 +1,10 @@
+[96msrc/shared/a.ts[0m:[93m1[0m:[93m14[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m1[0m export const bad: number = "x";
+[7m [0m [91m             ~~~[0m
+
+[96msrc/shared/c.ts[0m:[93m1[0m:[93m1[0m - [91merror[0m[90m TS roblox-ts: [0mprobe: fail was called
+
+[7m1[0m probeFail();
+[7m [0m [91m~~~~~~~~~~~[0m
+

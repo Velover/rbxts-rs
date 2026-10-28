@@ -1,0 +1,12 @@
+{
+	"steps": [
+		{ "name": "F1a a3.ts check error, seamdiag2.ts plugin error (later file)", "do": [{ "append": { "file": "src/shared/a3.ts", "text": "export const bad: number = \"x\";\n" } }, { "append": { "file": "src/shared/seamdiag2.ts", "text": "probeFail();\n" } }], "expect": "error" },
+		{ "name": "F1b a3.ts fixed, the plugin error stays", "do": [{ "patch": { "file": "src/shared/a3.ts", "find": "export const bad: number = \"x\";\n", "replace": "" } }], "expect": "error" },
+		{ "name": "F1c a3.ts roblox-ts error beside the plugin error", "do": [{ "append": { "file": "src/shared/a3.ts", "text": "export const nul = null;\n" } }], "expect": "error" },
+		{ "name": "F1d seamdiag2.ts check error instead of the plugin error", "do": [{ "patch": { "file": "src/shared/seamdiag2.ts", "find": "probeFail();\n", "replace": "export const bad2: number = \"y\";\n" } }], "expect": "error" },
+		{ "name": "F1e rf.ts edited while seamdiag2.ts fails", "do": [{ "append": { "file": "src/zfirst/rf.ts", "text": "export const r2 = 1;\n" } }], "expect": "error" },
+		{ "name": "F1f a3.ts explained checker error instead of its roblox-ts error", "do": [{ "patch": { "file": "src/shared/a3.ts", "find": "export const nul = null;", "replace": "export const z = probeBrokenName();" } }], "expect": "error" },
+		{ "name": "F1g seamdiag.ts warning edited while both fail", "do": [{ "patch": { "file": "src/shared/seamdiag.ts", "find": "return 1;", "replace": "return 3;" } }], "expect": "error" },
+		{ "name": "F1h all fixed", "do": [{ "patch": { "file": "src/shared/a3.ts", "find": "export const z = probeBrokenName();\n", "replace": "" } }, { "patch": { "file": "src/shared/seamdiag2.ts", "find": "export const bad2: number = \"y\";\n", "replace": "" } }] }
+	]
+}

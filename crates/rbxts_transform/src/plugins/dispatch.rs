@@ -485,10 +485,17 @@ fn claim_chain_outer_slow(
     }
     // after a `?.` link, or an optional call itself (`o.m?.()`, `f?.()`): not the chain's lazily offered first call
     let own_optional = is_optional_call(outer) || (matches!(outer.kind, ChainItemKind::Call) && outer.optional);
-    if !own_optional && !outer.optional && !before.iter().any(|item| item.optional || is_optional_call(item)) {
+    let node = outer.node;
+    // or a call TypeScript counts in an optional chain that roblox-ts's `flattenOptionalChain` cuts at a `!`
+    // (`get()?.inner!.m()`: TypeScript's chain goes on through a `NonNullChain`, roblox-ts's stops there, so this chain
+    // has no `?.` of its own); a parenthesized or `as` link ends TypeScript's chain too, so it is not one
+    if !own_optional
+        && !outer.optional
+        && !before.iter().any(|item| item.optional || is_optional_call(item))
+        && !tsrs_ast::is_optional_chain(node)
+    {
         return None;
     }
-    let node = outer.node;
     if state.plugin_file.in_offer.contains(&node) || state.plugin_file.offered.contains(&node) {
         return None;
     }

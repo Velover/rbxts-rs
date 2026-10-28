@@ -1361,9 +1361,13 @@ impl<'p> BuildSession<'p> {
         let checked_from = report.diagnostics.len();
         report.diagnostics.extend(project.program_diagnostics());
         report.diagnostics.extend(project.check_files(&ctx, &to_transform));
+        // roblox-ts's own check (`getCustomPreEmitDiagnostics`), which no TypeScript transformer sees
+        let mut directive_diagnostics: FxHashSet<P<Diagnostic>> = FxHashSet::default();
         if !services.data.options.allow_comment_directives {
             for &file in &to_transform {
-                report.diagnostics.extend(comment_directive_diagnostics(file));
+                let found = comment_directive_diagnostics(file);
+                directive_diagnostics.extend(found.iter().copied());
+                report.diagnostics.extend(found);
             }
         }
         report.timings.check = start.elapsed();
@@ -1456,7 +1460,9 @@ impl<'p> BuildSession<'p> {
             report.diagnostics.extend(project.check_files(&ctx, &unchecked));
             if !services.data.options.allow_comment_directives {
                 for &file in &unchecked {
-                    report.diagnostics.extend(comment_directive_diagnostics(file));
+                    let found = comment_directive_diagnostics(file);
+                    directive_diagnostics.extend(found.iter().copied());
+                    report.diagnostics.extend(found);
                 }
             }
             check_failed = report.diagnostics.iter().any(|d| d.category() == Category::Error);
@@ -1486,43 +1492,105 @@ impl<'p> BuildSession<'p> {
             stop_report(&mut report, checked, false, Some(error));
             return (report, summary, committed, Some(loaded));
         }
-        // roblox-ts's `compileFiles` checks and transforms file by file, in transform order, and stops transforming at
-        // the first error: the files before the first one the check failed are transformed (their diagnostics are
-        // reported, up to the first transform error), nothing is written (`first_error_cut`). A rebuild transforms
-        // those of them it would transform anyway and reports the cached lists of the others; the transform order of
-        // the first failing file is `checked_prefix`.
+        // roblox-ts's `compileFiles` runs its TypeScript transformers (the plugins) over every file, then checks and
+        // transforms file by file, in transform order, and stops transforming at the first error: the files before the
+        // first one the check failed are transformed (their diagnostics are reported, up to the first transform error),
+        // nothing is written (`first_error_cut`). The plugins transform every file that passes the check (none of them
+        // transforms a file that fails it); without plugins, only the files before the first failing one are. A rebuild
+        // transforms those of them it would transform anyway and reports the cached lists of the others; the transform
+        // order of the first failing file is `checked_prefix`, the files no plugin transforms are `check_failing`.
+        // A plugin that forwards checker diagnostics (`Plugin::forwards_checker_diagnostics`, as Flamework's TS
+        // transformer) reports those of each file the checker failed as its own (`forwarded`): the build reports the
+        // plugins' diagnostics alone, these among them.
         let checked_to = report.diagnostics.len();
         let mut checked_prefix: Option<u32> = None;
+        let mut check_failing: FxHashSet<P<SourceFile>> = FxHashSet::default();
+        let mut forwarded = false;
+        let mut ts_failing: FxHashSet<P<SourceFile>> = FxHashSet::default();
+        let mut explanations: FxHashSet<P<Diagnostic>> = FxHashSet::default();
         if check_failed {
+            let is_error = |d: &P<Diagnostic>| d.category() == Category::Error;
+            // the files the checker failed, in the order of their first error (roblox-ts's own comment-directive
+            // errors aside, which no TypeScript transformer sees)
+            let ts_failing_order: Vec<P<SourceFile>> = {
+                let mut seen = FxHashSet::default();
+                report.diagnostics[checked_from..checked_to]
+                    .iter()
+                    .filter(|d| is_error(d) && !directive_diagnostics.contains(*d))
+                    .filter_map(|d| d.file())
+                    .filter(|f| seen.insert(*f))
+                    .collect()
+            };
+            ts_failing = ts_failing_order.iter().copied().collect();
             if let Some(run) = &run {
-                explain_failures(&mut report, project, services, &run.active, &run.shared, &run.times, &ctx, &env);
+                let forwards: Vec<bool> = run
+                    .active
+                    .iter()
+                    .zip(&run.shared)
+                    .map(|(plugin, shared)| plugin.plugin.forwards_checker_diagnostics(shared))
+                    .collect();
+                if forwards.contains(&true) && !ts_failing_order.is_empty() {
+                    forwarded = true;
+                    explanations = explain_failures(
+                        &mut report,
+                        project,
+                        services,
+                        &run.active,
+                        &run.shared,
+                        &forwards,
+                        &ts_failing_order,
+                        &directive_diagnostics,
+                        &run.times,
+                        &ctx,
+                        &env,
+                    );
+                }
             }
             // a plugin error raised while explaining: a plugin error as any other (`first_error_cut`)
-            let explain_error = report.diagnostics[checked_to..].iter().any(|d| d.category() == Category::Error);
+            let explain_error = report.diagnostics[checked_to..].iter().any(is_error);
             // with a MacroManager error, the build reports that error or the plugins' whatever the check found, and
             // stock's transformers see every file before the MacroManager is made: every file is transformed, for the
             // plugins' diagnostics (a file's internal error still stops the transform there)
             if macro_error.is_none() {
-                let failing: FxHashSet<P<SourceFile>> = report
-                    .diagnostics
-                    .iter()
-                    .filter(|d| d.category() == Category::Error)
-                    .map(|d| d.file())
-                    .collect::<Option<_>>()
-                    .unwrap_or_default();
-                let first = files.iter().filter(|f| failing.contains(*f)).map(|f| file_indices[f].0).min();
-                let Some(first) = first.filter(|&first| files.iter().any(|f| file_indices[f].0 < first)) else {
-                    // no file comes before the first failing one, so none is transformed: the cut the transform's path
-                    // makes (`first_error_cut`), made here
-                    if !self.options.write_partial {
-                        stop_report(&mut report, checked_from..checked_to, explain_error, None);
+                // an error without a file (the options'): no file is transformed
+                let failing: Option<FxHashSet<P<SourceFile>>> =
+                    report.diagnostics.iter().filter(|d| is_error(d)).map(|d| d.file()).collect();
+                let first = failing
+                    .as_ref()
+                    .and_then(|failing| files.iter().filter(|f| failing.contains(*f)).map(|f| file_indices[f].0).min());
+                // without plugins, the files before the first failing one; with plugins, every file the checker passed
+                let transforms = |first: u32| match &run {
+                    None => files.iter().any(|f| file_indices[f].0 < first),
+                    Some(_) => files.iter().any(|f| !ts_failing.contains(f)),
+                };
+                let Some(first) = first.filter(|&first| transforms(first)) else {
+                    // no file is transformed: the cut the transform's path makes (`first_error_cut`), made here
+                    let checked = checked_from..checked_to;
+                    if self.options.write_partial {
+                        // every diagnostic, uncut
+                    } else if forwarded {
+                        keep_forwarded(
+                            &mut report,
+                            checked,
+                            &files,
+                            &ts_failing,
+                            &directive_diagnostics,
+                            &explanations,
+                        );
+                    } else {
+                        stop_report(&mut report, checked, explain_error, None);
                     }
                     return (report, summary, committed, Some(loaded));
                 };
                 if self.options.write_partial {
                     return (report, summary, committed, Some(loaded));
                 }
-                to_transform.retain(|f| file_indices[f].0 < first);
+                if run.is_some() {
+                    check_failing = ts_failing.clone();
+                    to_transform.retain(|f| !check_failing.contains(f));
+                } else {
+                    to_transform.retain(|f| file_indices[f].0 < first);
+                }
                 checked_prefix = Some(first);
             }
         }
@@ -1604,10 +1672,23 @@ impl<'p> BuildSession<'p> {
                 let orders: Vec<u32> = done.iter().map(|f| file_indices[f].0).collect();
                 let is_error = |d: &P<Diagnostic>| d.category() == Category::Error;
                 // what plugins reported while explaining checker diagnostics, and classify_symbol's refusals
-                let elsewhere = report.diagnostics[checked_to..].iter().any(is_error) || classify.iter().any(is_error);
-                cut = crate::compile::first_error_cut(&mut report.files, &orders, &plugin_side, elsewhere);
+                // (checker diagnostics a plugin forwards are its errors)
+                let elsewhere =
+                    forwarded || report.diagnostics[checked_to..].iter().any(is_error) || classify.iter().any(is_error);
+                cut = crate::compile::first_error_cut(
+                    &mut report.files,
+                    &orders,
+                    &plugin_side,
+                    elsewhere,
+                    checked_prefix,
+                );
                 if cut == crate::compile::ErrorCut::Plugin {
-                    report.diagnostics.drain(checked_from..checked_to);
+                    if forwarded {
+                        let range = checked_from..checked_to;
+                        keep_forwarded(&mut report, range, &files, &ts_failing, &directive_diagnostics, &explanations);
+                    } else {
+                        report.diagnostics.drain(checked_from..checked_to);
+                    }
                 }
             }
             drop_reported_earlier(report.files.iter_mut().map(|f| &mut f.diagnostics).zip(once.iter().map(Vec::as_slice)));
@@ -1627,7 +1708,11 @@ impl<'p> BuildSession<'p> {
             let transformed: FxHashSet<P<SourceFile>> = to_transform.iter().copied().collect();
             for &file in &files {
                 if !transformed.contains(&file)
-                    && checked_prefix.is_none_or(|first| file_indices[&file].0 < first)
+                    && (if run.is_some() {
+                        !check_failing.contains(&file)
+                    } else {
+                        checked_prefix.is_none_or(|first| file_indices[&file].0 < first)
+                    })
                     && stopped_at.is_none_or(|stop| file_indices[&file].0 < stop)
                     && let Some(old) = c.files.get(&file.path().to_string())
                 {
@@ -2517,6 +2602,31 @@ fn stop_report(
         report.diagnostics.truncate(checked.start);
         report.fatal.extend(error.iter().cloned());
     }
+}
+
+/// What a build whose plugin forwards checker diagnostics (`Plugin::forwards_checker_diagnostics`) keeps of the
+/// checker's (`checked`): what such a TypeScript transformer reports, the located diagnostics of the files the checker
+/// failed (`failing`), as explained (`explanations`), and the ones located outside the project files (TypeScript's
+/// global diagnostics, which each failing file's `getPreEmitDiagnostics` holds). Not the comment-directive errors
+/// (`directives`, roblox-ts's own check), the ones without a location, nor those of the files that passed.
+fn keep_forwarded(
+    report: &mut CompileReport,
+    checked: std::ops::Range<usize>,
+    files: &[P<SourceFile>],
+    failing: &FxHashSet<P<SourceFile>>,
+    directives: &FxHashSet<P<Diagnostic>>,
+    explanations: &FxHashSet<P<Diagnostic>>,
+) {
+    let passed: FxHashSet<P<SourceFile>> = files.iter().copied().filter(|f| !failing.contains(f)).collect();
+    let start = checked.start;
+    let kept: Vec<P<Diagnostic>> = report
+        .diagnostics
+        .drain(checked)
+        .filter(|d| {
+            !directives.contains(d) && d.file().is_some_and(|file| explanations.contains(d) || !passed.contains(&file))
+        })
+        .collect();
+    report.diagnostics.splice(start..start, kept);
 }
 
 fn detach(diagnostics: Vec<P<Diagnostic>>, plugin: Vec<P<Diagnostic>>) -> (Vec<P<Diagnostic>>, Vec<P<Diagnostic>>) {

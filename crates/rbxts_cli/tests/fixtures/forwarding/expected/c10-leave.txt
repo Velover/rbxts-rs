@@ -1,0 +1,15 @@
+[96msrc/shared/a.ts[0m:[93m1[0m:[93m18[0m - [91merror[0m[90m TS2304: [0mCannot find name 'probeLoudName'.
+
+[7m1[0m export const z = probeLoudName();
+[7m [0m [91m                 ~~~~~~~~~~~~~[0m
+
+[96msrc/shared/b.ts[0m:[93m1[0m:[93m18[0m - [93mwarning[0m[90m TS roblox-ts: [0mb warns
+
+[7m1[0m export const b = probeDiagSame(1, "b warns");
+[7m [0m [93m                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+
+[96msrc/shared/c.ts[0m:[93m1[0m:[93m14[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m1[0m export const bad: number = "x";
+[7m [0m [91m             ~~~[0m
+

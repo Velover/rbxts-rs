@@ -69,7 +69,9 @@
 //! **Chains' outer calls** ([`Interest::calls_chain_outer`]): `x.inline()` / `x.rewrite(…)` where `x`'s type has
 //! `__probeChain`, offered as the outermost call of an optional chain: `inline` takes the value `"inlined"` (the whole
 //! chain replaced), `rewrite` `compile_call(Function(Rewrite.impl), [Original(args)…])` (the call keeps only its own
-//! `?.`); every other call declines a chain's outer offer, and these decline anywhere else.
+//! `?.`), `methodop` `compile_call(Method { Probed, "impl" }, [Original(args)…])` (likewise), `resend` (on
+//! `<base>?.<link>.resend(args…)`) `compile_call_with(Function(Send.impl), [Deferred(<base>), Original(args)…,
+//! Deferred(<receiver>)])`; every other call declines a chain's outer offer, and these decline anywhere else.
 //! **By callee marker**: `f(x)` where `f`'s type has `__probeCallee` → `compile_call(Original, [Original(x),
 //! Luau(1)])`.
 //! **Property keys**: accesses whose receiver has `__probeKey` get the key `k_<key>` (`key with space` for `swap`, the
@@ -83,8 +85,9 @@
 //! itself (an internal error).
 //! **By kind**: `void probeVoid` becomes `"void claimed"` (other `void`s are declined); `debugger` becomes
 //! `print("probe: debugger")`.
-//! **explain_checker_diagnostic**: a checker message naming `probeBroken` is replaced; one naming `probeLoud` is not, but
-//! explaining it reports an error (`probe: an error while explaining`, at the file).
+//! **Forwarding** (`probe-forward`, `probe-fail-forward`): it forwards checker diagnostics, as Flamework's TS
+//! transformer. **explain_checker_diagnostic** (forwarding only): a checker message naming `probeBroken` is replaced;
+//! one naming `probeLoud` is not, but explaining it reports an error (`probe: an error while explaining`, at the file).
 //! **Setup**: an info message naming `incremental_state_path` (`incremental state at <path>`, or `not incremental`).
 //! **Finish**: an artifact `probe-report.json` with the claims per file; in [`Mode::Unresolved`] one late key is left
 //! unresolved, in [`Mode::ArtifactOutside`] an artifact goes outside the project.
@@ -141,12 +144,20 @@ pub struct Probe {
     pub name: &'static str,
     /// How it misbehaves.
     pub mode: Mode,
+    /// Whether it forwards checker diagnostics ([`Plugin::forwards_checker_diagnostics`]), as Flamework's TS
+    /// transformer: only then does it explain them.
+    pub forward: bool,
 }
 
 impl Probe {
     /// A probe named `name`.
     pub fn new(name: &'static str, mode: Mode) -> Probe {
-        Probe { name, mode }
+        Probe { name, mode, forward: false }
+    }
+
+    /// The probe forwarding checker diagnostics.
+    pub fn forwarding(self) -> Probe {
+        Probe { forward: true, ..self }
     }
 }
 
@@ -268,6 +279,10 @@ impl Plugin for Probe {
 
     fn info(&self) -> PluginInfo {
         PluginInfo { name: self.name, version: "0.1.0", tsconfig_transform: None }
+    }
+
+    fn forwards_checker_diagnostics(&self, _: &ProbeShared) -> bool {
+        self.forward
     }
 
     fn setup(&self, cx: &mut SetupCx<'_>, _: &mut ()) -> Result<Arc<ProbeShared>, Fatal> {
@@ -854,7 +869,7 @@ impl PluginInstance for ProbeInstance {
             return;
         }
         interest.calls_by_receiver(&["probeMethod"], "__probeMarker", RECEIVER);
-        interest.calls_by_receiver(&["inline", "rewrite"], "__probeChain", CHAIN);
+        interest.calls_by_receiver(&["inline", "rewrite", "methodop", "resend"], "__probeChain", CHAIN);
         interest.calls_chain_outer();
         interest.calls_by_callee_marker("__probeCallee", CALLEE);
         interest.classes(ClassFilter::Decorated);
@@ -911,6 +926,27 @@ impl PluginInstance for ProbeInstance {
                 match (call.chain_outer, name) {
                     // the chain replaced by a value, or by a call that keeps only the call's own `?.`
                     (true, "inline") => self.claimed(text_literal("inlined")),
+                    // `Callee::Method`: `Probed:impl(args)`, keeping the call's own `?.`
+                    (true, "methodop") => {
+                        let object = create::id("Probed");
+                        let args = call.args.iter().map(|&a| Arg::Original(a)).collect();
+                        let value = cx.compile_call(call, Callee::Method { object, name: "impl".to_owned() }, args)?;
+                        self.claimed(value)
+                    }
+                    // `Send.impl(<the chain's base>, args…, <the receiver>)` for `<base>?.<link>.resend(args…)`: the
+                    // base read, the arguments, then the receiver chain read again (Flamework's networking send)
+                    (true, "resend") => {
+                        let receiver = call.receiver.expect("a property call");
+                        let base = receiver.as_property_access_expression().expression;
+                        let callee = create::property(create::id("Send"), "impl");
+                        let mut args = vec![Arg::Deferred(0)];
+                        args.extend(call.args.iter().map(|&a| Arg::Original(a)));
+                        args.push(Arg::Deferred(1));
+                        let value = cx.compile_call_with(call, Callee::Function(callee), args, |cx, slot| {
+                            cx.compile_expr(if slot == 0 { base } else { receiver })
+                        })?;
+                        self.claimed(value)
+                    }
                     (true, _) => {
                         let callee = create::property(create::id("Rewrite"), "impl");
                         let args = call.args.iter().map(|&a| Arg::Original(a)).collect();
