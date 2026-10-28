@@ -13,25 +13,25 @@ publish = false
 # tsrs clone until the fork is published; a fork-local checkout can override it with `[patch]`.
 # Cargo.lock started as a copy of tsrs's lock file so the transitive versions match what tsrs tests with.
 [workspace.dependencies]
-tsrs_core = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "92248ec55e1335c7c52e7de213666dbfff75c2e3" }
-tsrs_ast = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "92248ec55e1335c7c52e7de213666dbfff75c2e3" }
-tsrs_vfs = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "92248ec55e1335c7c52e7de213666dbfff75c2e3" }
-tsrs_tsoptions = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "92248ec55e1335c7c52e7de213666dbfff75c2e3" }
-tsrs_compiler = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "92248ec55e1335c7c52e7de213666dbfff75c2e3" }
-tsrs_diagnostics = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "92248ec55e1335c7c52e7de213666dbfff75c2e3" }
-tsrs_checker = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "92248ec55e1335c7c52e7de213666dbfff75c2e3" }
-tsrs_scanner = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "92248ec55e1335c7c52e7de213666dbfff75c2e3" }
-tsrs_parser = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "92248ec55e1335c7c52e7de213666dbfff75c2e3" }
-tsrs_printer = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "92248ec55e1335c7c52e7de213666dbfff75c2e3" }
-tsrs_sourcemap = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "92248ec55e1335c7c52e7de213666dbfff75c2e3" }
+tsrs_core = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "77c97efa2c7005a248d2c6010b395eacfdbabd89" }
+tsrs_ast = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "77c97efa2c7005a248d2c6010b395eacfdbabd89" }
+tsrs_vfs = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "77c97efa2c7005a248d2c6010b395eacfdbabd89" }
+tsrs_tsoptions = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "77c97efa2c7005a248d2c6010b395eacfdbabd89" }
+tsrs_compiler = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "77c97efa2c7005a248d2c6010b395eacfdbabd89" }
+tsrs_diagnostics = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "77c97efa2c7005a248d2c6010b395eacfdbabd89" }
+tsrs_checker = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "77c97efa2c7005a248d2c6010b395eacfdbabd89" }
+tsrs_scanner = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "77c97efa2c7005a248d2c6010b395eacfdbabd89" }
+tsrs_parser = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "77c97efa2c7005a248d2c6010b395eacfdbabd89" }
+tsrs_printer = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "77c97efa2c7005a248d2c6010b395eacfdbabd89" }
+tsrs_sourcemap = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "77c97efa2c7005a248d2c6010b395eacfdbabd89" }
 mimalloc-safe = { version = "0.1.67", features = ["v3", "no_thp"] }
 rbxts_project = { path = "crates/rbxts_project" }
 rbxts_luau = { path = "crates/rbxts_luau" }
 rbxts_luau_check = { path = "crates/rbxts_luau_check" }
 # preserve_order: Rojo trees iterate children in file order, as JavaScript objects do.
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
-tsrs_module = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "92248ec55e1335c7c52e7de213666dbfff75c2e3" }
-tsrs_contentmapper = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "92248ec55e1335c7c52e7de213666dbfff75c2e3" }
+tsrs_module = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "77c97efa2c7005a248d2c6010b395eacfdbabd89" }
+tsrs_contentmapper = { git = "file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs", rev = "77c97efa2c7005a248d2c6010b395eacfdbabd89" }
 rbxts_transform = { path = "crates/rbxts_transform" }
 rbxts_plugin = { path = "crates/rbxts_plugin" }
 rbxts_cli = { path = "crates/rbxts_cli" }

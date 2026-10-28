@@ -26,7 +26,7 @@ emulate TypeScript 5 behaviour that TypeScript 7 changed.
   The previous branch, `rbxts-fork` (tsrs v0.18.0, worktree `worktrees\tsrs-rbxts-fork`), is kept. Rolling back means
   pinning its rev (and reverting the 0.20 adaptations), not a path.
 - **What:** tsrs **v0.20.0** (`d197eeea`, TypeScript 7.1 beta) plus commits that change only visibility, private or
-  `pub(crate)` → `pub`. That is 49 lines in 15 files. The first six commits are `rbxts-fork`'s, cherry-picked (its
+  `pub(crate)` → `pub`. That is 52 lines in 16 files. The first six commits are `rbxts-fork`'s, cherry-picked (its
   commit in brackets); the last two are new, for items tsrs 0.20 narrowed that have no public equivalent:
 
 | Commit | Item | File | Used for |
@@ -55,6 +55,7 @@ emulate TypeScript 5 behaviour that TypeScript 7 changed.
 | 107aad07 (new) | `TupleType::{min_length, combined_flags}`, `CountCell::get` | `tsrs_checker/src/types.rs` | for-of over tuples, Flamework's tuple guards and macros |
 | 107aad07 (new) | `Checker::get_emit_resolver` | `tsrs_checker/src/checker_15.rs` | the transform state's emit resolver |
 | 92248ec5 (new) | `diagnostic_file`, `diagnostic_pos`, `diagnostic_len`, `FileLike::file_name` | `tsrs_compiler/src/diagnosticwriter.rs` | rbxtsc's TypeScript 5 pretty printer (`rbxts_cli/src/pretty.rs`) |
+| 77c97efa (new) | `Checker::value_symbol_links`, `SymbolArenaLinkStore::try_get`, `MappedSymbolLinks::key_type` | `tsrs_checker/src/checker.rs`, `links.rs`, `types.rs` | Flamework's serializer (flamework-rs): a mapped property's mapped type (`ValueSymbolLinks::containing_type`, TS5's `links.mappedType`) and key type (`links.keyType`), read only |
 
   Dropped as upstream: `is_declaration_readonly` (87958da) is public in tsrs 0.20, as
   `tsrs_checker::utilities::is_declaration_readonly`. Not carried over: 67b5330 (overload internals made public) and
