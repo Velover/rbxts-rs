@@ -53,6 +53,7 @@
 //!   build, beside roblox-ts's own and across files; the copy with related information is the one kept);
 //! - `importfrom`: `import_named(path, export)` of its two string literal arguments (plugin imports are grouped by
 //!   path, in the order each path was first asked for);
+//! - `latesynth`: `late_string_synthesized`, resolved in `finish` to `ünï "<plugin>"\t#<n>` (numbered with `late`'s);
 //! - `boom`: panics in [`Mode::Panic`]; `fail`: an error in [`Mode::Fail`]; `err`: `Err` with no new error in
 //!   [`Mode::ErrWithoutError`]; declined otherwise.
 //!
@@ -192,6 +193,7 @@ const OPS: &[&str] = &[
     "props",
     "importafter",
     "importfrom",
+    "latesynth",
     "diagsame",
     "diagdecl",
 ];
@@ -281,7 +283,11 @@ impl Plugin for Probe {
             _ => keys.len(),
         };
         for (n, key) in keys.iter().take(resolve).enumerate() {
-            cx.resolve_late(key, &format!("{}#{}", shared.name, n + 1));
+            if key.starts_with("synth:") {
+                cx.resolve_late(key, &format!("ünï \"{}\"\t#{}", shared.name, n + 1));
+            } else {
+                cx.resolve_late(key, &format!("{}#{}", shared.name, n + 1));
+            }
         }
         let files: Vec<String> = parts
             .iter()
@@ -698,6 +704,14 @@ impl ProbeInstance {
                 // `probeImportFrom("<path>", "<export>")`: the import's value
                 let text = |node: Option<P<Node>>| node.expect("two arguments").text();
                 let value = cx.import_named(text(arg(0)), text(arg(1)))?;
+                self.claimed(value)
+            }
+            "latesynth" => {
+                // a late string with the synthesized spelling; `finish` gives it a value with a non-ASCII letter, a
+                // quote and a tab (`ünï "<plugin>"\t#<n>`)
+                let key = format!("synth:{}:{}", cx.file().relative_path, self.late_keys.borrow().len());
+                self.late_keys.borrow_mut().push(key.clone());
+                let value = cx.late_string_synthesized(&key);
                 self.claimed(value)
             }
             "importafter" => {

@@ -1362,7 +1362,7 @@ fn a_plugin_diagnostic_is_kept_once_in_the_build() {
 /// The `fwapi` round's API additions against stock TypeScript 5 (`plugin_fixtures/fwapi`): its `expected/` Luau is
 /// what stock roblox-ts gives with a JS transformer doing what each probe op does (as Flamework's TS transformer
 /// does it), so this fixture, unlike `probe`, has a stock reference. Covered: plugin imports after every leading
-/// comment of the first statement (`ts.copyComments`, `cmt*.ts`).
+/// comment of the first statement (`ts.copyComments`, `cmt*.ts`); synthesized late strings (`late.ts`).
 #[test]
 fn fwapi_fixture_matches_stock_typescript_5() {
     let Some(project) = Project::of("fwapi", "fwapi") else { return };
