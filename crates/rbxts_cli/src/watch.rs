@@ -996,13 +996,17 @@ impl Subscriptions {
         let mut stale: Vec<String> = missing.iter().filter(|d| !self.missing.contains(*d)).cloned().collect();
         self.missing = missing;
         // the covered flat directories (inside a recursive watch) that exist: watched themselves while that recursive
-        // watch is not active (it failed), so their events are not lost
-        let covered: Vec<Watch> =
-            watched.covered.iter().filter(|d| Path::new(d).is_dir()).map(|d| (d.clone(), false)).collect();
+        // watch is not active (it failed), so their events are not lost. Whether one exists is asked only when that
+        // decides something (it is watched now, or its recursive watch is not active), not for each of them at each
+        // update: a project whose plugin probes every program directory covers a thousand of them.
+        let mut exists: FxHashMap<String, bool> = FxHashMap::default();
+        let mut covered = |dir: &str| {
+            watched.covered.contains(dir) && *exists.entry(dir.to_owned()).or_insert_with(|| Path::new(dir).is_dir())
+        };
         // every watch no longer wanted at all goes first: notify keeps one watch per path, so an unwatch after a new
         // watch of the same path would remove that one
-        for watch @ (dir, _) in &self.active {
-            if !wanted.contains(watch) && !covered.contains(watch) {
+        for watch @ (dir, recursive) in &self.active {
+            if !wanted.contains(watch) && !(!recursive && covered(dir)) {
                 let _ = self.watcher.unwatch(Path::new(dir));
             }
         }
@@ -1016,10 +1020,13 @@ impl Subscriptions {
                     let k = key(dir);
                     roots.iter().any(|root| k == *root || is_under(&k, root))
                 };
-                for watch @ (dir, _) in &covered {
+                for dir in &watched.covered {
+                    let watch = (dir.clone(), false);
                     if !under_root(dir) {
-                        wanted.insert(watch.clone());
-                    } else if self.active.contains(watch) && !roots.contains(&key(dir)) {
+                        if covered(dir) {
+                            wanted.insert(watch);
+                        }
+                    } else if self.active.contains(&watch) && !roots.contains(&key(dir)) && covered(dir) {
                         // covered again by a recursive watch above it (one of the same path replaced it already)
                         let _ = self.watcher.unwatch(Path::new(dir));
                     }
@@ -1446,14 +1453,15 @@ fn rebuild(
     if debug() {
         let current = watched.current();
         eprintln!(
-            "[rbxtsc watch] watch set {:.1} ms, update and scan {:.1} ms: {} reads, {} anchors, {} packages, {} recursive, {} flat",
+            "[rbxtsc watch] watch set {:.1} ms, update and scan {:.1} ms: {} reads, {} anchors, {} packages, {} recursive, {} flat, {} covered",
             computed.as_secs_f64() * 1000.0,
             updated.as_secs_f64() * 1000.0,
             current.reads.len(),
             current.anchors.len(),
             current.package_dirs.len(),
             current.recursive.len(),
-            current.flat.len()
+            current.flat.len(),
+            current.covered.len()
         );
     }
     let (report, summary) = match result {

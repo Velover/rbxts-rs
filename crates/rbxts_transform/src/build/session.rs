@@ -1251,7 +1251,7 @@ impl<'p> BuildSession<'p> {
                     if !salt_changed && !fresh.contains(plugin.info.name) =>
                 {
                     record.shared.as_ref().and_then(|shared| {
-                        let changed = record.inputs.iter().any(|i| input_changed(i, project.program, &resolver));
+                        let changed = inputs_changed(&record.inputs, project.program, &resolver);
                         if changed {
                             return None;
                         }
@@ -1282,6 +1282,28 @@ impl<'p> BuildSession<'p> {
             plans.push(kept);
         }
         report.timings.plan = plan_start.elapsed();
+        // what the plan asked again (`RBXTS_WATCH_DEBUG`)
+        if std::env::var_os("RBXTS_WATCH_DEBUG").is_some()
+            && let Some(c) = &committed
+        {
+            for record in &c.plugins {
+                let (mut files, mut missing, mut env, mut resolutions, mut globs) = (0, 0, 0, 0, 0);
+                for input in &record.inputs {
+                    match input {
+                        BuildInput::File { version: Some(_), .. } => files += 1,
+                        BuildInput::File { .. } => missing += 1,
+                        BuildInput::Env { .. } => env += 1,
+                        BuildInput::Resolution { .. } => resolutions += 1,
+                        BuildInput::Glob { .. } => globs += 1,
+                    }
+                }
+                eprintln!(
+                    "[rbxtsc watch] plan {}: setup inputs {files} files, {missing} missing, {env} env, {resolutions}                      resolutions, {globs} globs ({:.1} ms)",
+                    record.name,
+                    report.timings.plan.as_secs_f64() * 1e3
+                );
+            }
+        }
         if !report.fatal.is_empty() {
             return (report, summary, committed, Some(loaded));
         }
@@ -2657,15 +2679,37 @@ struct PluginRun<'p> {
 }
 
 /// A build input changed since `setup` read it.
+/// Whether any of a plugin's recorded setup inputs answers differently now. The files are read again in parallel (a
+/// plugin probing for a file in every program directory, as Flamework's build-info scan does, records hundreds of
+/// missing ones), the rest after them, in order.
+fn inputs_changed(
+    inputs: &[BuildInput],
+    program: &'static tsrs_compiler::Program,
+    resolver: &OnceCell<rbxts_project::ModuleResolver>,
+) -> bool {
+    let files: Vec<(&str, Option<Version>)> = inputs
+        .iter()
+        .filter_map(|input| match input {
+            BuildInput::File { path, version, .. } => Some((path.as_str(), *version)),
+            _ => None,
+        })
+        .collect();
+    super::parallel::map(&files, |(path, version)| file_changed(path, *version)).contains(&true)
+        || inputs.iter().any(|i| !matches!(i, BuildInput::File { .. }) && input_changed(i, program, resolver))
+}
+
+/// Whether a file read as text (`version`, `None`: missing or not text) reads differently now.
+fn file_changed(path: &str, version: Option<Version>) -> bool {
+    std::fs::read_to_string(path).ok().map(|text| Version::of(&text)) != version
+}
+
 fn input_changed(
     input: &BuildInput,
     program: &'static tsrs_compiler::Program,
     resolver: &OnceCell<rbxts_project::ModuleResolver>,
 ) -> bool {
     match input {
-        BuildInput::File { path, version, .. } => {
-            std::fs::read_to_string(path).ok().map(|text| Version::of(&text)) != *version
-        }
+        BuildInput::File { path, version, .. } => file_changed(path, *version),
         BuildInput::Env { name, value, .. } => std::env::var(name).ok() != *value,
         BuildInput::Resolution { specifier, from, resolved, .. } => {
             resolve_module_from(program, resolver, specifier, from).map(|r| r.file_name) != *resolved
