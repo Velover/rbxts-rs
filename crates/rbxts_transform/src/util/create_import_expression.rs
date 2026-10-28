@@ -259,7 +259,26 @@ pub fn get_import_parts_of_file(
     module_specifier: P<Node>,
 ) -> Vec<Expr> {
     let module_file_name = module_file.get().file_name().to_owned();
-    let virtual_path = state.guess_virtual_path(&module_file_name).unwrap_or_else(|| module_file_name.clone());
+    let is_json = tsrs_ast::is_json_source_file(module_file);
+    get_import_parts_of_path(state, source_file, &module_file_name, None, is_json, module_specifier)
+}
+
+/// rbxts-rs: the part of `getImportParts` once the module file's name is known, for a module file that may not be in
+/// the program (a plugin's `import_named` of a module no program file imports, which TypeScript 5's re-created
+/// program would have resolved and added). `virtual_path` is the path through a symlink the resolution went through
+/// (its `originalPath`), when there was one; else the program's symlinks give it (`guessVirtualPath`).
+pub fn get_import_parts_of_path(
+    state: &mut TransformState<'_>,
+    source_file: P<SourceFile>,
+    module_file_name: &str,
+    virtual_path: Option<String>,
+    is_json: bool,
+    module_specifier: P<Node>,
+) -> Vec<Expr> {
+    let module_file_name = module_file_name.to_owned();
+    let virtual_path = virtual_path
+        .or_else(|| state.guess_virtual_path(&module_file_name))
+        .unwrap_or_else(|| module_file_name.clone());
     let reference_path = if state.services.project_reference_paths.is_empty() {
         None
     } else {
@@ -286,7 +305,7 @@ pub fn get_import_parts_of_file(
                 module_out_path = format!("{}{ext}", &virtual_path[..virtual_path.len() - ".d.ts".len()]);
             } else {
                 // TypeScript rejects non-declaration source files outside rootDir before this transform
-                assert!(tsrs_ast::is_json_source_file(module_file), "a source outside the root is JSON");
+                assert!(is_json, "a source outside the root is JSON");
                 module_out_path = virtual_path.clone();
             }
         }
@@ -310,6 +329,22 @@ pub fn create_import_expression_of_file(
     at: P<Node>,
 ) -> Expr {
     let mut parts = get_import_parts_of_file(state, source_file, module_file, at);
+    parts.insert(0, globals::script());
+    let callee = state.ts(at, "import");
+    create::call(callee, parts)
+}
+
+/// rbxts-rs: [`create_import_expression_of_file`] for a module file that is not in the program
+/// ([`get_import_parts_of_path`]).
+pub fn create_import_expression_of_path(
+    state: &mut TransformState<'_>,
+    source_file: P<SourceFile>,
+    module_file_name: &str,
+    virtual_path: Option<String>,
+    at: P<Node>,
+) -> Expr {
+    let is_json = module_file_name.ends_with(".json");
+    let mut parts = get_import_parts_of_path(state, source_file, module_file_name, virtual_path, is_json, at);
     parts.insert(0, globals::script());
     let callee = state.ts(at, "import");
     create::call(callee, parts)

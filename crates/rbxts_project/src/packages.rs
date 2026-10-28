@@ -123,6 +123,13 @@ impl ModuleResolver {
             package_name: (!resolved.package_id.name.is_empty()).then(|| resolved.package_id.name.to_owned()),
         })
     }
+
+    /// The path through a symlink the resolution of [`ModuleResolver::resolve`] went through (TypeScript's
+    /// `originalPath`, forward slashes), when it went through one.
+    pub fn original_path(&self, specifier: &str, containing_file: &str, mode: ResolutionMode) -> Option<String> {
+        let (resolved, _) = self.resolver.resolve_module_name(specifier, containing_file, mode, None).ok()?;
+        (resolved.is_resolved() && !resolved.original_path.is_empty()).then(|| resolved.original_path.to_owned())
+    }
 }
 
 #[cfg(test)]

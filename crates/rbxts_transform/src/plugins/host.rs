@@ -270,6 +270,15 @@ impl PluginHost {
         resolve_module_from(self.program, &self.resolver, specifier, from_file)
     }
 
+    /// The path through a symlink that resolving `specifier` from `from_file` with the program's options went
+    /// through (TypeScript's `originalPath`), if any: for a module no program file imports, whose symlink the
+    /// program's own symlink cache does not know.
+    pub(crate) fn resolved_original_path(&self, specifier: &str, from_file: &str) -> Option<String> {
+        self.resolver
+            .get_or_init(|| ModuleResolver::new(self.program.options(), self.program.get_current_directory()))
+            .original_path(specifier, from_file, tsrs_core::RESOLUTION_MODE_NONE)
+    }
+
     /// The package.json of the package declaring `symbol` (its first declaration's file).
     pub(crate) fn declaring_package(services: &ProjectServices, symbol: P<Symbol>) -> Option<Arc<PackageInfo>> {
         let declaration = symbol.declarations().first().copied()?;

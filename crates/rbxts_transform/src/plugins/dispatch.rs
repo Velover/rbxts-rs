@@ -24,7 +24,9 @@ use crate::classes::transform_state::TransformState;
 use crate::nodes::statements::transform_import_declaration::transform_import_declaration;
 use crate::nodes::statements::transform_import_equals_declaration::transform_import_equals_declaration;
 use crate::nodes::transform_optional_chain::{ChainItem, ChainItemKind, transform_chain_item};
-use crate::util::create_import_expression::{create_import_expression_of_file, get_source_file_from_module_specifier};
+use crate::util::create_import_expression::{
+    create_import_expression_of_file, create_import_expression_of_path, get_source_file_from_module_specifier,
+};
 use crate::util::symbols::is_used_as_statement;
 use crate::util::traversal::{has_syntactic_modifier, skip_downwards, skip_upwards};
 use crate::util::wrap_expression_statement::wrap_expression_statement;
@@ -1873,11 +1875,25 @@ pub(crate) fn import_named(
     let resolved = host
         .resolve_module(specifier, file.get().file_name())
         .ok_or_else(|| format!("import_named: `{specifier}` cannot be resolved from {}", file.get().file_name()))?;
-    let module_file = state.program.get_source_file(&resolved.file_name).ok_or_else(|| {
-        format!("import_named: `{specifier}` resolves to {}, which is not in the program", resolved.file_name)
-    })?;
+    // A module no program file imports is not in the program. TypeScript 5's roblox-ts compiles a TS transformer's
+    // output in a program made again from the printed files, where the transformer's import adds it, so the import
+    // is made from the resolved path (no user import can name it to be reused).
+    let module_file = state.program.get_source_file(&resolved.file_name);
+    if module_file.is_none()
+        && !tsrs_core::tspath::is_declaration_file_name(&resolved.file_name)
+        && !resolved.file_name.ends_with(".json")
+        && !rbxts_project::setup::is_path_descendant_of(&resolved.file_name, &state.services.path_translator.root_dir)
+    {
+        return Err(format!(
+            "import_named: `{specifier}` resolves to {}, a source file outside the source root that is not in the \
+             program",
+            resolved.file_name
+        ));
+    }
 
-    let reusable = find_user_import(state, module_file, export).filter(|&(alias, _)| !alias_shadowed(state, alias));
+    let reusable = module_file
+        .and_then(|module_file| find_user_import(state, module_file, export))
+        .filter(|&(alias, _)| !alias_shadowed(state, alias));
     let value = if let Some((alias, value)) = reusable {
         state.plugin_file.forced_imports.insert(alias);
         value
@@ -1891,7 +1907,13 @@ pub(crate) fn import_named(
             temp_id(state.plugin_file.seam_hint(file, export)).into()
         };
         state.plugin_file.import_names.insert(export.to_owned());
-        let import = create_import_expression_of_file(state, file, module_file, anchor);
+        let import = match module_file {
+            Some(module_file) => create_import_expression_of_file(state, file, module_file, anchor),
+            None => {
+                let virtual_path = host.resolved_original_path(specifier, file.get().file_name());
+                create_import_expression_of_path(state, file, &resolved.file_name, virtual_path, anchor)
+            }
+        };
         // the import's local, and the module's when a second import from its path shares the declaration
         let same_path = state.plugin_file.imports.iter().filter(|i| i.specifier == specifier).count();
         state.plugin_file.main_chunk_locals += if same_path == 1 { 2 } else { 1 };
