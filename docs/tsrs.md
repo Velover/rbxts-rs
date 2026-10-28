@@ -9,11 +9,21 @@ emulate TypeScript 5 behaviour that TypeScript 7 changed.
   `E:\Projects\TS\Flamework\worktrees\tsrs-rbxts-fork-020`).
   - `Cargo.toml` takes the fork's crates as a git dependency pinned by rev (`git = "file:///…/tsrs"`, `rev = …`).
     That way rbxts-rs and a workspace that depends on it (flamework-rs) build the same tsrs.
-  - A crate that names tsrs crates itself must use the identical URL and rev.
+  - A crate that names tsrs crates itself must use the identical URL and `rev`. Cargo does not enforce this: a
+    different rev, or even the same commit written as `branch = …`, silently builds a second copy of tsrs. The only
+    error comes where tsrs types cross the boundary (E0308, `tsrs_checker::Checker` vs `rbxts_plugin::ts::Checker`).
+    Prefer the `rbxts_plugin::ts` re-exports, and check that `cargo tree -d` lists no tsrs crate.
+  - A depending workspace inherits neither rbxts-rs's `Cargo.lock` (start its lock from this one) nor its profiles:
+    copy `[profile.dev]` (opt-level 3) and `[profile.dev.package.luau0-src]` (`debug-assertions = false`, or Luau's
+    asserts break into the debugger), and `rust-toolchain.toml`.
   - To try a local change to the fork, override it with `[patch."file:///E:/Projects/TS/Flamework/roblox-ts-test/tsrs"]`
-    path entries in an uncommitted `.cargo/config.toml`.
+    path entries in an uncommitted `.cargo/config.toml`. The override rewrites `Cargo.lock` locally, so `--locked`
+    fails while it is on.
+  - The pinned rev must stay reachable: never rebase or delete `rbxts-fork-0.20`.
   - The URL becomes the published fork's when the repos go public.
-  The previous branch, `rbxts-fork` (tsrs v0.18.0, worktree `worktrees\tsrs-rbxts-fork`), is kept for rolling back.
+
+  The previous branch, `rbxts-fork` (tsrs v0.18.0, worktree `worktrees\tsrs-rbxts-fork`), is kept. Rolling back means
+  pinning its rev (and reverting the 0.20 adaptations), not a path.
 - **What:** tsrs **v0.20.0** (`d197eeea`, TypeScript 7.1 beta) plus commits that change only visibility, private or
   `pub(crate)` → `pub`. That is 49 lines in 15 files. The first six commits are `rbxts-fork`'s, cherry-picked (its
   commit in brackets); the last two are new, for items tsrs 0.20 narrowed that have no public equivalent:
@@ -195,9 +205,8 @@ rbxts-rs type checked the real project (`rbxts-bench load`) 17-22% slower than o
 So rbxts-rs turns the preset on (user decision, 2026-10-28): `rbxts_project::use_tsrs_fast_preset`, called first by
 rbxtsc and rbxtsc-fw (`Cli::run_with`), rbxts-bench and rbxts-probe, and again by `load_cached` before it makes a
 program (the tests and any other caller). It must run before a checker exists, as tsrs reads the preset once.
-`TSRS_FAST=0` turns it off, for debugging against tsrs's reference settings. Only the exact value `0` does; any
-other value, or none, leaves it on. How each part of the preset meets
-rbxts-rs:
+`TSRS_FAST=0` turns it off, for debugging against tsrs's reference settings. Only the exact value `0` does; any other
+value, or none, leaves it on. How each part of the preset meets rbxts-rs:
 - **Lazy type members, the canonical history and its caches (union-front, indexed-access, inference-walk):** on.
   Checker internals; tsrs 0.18 had the first two by default, the settings rbxts-rs was validated with. Everything
   rbxts-rs reads from the checker goes through its public API (`ts5_property_order`, `overload_errors.rs`, the
@@ -214,9 +223,9 @@ rbxts-rs:
   (`get_semantic_diagnostics`, `allow_steal`). rbxts-rs checks with `for_each_checker_group`, which keeps every file on
   its owner and visits them in order, and its transform takes the same owners.
 - **Lazy declaration parsing (`TSRS_LAZY_DTS`) and leaf freeing:** off. tsrs switches them on only when its caller
-  asks (`enable_lazy_dts`; `ProgramOptions::leaf_files`): rbxts-rs asks only in the one-shot `rbxts-bench load --lazy-dts` and `rbxts-bench project-parity`
-  (with `TSRS_FAST=0` those lose it too), so the
-  declaration files rbxts-rs and Flamework read are parsed in full, as before.
+  asks (`enable_lazy_dts`; `ProgramOptions::leaf_files`). rbxts-rs asks only in the one-shot `rbxts-bench load
+  --lazy-dts` and `rbxts-bench project-parity`; with `TSRS_FAST=0` those lose it too, unless `TSRS_LAZY_DTS=1` is
+  set. So the declaration files rbxts-rs and Flamework read are parsed in full, as before.
 
 ## TypeScript 5 behaviour rbxts-rs does not reproduce
 Known, accepted differences from stock roblox-ts on TypeScript 5, each inherent to TypeScript 7. A few make a build
