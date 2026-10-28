@@ -1819,6 +1819,7 @@ impl<'p> BuildSession<'p> {
             // overwrites a copied asset
             let luau_outputs =
                 output_keys(services, &listing, output_paths.iter().chain(&project_outputs.files).map(String::as_str));
+            let root_keys = OnceCell::new();
             let mut resolved = FxHashSet::default();
             let mut errors = Vec::new();
             for (index, plugin) in run.active.iter().enumerate() {
@@ -1844,6 +1845,7 @@ impl<'p> BuildSession<'p> {
                     rules: &rules,
                     out_dir: &report.out_dir,
                     luau_outputs: &luau_outputs,
+                    root_keys: &root_keys,
                     late: &mut late_strings,
                     resolved: &mut resolved,
                     queue: &mut queue,

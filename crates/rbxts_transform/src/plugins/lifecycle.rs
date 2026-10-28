@@ -622,6 +622,8 @@ pub(crate) struct Finish<'s> {
     pub out_dir: &'s str,
     /// The path keys of this build's outputs (Luau, assets, declaration and transformed outputs).
     pub luau_outputs: &'s FxHashSet<String>,
+    /// The real keys of the roots an artifact must be under, made at the first check of the build.
+    pub root_keys: &'s OnceCell<Vec<String>>,
     pub late: &'s mut LateStrings,
     pub resolved: &'s mut FxHashSet<String>,
     pub queue: &'s mut CommitQueue,
@@ -646,16 +648,21 @@ impl Finish<'_> {
         }
         // through the file system: a junction or symlink inside the project can lead outside it
         let key = real_key(self.services, &absolute);
-        let data = &self.services.data;
-        let roots = [
-            data.project_path.as_str(),
-            self.services.path_translator.out_dir.as_str(),
-            self.out_dir,
-            data.options.include_path.as_str(),
-        ];
-        let under_root = roots.iter().filter(|r| !r.is_empty()).any(|root| {
-            let root = real_key(self.services, root);
-            key.len() > root.len() && key.starts_with(&root) && key.as_bytes()[root.len()] == b'/'
+        let roots = self.root_keys.get_or_init(|| {
+            let data = &self.services.data;
+            [
+                data.project_path.as_str(),
+                self.services.path_translator.out_dir.as_str(),
+                self.out_dir,
+                data.options.include_path.as_str(),
+            ]
+            .into_iter()
+            .filter(|root| !root.is_empty())
+            .map(|root| real_key(self.services, root))
+            .collect()
+        });
+        let under_root = roots.iter().any(|root| {
+            key.len() > root.len() && key.starts_with(root.as_str()) && key.as_bytes()[root.len()] == b'/'
         });
         if !under_root {
             self.errors.push(format!(
