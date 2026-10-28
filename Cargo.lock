@@ -153,23 +153,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
-name = "flamework_rs"
-version = "0.0.0"
-dependencies = [
- "dragonbox_ecma",
- "rbxts_luau",
- "rbxts_plugin",
- "rbxts_project",
- "rbxts_transform",
- "serde_json",
- "tsrs_ast",
- "tsrs_checker",
- "tsrs_compiler",
- "tsrs_core",
- "tsrs_diagnostics",
-]
-
-[[package]]
 name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -604,7 +587,6 @@ dependencies = [
 name = "rbxts_bench"
 version = "0.0.0"
 dependencies = [
- "flamework_rs",
  "mimalloc-safe",
  "rbxts_luau",
  "rbxts_plugin",
@@ -734,15 +716,6 @@ dependencies = [
  "tsrs_printer",
  "tsrs_scanner",
  "tsrs_sourcemap",
-]
-
-[[package]]
-name = "rbxtsc_fw"
-version = "0.0.0"
-dependencies = [
- "flamework_rs",
- "mimalloc-safe",
- "rbxts_cli",
 ]
 
 [[package]]

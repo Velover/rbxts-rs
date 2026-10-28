@@ -241,10 +241,7 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
     };
     let mut plugins = Vec::new();
     for name in &args.plugins {
-        // `flamework`: the Flamework plugin (flamework_rs), the one real plugin; the rest are the seam's test plugins.
-        match rbxts_test_plugins::by_name(name)
-            .or_else(|| (name == "flamework").then(|| rbxts_plugin::erased::erase(flamework_rs::Flamework::new())))
-        {
+        match rbxts_test_plugins::by_name(name) {
             Some(plugin) => plugins.push(plugin),
             None => {
                 eprintln!(

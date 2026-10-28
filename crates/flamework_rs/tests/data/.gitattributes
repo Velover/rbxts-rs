@@ -1,2 +1,0 @@
-# Parity data is compared byte for byte: keep it exactly as committed (LF), whatever core.autocrlf says.
-* -text

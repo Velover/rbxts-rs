@@ -1,7 +1,8 @@
 # rbxts-rs
 
 roblox-ts rewritten in Rust on [tsrs](https://github.com/oxc-project/tsrs) (the Rust port of TypeScript 7), with
-Flamework as an in-process plugin. Private and local: never pushed or published.
+compiled-in plugins. Private and local: never pushed or published. Flamework's plugin (`flamework_rs`) and its
+`rbxtsc-fw` binary live in their own repository, flamework-rs, which depends on this one by git rev.
 
 - Design: `E:\Projects\TS\Flamework\scratchpad\batch\rbxts-rs\DESIGN.md`.
 - Measurements: `bench/RESULTS.md`.

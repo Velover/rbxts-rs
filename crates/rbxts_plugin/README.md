@@ -1,8 +1,8 @@
 # rbxts_plugin
 
 The plugin API of rbxts-rs: the traits a compiled-in plugin implements, and the services the compiler offers it
-(DESIGN §11, with the build lifecycle of §14). `flamework_rs` is built on it; the compiler (`rbxts_transform`)
-implements the backend traits.
+(DESIGN §11, with the build lifecycle of §14). `flamework_rs` (in its own repository, flamework-rs) is built on it;
+the compiler (`rbxts_transform`) implements the backend traits.
 
 - `Plugin` (factory), `PluginInstance` (per checker), `Plugin::FilePart` (per file), `Plugin::State` (persistent).
 - `Cx` / `SetupCx` / `FinishCx`: thin wrappers over the compiler's `CxBackend` / `SetupBackend` / `FinishBackend`.

@@ -8,7 +8,8 @@ emulate TypeScript 5 behaviour that TypeScript 7 changed.
 - **Where:** branch `rbxts-fork-0.20` of the tsrs clone (`E:\Projects\TS\Flamework\roblox-ts-test\tsrs`; worktree
   `E:\Projects\TS\Flamework\worktrees\tsrs-rbxts-fork-020`).
   - `Cargo.toml` takes the fork's crates as a git dependency pinned by rev (`git = "file:///…/tsrs"`, `rev = …`).
-    That way rbxts-rs and a workspace that depends on it (flamework-rs) build the same tsrs.
+    That way rbxts-rs and a workspace that depends on it (flamework-rs, which holds `flamework_rs` and `rbxtsc-fw`
+    since they moved out of this repository) build the same tsrs.
   - A crate that names tsrs crates itself must use the identical URL and `rev`. Cargo does not enforce this: a
     different rev, or even the same commit written as `branch = …`, silently builds a second copy of tsrs. The only
     error comes where tsrs types cross the boundary (E0308, `tsrs_checker::Checker` vs `rbxts_plugin::ts::Checker`).

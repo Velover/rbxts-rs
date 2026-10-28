@@ -37,11 +37,8 @@ rbxts_plugin = { path = "crates/rbxts_plugin" }
 rbxts_cli = { path = "crates/rbxts_cli" }
 rbxts_test_plugins = { path = "crates/rbxts_test_plugins" }
 rbxts_test_support = { path = "crates/rbxts_test_support" }
-flamework_rs = { path = "crates/flamework_rs" }
 # The versions in tsrs's lock file.
 rustc-hash = "2"
-# flamework_rs: JavaScript number formatting (Number#toString), already in the lock through tsrs_core.
-dragonbox_ecma = "0.1.12"
 # rbxts_cli watch mode: file system events (ReadDirectoryChangesW on Windows) and the process working set (the
 # restart past a memory limit).
 notify = { version = "8.2.0", default-features = false }
